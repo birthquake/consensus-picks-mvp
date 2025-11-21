@@ -8,17 +8,19 @@ function getAdminApp() {
   if (adminApp) return adminApp;
 
   try {
-    // Try to decode base64
-    const keyString = process.env.FIREBASE_ADMIN_KEY;
+    // Get the base64 string and remove ALL whitespace
+    let keyString = (process.env.FIREBASE_ADMIN_KEY || '').trim();
+    
+    // Remove tabs, newlines, carriage returns, spaces
+    keyString = keyString.replace(/[\s\t\n\r]/g, '');
+    
     if (!keyString) {
-      throw new Error('FIREBASE_ADMIN_KEY not set in environment');
+      throw new Error('FIREBASE_ADMIN_KEY not set or empty');
     }
 
-    // Remove any whitespace and decode
-    const cleanedKey = keyString.replace(/\s/g, '');
-    const serviceAccount = JSON.parse(
-      Buffer.from(cleanedKey, 'base64').toString('utf8')
-    );
+    // Decode from base64
+    const decodedJson = Buffer.from(keyString, 'base64').toString('utf8');
+    const serviceAccount = JSON.parse(decodedJson);
 
     adminApp = admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
@@ -27,7 +29,7 @@ function getAdminApp() {
 
     return adminApp;
   } catch (error) {
-    console.error('Firebase Admin initialization error:', error.message);
+    console.error('Firebase Admin init error:', error.message);
     throw error;
   }
 }
@@ -40,12 +42,10 @@ export function getFirestoreAdmin() {
 export async function writePicks(picks) {
   const db = getFirestoreAdmin();
   const batch = db.batch();
-
   for (const pick of picks) {
     const docRef = db.collection('picks').doc(pick.id);
     batch.set(docRef, pick, { merge: true });
   }
-
   await batch.commit();
   return picks.length;
 }
@@ -53,12 +53,10 @@ export async function writePicks(picks) {
 export async function getCurrentPicks() {
   const db = getFirestoreAdmin();
   const snapshot = await db.collection('picks').where('pickStatus', '==', 'pending').get();
-
   const picks = [];
   snapshot.forEach(doc => {
     picks.push({ id: doc.id, ...doc.data() });
   });
-
   return picks;
 }
 
@@ -74,25 +72,20 @@ export async function updatePickStatus(pickId, status, outcome) {
 export async function writeAccuracyStats(stats) {
   const db = getFirestoreAdmin();
   const docId = `${stats.sport}_${stats.consensusLevel}_${stats.period}`;
-  
   await db.collection('accuracyStats').doc(docId).set(stats, { merge: true });
 }
 
 export async function getAccuracyStats(period = 'allTime', sport = 'all') {
   const db = getFirestoreAdmin();
   let query = db.collection('accuracyStats').where('period', '==', period);
-
   if (sport !== 'all') {
     query = query.where('sport', '==', sport);
   }
-
   const snapshot = await query.get();
   const stats = [];
-
   snapshot.forEach(doc => {
     stats.push({ id: doc.id, ...doc.data() });
   });
-
   return stats;
 }
 
