@@ -1,12 +1,10 @@
+// FILE LOCATION: vercel.json
+
 {
   "crons": [
     {
       "path": "/api/picks/fetch-all",
       "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/picks/fetch-all",
-      "schedule": "0 12 * * *"
     },
     {
       "path": "/api/picks/fetch-all",
