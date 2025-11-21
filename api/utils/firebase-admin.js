@@ -7,16 +7,29 @@ let adminApp;
 function getAdminApp() {
   if (adminApp) return adminApp;
 
-  const serviceAccount = JSON.parse(
-    Buffer.from(process.env.FIREBASE_ADMIN_KEY, 'base64').toString('utf8')
-  );
+  try {
+    // Try to decode base64
+    const keyString = process.env.FIREBASE_ADMIN_KEY;
+    if (!keyString) {
+      throw new Error('FIREBASE_ADMIN_KEY not set in environment');
+    }
 
-  adminApp = admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    projectId: process.env.FIREBASE_PROJECT_ID,
-  });
+    // Remove any whitespace and decode
+    const cleanedKey = keyString.replace(/\s/g, '');
+    const serviceAccount = JSON.parse(
+      Buffer.from(cleanedKey, 'base64').toString('utf8')
+    );
 
-  return adminApp;
+    adminApp = admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      projectId: process.env.FIREBASE_PROJECT_ID,
+    });
+
+    return adminApp;
+  } catch (error) {
+    console.error('Firebase Admin initialization error:', error.message);
+    throw error;
+  }
 }
 
 export function getFirestoreAdmin() {
