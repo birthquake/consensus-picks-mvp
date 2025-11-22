@@ -1,6 +1,6 @@
 // FILE LOCATION: api/sources/reddit-picks.js
 
-const SUBREDDITS = ['sportsbooks', 'nba', 'nfl', 'hockey', 'sportsbetting'];
+const SUBREDDITS = ['nba', 'nfl', 'hockey', 'sportsbetting'];
 const PICK_CONFIDENCE = 0.75;
 
 const PICK_KEYWORDS = [
