@@ -7,18 +7,42 @@ async function fetchFromAllSources() {
   const allPicks = [];
 
   try {
-    console.log('[Fetch-All] Starting Reddit pick fetch...');
+    console.log('[Fetch-All] Starting source fetch...');
     
-    const redditUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000'}/api/sources/reddit-picks`;
+    const baseUrl = process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000';
     
-    const response = await fetch(redditUrl);
-    const result = await response.json();
+    // Fetch from Odds Shark
+    try {
+      console.log('[Fetch-All] Fetching from Odds Shark RSS...');
+      const oddsSharkUrl = `${baseUrl}/api/sources/odds-shark-rss`;
+      const response = await fetch(oddsSharkUrl);
+      const result = await response.json();
 
-    if (result.success && result.picks) {
-      console.log(`[Fetch-All] Reddit returned ${result.picks.length} picks`);
-      allPicks.push(...result.picks);
-    } else {
-      console.warn('[Fetch-All] Reddit fetch failed:', result.error);
+      if (result.success && result.picks) {
+        console.log(`[Fetch-All] Odds Shark returned ${result.picks.length} picks`);
+        allPicks.push(...result.picks);
+      } else {
+        console.warn('[Fetch-All] Odds Shark fetch failed:', result.error);
+      }
+    } catch (error) {
+      console.error('[Fetch-All] Error fetching from Odds Shark:', error);
+    }
+    
+    // Fetch from Fox Sports
+    try {
+      console.log('[Fetch-All] Fetching from Fox Sports RSS...');
+      const foxSportsUrl = `${baseUrl}/api/sources/fox-sports-rss`;
+      const response = await fetch(foxSportsUrl);
+      const result = await response.json();
+
+      if (result.success && result.picks) {
+        console.log(`[Fetch-All] Fox Sports returned ${result.picks.length} picks`);
+        allPicks.push(...result.picks);
+      } else {
+        console.warn('[Fetch-All] Fox Sports fetch failed:', result.error);
+      }
+    } catch (error) {
+      console.error('[Fetch-All] Error fetching from Fox Sports:', error);
     }
   } catch (error) {
     console.error('[Fetch-All] Error fetching from sources:', error);
@@ -100,3 +124,18 @@ export default async function handler(req, res) {
     });
   }
 }
+```
+
+---
+
+**Update your repo:**
+
+1. Create `api/sources/odds-shark-rss.js`
+2. Create `api/sources/fox-sports-rss.js`
+3. Replace `api/picks/fetch-all.js` with the updated version
+4. Delete or keep `api/sources/reddit-picks.js` (no longer used)
+5. Commit and push
+
+Your next cron job at 6 PM will use these new RSS scrapers. Test manually at:
+```
+https://your-vercel-url.com/api/picks/fetch-all
