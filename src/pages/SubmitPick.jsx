@@ -10,6 +10,7 @@ export default function SubmitPick() {
   const [sport, setSport] = useState('NFL');
   const [games, setGames] = useState([]);
   const [game, setGame] = useState('');
+  const [gameEventId, setGameEventId] = useState('');
   const [gameLoading, setGameLoading] = useState(false);
   const [wager, setWager] = useState('2.00');
   const [legs, setLegs] = useState([
@@ -28,6 +29,7 @@ export default function SubmitPick() {
   const fetchGames = async () => {
     setGameLoading(true);
     setGame('');
+    setGameEventId('');
     setAnalysis(null);
     try {
       const response = await fetch(`/api/espn/get-games?sport=${sport}`);
@@ -84,7 +86,8 @@ export default function SubmitPick() {
       }
       console.log('✅ Game selected:', game);
 
-const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.threshold);      console.log('✅ Filled legs count:', filledLegs.length);
+      const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.threshold);
+      console.log('✅ Filled legs count:', filledLegs.length);
       
       if (filledLegs.length === 0) {
         console.warn('⚠️ No legs filled');
@@ -100,6 +103,7 @@ const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.thre
         userId: auth.currentUser.uid,
         sport,
         game,
+        eventId: gameEventId,
         wager: parseFloat(wager),
         originalLegs: filledLegs,
         reasoning,
@@ -128,6 +132,7 @@ const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.thre
           pickData: {
             sport,
             game,
+            eventId: gameEventId,
             wager: parseFloat(wager),
             originalLegs: filledLegs,
             reasoning
@@ -153,6 +158,7 @@ const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.thre
       setTimeout(() => {
         setSport('NFL');
         setGame('');
+        setGameEventId('');
         setWager('2.00');
         setLegs([{ player: '', stat: '', statCategory: '', confidence: 'High' }]);
         setReasoning('');
@@ -192,7 +198,11 @@ const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.thre
           ) : (
             <select 
               value={game} 
-              onChange={(e) => setGame(e.target.value)}
+              onChange={(e) => {
+                const selectedGame = games.find(g => g.name === e.target.value);
+                setGame(e.target.value);
+                setGameEventId(selectedGame?.eventId || '');
+              }}
               disabled={games.length === 0}
             >
               <option value="">Select a game...</option>
@@ -202,6 +212,9 @@ const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.thre
                 </option>
               ))}
             </select>
+          )}
+          {games.length === 0 && !gameLoading && (
+            <div className="helper-text">No games available for this sport</div>
           )}
         </div>
 
@@ -217,6 +230,7 @@ const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.thre
             onChange={(e) => setWager(e.target.value)}
             placeholder="Enter wager amount"
           />
+          <div className="helper-text">Recommended: $1.50 - $4.00 for optimal Kelly sizing</div>
         </div>
 
         {/* Legs Section */}
@@ -229,6 +243,7 @@ const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.thre
               index={index}
               sport={sport}
               gameId={game}
+              gameEventId={gameEventId}
               onUpdate={updateLeg}
               onRemove={removeLeg}
               canRemove={legs.length > 1}
@@ -237,22 +252,26 @@ const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.thre
           <button type="button" onClick={addLeg} className="add-leg-btn">
             + Add Leg
           </button>
+          <div className="helper-text">
+            Recommended: 5-7 legs for best hit rate. Too many legs = exponential difficulty.
+          </div>
         </div>
 
         {/* Reasoning */}
         <div className="form-group">
           <label>Why do you like these picks?</label>
           <textarea
-            placeholder="Share your reasoning..."
+            placeholder="Share your reasoning and any edge you see..."
             value={reasoning}
             onChange={(e) => setReasoning(e.target.value)}
             rows="4"
           />
+          <div className="helper-text">Optional: Help us understand your edge</div>
         </div>
 
         {/* Messages */}
         {error && <div className="error-message">{error}</div>}
-        {success && <div className="success-message">✅ Pick submitted!</div>}
+        {success && <div className="success-message">✅ Pick submitted and analyzed!</div>}
 
         {/* Submit Button */}
         <button type="submit" disabled={loading} className="submit-btn">
