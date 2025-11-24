@@ -84,8 +84,7 @@ export default function SubmitPick() {
       }
       console.log('✅ Game selected:', game);
 
-      const filledLegs = legs.filter(leg => leg.player && leg.stat && leg.statCategory);
-      console.log('✅ Filled legs count:', filledLegs.length);
+const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.threshold);      console.log('✅ Filled legs count:', filledLegs.length);
       
       if (filledLegs.length === 0) {
         console.warn('⚠️ No legs filled');
