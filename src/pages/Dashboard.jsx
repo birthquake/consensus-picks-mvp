@@ -2,65 +2,85 @@
 import { useState, useEffect } from 'react';
 import { db, auth } from '../firebase/config';
 import { doc, getDoc } from 'firebase/firestore';
-import { TrendingUp, TrendingDown, AlertCircle, Target } from 'lucide-react';
+import { TrendingUp, AlertCircle, Target } from 'lucide-react';
 import '../styles/Dashboard.css';
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!auth.currentUser) return;
-
     const fetchStats = async () => {
       try {
-        const statsRef = doc(
+        if (!auth.currentUser) {
+          console.log('❌ No user logged in');
+          setError('Not authenticated');
+          setLoading(false);
+          return;
+        }
+
+        console.log('📊 Fetching dashboard stats for user:', auth.currentUser.uid);
+
+        const statsDocRef = doc(
           db,
           'users',
           auth.currentUser.uid,
           'performance_stats',
           'overall'
         );
-        const statsDoc = await getDoc(statsRef);
+
+        const statsDoc = await getDoc(statsDocRef);
 
         if (statsDoc.exists()) {
+          console.log('✅ Stats found:', statsDoc.data());
           setStats(statsDoc.data());
+        } else {
+          console.log('📊 No stats document yet - submit picks and wait for cron job');
+          setStats(null);
         }
+
         setLoading(false);
       } catch (err) {
-        console.error('Error fetching stats:', err);
+        console.error('❌ Error fetching stats:', err);
+        setError(err.message);
         setLoading(false);
       }
     };
 
     fetchStats();
-
-    // Listen for real-time updates
-    const unsubscribe = db
-      .collection('users')
-      .doc(auth.currentUser.uid)
-      .collection('performance_stats')
-      .doc('overall')
-      .onSnapshot((doc) => {
-        if (doc.exists()) {
-          setStats(doc.data());
-        }
-      });
-
-    return () => unsubscribe();
   }, []);
 
   if (loading) {
-    return <div className="dashboard-container"><div className="loading">Loading dashboard...</div></div>;
+    return (
+      <div className="dashboard-container">
+        <div className="loading">Loading dashboard...</div>
+      </div>
+    );
   }
 
-  if (!stats) {
+  if (error) {
+    return (
+      <div className="dashboard-container">
+        <div className="error-state">
+          <AlertCircle size={48} />
+          <h3>Error Loading Dashboard</h3>
+          <p>{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!stats || stats.totalSubmitted === 0) {
     return (
       <div className="dashboard-container">
         <div className="empty-state">
           <Target size={48} />
           <h3>No data yet</h3>
-          <p>Submit some picks and wait for results to see your dashboard</p>
+          <p>Submit some picks and wait for results to see your dashboard.</p>
+          <p style={{ fontSize: '12px', color: '#999', marginTop: '10px' }}>
+            📅 Results are processed daily at 1 AM UTC
+          </p>
         </div>
       </div>
     );
@@ -78,7 +98,10 @@ export default function Dashboard() {
             <TrendingUp size={20} />
           </div>
           <div className="kpi-value">
-            {(stats.currentWinRate * 100).toFixed(1)}%
+            {stats.totalWon + stats.totalLost > 0 
+              ? ((stats.totalWon / (stats.totalWon + stats.totalLost)) * 100).toFixed(1)
+              : '0'
+            }%
           </div>
           <div className="kpi-meta">
             {stats.totalWon} wins / {stats.totalWon + stats.totalLost} settled
@@ -94,7 +117,7 @@ export default function Dashboard() {
             {stats.overallROI > 0 ? '+' : ''}{stats.overallROI}%
           </div>
           <div className="kpi-meta">
-            {stats.totalWon} wins × average odds
+            Based on {stats.totalWon} wins
           </div>
         </div>
 
@@ -118,7 +141,7 @@ export default function Dashboard() {
           <div className="kpi-meta">
             {stats.bestSport && stats.sportBreakdown?.[stats.bestSport]
               ? `${(stats.sportBreakdown[stats.bestSport].winRate * 100).toFixed(1)}% win rate`
-              : 'Not enough data'}
+              : 'Gathering data...'}
           </div>
         </div>
       </div>
@@ -159,7 +182,7 @@ export default function Dashboard() {
       {/* Top Players */}
       {stats.playerBreakdown && Object.keys(stats.playerBreakdown).length > 0 && (
         <div className="section">
-          <h3>Player Performance</h3>
+          <h3>Top Players by Hit Rate</h3>
           <div className="players-list">
             {Object.entries(stats.playerBreakdown)
               .sort((a, b) => b[1].hitRate - a[1].hitRate)
@@ -186,34 +209,32 @@ export default function Dashboard() {
 
       {/* Insights */}
       <div className="section">
-        <h3>Insights & Recommendations</h3>
+        <h3>Insights</h3>
         <div className="insights">
-          {stats.currentWinRate >= 0.5 ? (
+          {stats.totalWon + stats.totalLost >= 10 && stats.currentWinRate >= 0.5 ? (
             <div className="insight positive">
               <TrendingUp size={20} />
               <div>
                 <strong>Strong Performance</strong>
-                <p>Your {(stats.currentWinRate * 100).toFixed(1)}% win rate is above average. Keep it up!</p>
+                <p>Your {(stats.currentWinRate * 100).toFixed(1)}% win rate is profitable. Keep focusing on high-confidence picks!</p>
               </div>
             </div>
-          ) : stats.totalSubmitted > 0 ? (
+          ) : stats.totalWon + stats.totalLost >= 10 ? (
             <div className="insight warning">
               <AlertCircle size={20} />
               <div>
                 <strong>Room to Improve</strong>
-                <p>Current {(stats.currentWinRate * 100).toFixed(1)}% win rate. Focus on high-confidence legs.</p>
+                <p>Your {(stats.currentWinRate * 100).toFixed(1)}% win rate needs improvement. Focus on the legs Claude recommends.</p>
               </div>
             </div>
           ) : null}
 
-          {stats.sportBreakdown && Object.keys(stats.sportBreakdown).length > 1 && (
+          {stats.bestSport && stats.sportBreakdown && Object.keys(stats.sportBreakdown).length > 1 && (
             <div className="insight">
               <Target size={20} />
               <div>
-                <strong>Focus Your Edge</strong>
-                <p>
-                  You're strongest in {stats.bestSport}. Consider focusing more picks on this sport.
-                </p>
+                <strong>Your Edge</strong>
+                <p>You're strongest in {stats.bestSport}. Consider allocating more picks to this sport.</p>
               </div>
             </div>
           )}
@@ -222,18 +243,18 @@ export default function Dashboard() {
             <div className="insight positive">
               <TrendingUp size={20} />
               <div>
-                <strong>Profitable Strategy</strong>
-                <p>Your strategy is showing +{stats.overallROI}% ROI. You have an edge!</p>
+                <strong>Profitable</strong>
+                <p>Your strategy shows +{stats.overallROI}% ROI. You have an edge!</p>
               </div>
             </div>
           )}
 
-          {stats.totalSubmitted < 10 && (
+          {stats.totalSubmitted < 20 && (
             <div className="insight">
               <Target size={20} />
               <div>
                 <strong>Build Sample Size</strong>
-                <p>You have {stats.totalSubmitted} picks. Need 50+ to validate your edge.</p>
+                <p>You have {stats.totalSubmitted} picks. Need 50+ results to validate your edge with confidence.</p>
               </div>
             </div>
           )}
@@ -241,9 +262,11 @@ export default function Dashboard() {
       </div>
 
       {/* Last Updated */}
-      <div className="last-updated">
-        Last updated: {new Date(stats.lastUpdated).toLocaleString()}
-      </div>
+      {stats.lastUpdated && (
+        <div className="last-updated">
+          Last updated: {new Date(stats.lastUpdated).toLocaleString()}
+        </div>
+      )}
     </div>
   );
 }
