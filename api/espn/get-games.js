@@ -54,8 +54,10 @@ async function fetchRealGames(sport) {
       data.events.forEach(event => {
         const status = event.status?.type || 'SCHEDULED';
         
-        // Only include scheduled or in-progress games (not final yet)
-        if (status !== 'FINAL' && status !== 'COMPLETED') {
+        // ONLY include games that haven't finished yet
+        const isCompleted = status === 'FINAL' || status === 'COMPLETED' || status === 'COMPLETED_OT';
+        
+        if (!isCompleted) {
           const competitors = event.competitions?.[0]?.competitors || [];
           
           if (competitors.length >= 2) {
@@ -76,7 +78,7 @@ async function fetchRealGames(sport) {
       });
     }
 
-    console.log(`✅ Found ${games.length} games from ESPN`);
+    console.log(`✅ Found ${games.length} active games from ESPN`);
     return games.length > 0 ? games : getMockGames(sport);
 
   } catch (error) {
@@ -91,6 +93,7 @@ function mapStatus(status) {
     'IN_PROGRESS': 'in_progress',
     'LIVE': 'in_progress',
     'HALFTIME': 'halftime',
+    'END_PERIOD': 'in_progress',
     'FINAL': 'final',
     'COMPLETED': 'final',
     'COMPLETED_OT': 'final'
