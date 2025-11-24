@@ -1,61 +1,64 @@
 // FILE LOCATION: src/pages/Home.jsx
 import { useState } from 'react';
 import { auth } from '../firebase/config';
-import { signOut } from 'firebase/auth';
 import SubmitPick from './SubmitPick';
-import '../styles/Home.css';
 import PickHistory from './PickHistory';
+import '../styles/Home.css';
 
-export default function Home({ user }) {
-  const [currentPage, setCurrentPage] = useState('submit'); // submit, history, dashboard
+export default function Home() {
+  const [activeTab, setActiveTab] = useState('submit');
 
   const handleLogout = async () => {
-    await signOut(auth);
+    try {
+      await auth.signOut();
+    } catch (err) {
+      console.error('Error logging out:', err);
+    }
   };
 
   return (
     <div className="home-container">
-      <nav className="navbar">
-        <h1>PickRefine</h1>
-        <div className="nav-buttons">
-          <button 
-            className={currentPage === 'submit' ? 'active' : ''}
-            onClick={() => setCurrentPage('submit')}
-          >
-            Submit Pick
-          </button>
-          <button 
-            className={currentPage === 'history' ? 'active' : ''}
-            onClick={() => setCurrentPage('history')}
-          >
-            History
-          </button>
-          <button 
-            className={currentPage === 'dashboard' ? 'active' : ''}
-            onClick={() => setCurrentPage('dashboard')}
-          >
-            Dashboard
-          </button>
-          <button onClick={handleLogout} className="logout-btn">
-            Logout
-          </button>
+      {/* Header */}
+      <div className="home-header">
+        <div className="header-content">
+          <h1>Consensus Picks MVP</h1>
+          <p className="tagline">AI-powered parlay analysis & refinement</p>
         </div>
-      </nav>
+        <button onClick={handleLogout} className="logout-btn">
+          Logout
+        </button>
+      </div>
 
-      <div className="main-content">
-        {currentPage === 'submit' && <SubmitPick />}
+      {/* Navigation Tabs */}
+      <div className="nav-tabs">
+        <button 
+          className={`nav-btn ${activeTab === 'submit' ? 'active' : ''}`}
+          onClick={() => setActiveTab('submit')}
+        >
+          Submit Pick
+        </button>
+        <button 
+          className={`nav-btn ${activeTab === 'history' ? 'active' : ''}`}
+          onClick={() => setActiveTab('history')}
+        >
+          History
+        </button>
+        <button 
+          className={`nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
+          onClick={() => setActiveTab('dashboard')}
+          disabled
+        >
+          Dashboard (Coming Soon)
+        </button>
+      </div>
 
-        {currentPage === 'history' && (
-          <div className="page">
-            <h2>Your Submission History</h2>
-            <p>Coming soon... Pick history and results</p>
-          </div>
-        )}
-
-        {currentPage === 'dashboard' && (
-          <div className="page">
-            <h2>Your Betting Dashboard</h2>
-            <p>Coming soon... Performance stats and trends</p>
+      {/* Tab Content */}
+      <div className="tab-content">
+        {activeTab === 'submit' && <SubmitPick />}
+        {activeTab === 'history' && <PickHistory />}
+        {activeTab === 'dashboard' && (
+          <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+            Dashboard coming in Phase 5
           </div>
         )}
       </div>
