@@ -21,15 +21,14 @@ export default function SubmitPick() {
   const [success, setSuccess] = useState(false);
   const [analysis, setAnalysis] = useState(null);
 
-  // Fetch games when sport changes
   useEffect(() => {
     fetchGames();
   }, [sport]);
 
   const fetchGames = async () => {
     setGameLoading(true);
-    setGame(''); // Reset game selection
-    setAnalysis(null); // Clear previous analysis
+    setGame('');
+    setAnalysis(null);
     try {
       const response = await fetch(`/api/espn/get-games?sport=${sport}`);
       const data = await response.json();
@@ -61,32 +60,43 @@ export default function SubmitPick() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    console.log('🔵 FORM SUBMITTED - handleSubmit called');
     setError('');
     setLoading(true);
     setAnalysis(null);
 
     try {
-      // Validate inputs
+      console.log('✅ Starting validation...');
+      
+      if (!auth.currentUser) {
+        console.error('❌ No user logged in');
+        setError('You must be logged in');
+        setLoading(false);
+        return;
+      }
+      console.log('✅ User logged in:', auth.currentUser.uid);
+
       if (!game) {
+        console.warn('⚠️ No game selected');
         setError('Please select a game');
         setLoading(false);
         return;
       }
+      console.log('✅ Game selected:', game);
 
       const filledLegs = legs.filter(leg => leg.player && leg.stat && leg.statCategory);
+      console.log('✅ Filled legs count:', filledLegs.length);
+      
       if (filledLegs.length === 0) {
+        console.warn('⚠️ No legs filled');
         setError('Please add at least one leg');
         setLoading(false);
         return;
       }
 
-      if (filledLegs.length > 15) {
-        setError('Maximum 15 legs per parlay');
-        setLoading(false);
-        return;
-      }
-
-      // Create pick submission
+      console.log('📝 All validation passed');
+      console.log('📝 Creating pick data with', filledLegs.length, 'legs');
+      
       const pickData = {
         userId: auth.currentUser.uid,
         sport,
@@ -101,15 +111,15 @@ export default function SubmitPick() {
         result: null
       };
 
-      // Add to Firestore first
+      console.log('💾 Saving to Firestore...');
       const docRef = await addDoc(
         collection(db, 'users', auth.currentUser.uid, 'submitted_picks'),
         pickData
       );
-
       const pickId = docRef.id;
+      console.log('✅ Pick saved with ID:', pickId);
 
-      // Then analyze it
+      console.log('🔍 Calling analysis endpoint...');
       const analysisResponse = await fetch('/api/picks/analyze-pick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -126,19 +136,21 @@ export default function SubmitPick() {
         })
       });
 
+      console.log('📊 Analysis response status:', analysisResponse.status);
       const analysisData = await analysisResponse.json();
+      console.log('📊 Analysis data received:', analysisData);
 
       if (!analysisData.success) {
+        console.error('❌ Analysis failed:', analysisData.error);
         setError('Analysis failed: ' + (analysisData.error || 'Unknown error'));
         setLoading(false);
         return;
       }
 
-      // Display analysis
+      console.log('✅ Analysis successful');
       setAnalysis(analysisData.analysis);
       setSuccess(true);
 
-      // Reset form
       setTimeout(() => {
         setSport('NFL');
         setGame('');
@@ -149,7 +161,7 @@ export default function SubmitPick() {
       }, 3000);
 
     } catch (err) {
-      console.error('Error submitting pick:', err);
+      console.error('❌ CATCH ERROR:', err);
       setError(err.message || 'Failed to submit pick');
     } finally {
       setLoading(false);
@@ -192,9 +204,6 @@ export default function SubmitPick() {
               ))}
             </select>
           )}
-          {games.length === 0 && !gameLoading && (
-            <div className="helper-text">No games available for this sport</div>
-          )}
         </div>
 
         {/* Wager Amount */}
@@ -209,7 +218,6 @@ export default function SubmitPick() {
             onChange={(e) => setWager(e.target.value)}
             placeholder="Enter wager amount"
           />
-          <div className="helper-text">Recommended: $1.50 - $4.00 for optimal Kelly sizing</div>
         </div>
 
         {/* Legs Section */}
@@ -230,28 +238,22 @@ export default function SubmitPick() {
           <button type="button" onClick={addLeg} className="add-leg-btn">
             + Add Leg
           </button>
-          <div className="helper-text">
-            Recommended: 5-7 legs for best hit rate. Too many legs = exponential difficulty.
-          </div>
         </div>
 
         {/* Reasoning */}
         <div className="form-group">
           <label>Why do you like these picks?</label>
           <textarea
-            placeholder="Share your reasoning and any edge you see..."
+            placeholder="Share your reasoning..."
             value={reasoning}
             onChange={(e) => setReasoning(e.target.value)}
             rows="4"
           />
-          <div className="helper-text">Optional: Help us understand your edge</div>
         </div>
 
-        {/* Error/Success Messages */}
+        {/* Messages */}
         {error && <div className="error-message">{error}</div>}
-        {success && (
-          <div className="success-message">✅ Pick submitted and analyzed!</div>
-        )}
+        {success && <div className="success-message">✅ Pick submitted!</div>}
 
         {/* Submit Button */}
         <button type="submit" disabled={loading} className="submit-btn">
