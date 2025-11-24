@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { auth } from '../firebase/config';
 import SubmitPick from './SubmitPick';
 import PickHistory from './PickHistory';
+import Dashboard from './Dashboard';
 import '../styles/Home.css';
 
 export default function Home() {
@@ -46,9 +47,8 @@ export default function Home() {
         <button 
           className={`nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
           onClick={() => setActiveTab('dashboard')}
-          disabled
         >
-          Dashboard (Coming Soon)
+          Dashboard
         </button>
       </div>
 
@@ -56,11 +56,7 @@ export default function Home() {
       <div className="tab-content">
         {activeTab === 'submit' && <SubmitPick />}
         {activeTab === 'history' && <PickHistory />}
-        {activeTab === 'dashboard' && (
-          <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
-            Dashboard coming in Phase 5
-          </div>
-        )}
+        {activeTab === 'dashboard' && <Dashboard />}
       </div>
     </div>
   );
