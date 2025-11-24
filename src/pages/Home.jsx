@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { auth } from '../firebase/config';
 import { signOut } from 'firebase/auth';
+import SubmitPick from './SubmitPick';
 import '../styles/Home.css';
 
 export default function Home({ user }) {
@@ -41,12 +42,7 @@ export default function Home({ user }) {
       </nav>
 
       <div className="main-content">
-        {currentPage === 'submit' && (
-          <div className="page">
-            <h2>Submit a Pick for Analysis</h2>
-            <p>Coming soon... Pick submission form</p>
-          </div>
-        )}
+        {currentPage === 'submit' && <SubmitPick />}
 
         {currentPage === 'history' && (
           <div className="page">
