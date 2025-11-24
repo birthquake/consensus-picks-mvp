@@ -1,10 +1,9 @@
 // FILE LOCATION: api/picks/analyze-pick.js
-import { getFirestore, collection, doc, updateDoc } from 'firebase/firestore';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
-import analyzeSubmittedPick from '../utils/strategy-analyzer.js';
+import { getQuickAnalysis } from '../utils/strategy-analyzer.js';
+import { analyzeWithClaude } from '../utils/claude-analyzer.js';
 
-// Initialize Firebase Admin
 let db;
 try {
   const adminApp = initializeApp({
@@ -34,43 +33,70 @@ export default async function handler(req, res) {
       });
     }
 
-    // Run analysis
-    const analysis = analyzeSubmittedPick(pickData);
+    console.log(`[${pickId}] Starting analysis for user ${userId}`);
 
-    // Save analysis to Firestore
-    const pickRef = doc(db, 'users', userId, 'submitted_picks', pickId);
+    // Step 1: Quick analysis (fast)
+    const quickAnalysis = getQuickAnalysis(pickData);
+    console.log(`[${pickId}] Quick analysis complete`);
+
+    // Step 2: Get user's historical performance
+    const userHistory = await getUserPerformance(userId);
+    console.log(`[${pickId}] User history retrieved`);
+
+    // Step 3: Claude analysis (intelligent)
+    const claudeAnalysis = await analyzeWithClaude(pickData, userHistory, quickAnalysis);
+    console.log(`[${pickId}] Claude analysis complete: ${claudeAnalysis.recommendation}`);
+
+    // Step 4: Save to Firestore
+    const pickRef = db.collection('users').doc(userId).collection('submitted_picks').doc(pickId);
     
-    await updateDoc(pickRef, {
+    await pickRef.update({
       analysis: {
-        recommendation: analysis.recommendation,
-        overallConfidence: analysis.overallConfidence,
-        expectedHitRate: analysis.expectedHitRate,
-        estimatedROI: analysis.estimatedROI,
-        legAnalysis: analysis.legAnalysis,
-        removedLegs: analysis.removedLegs,
-        suggestedAdditions: analysis.suggestedAdditions,
-        refinedOdds: analysis.refinedOdds,
-        refinedLegCount: analysis.refinedLegCount,
-        issues: analysis.issues,
-        warnings: analysis.warnings,
-        strengths: analysis.strengths,
+        recommendation: claudeAnalysis.recommendation,
+        reasoning: claudeAnalysis.reasoning,
+        redFlags: claudeAnalysis.redFlags,
+        greenFlags: claudeAnalysis.greenFlags,
+        legCount: claudeAnalysis.legCount,
         analysisTimestamp: new Date().toISOString()
       },
       status: 'analyzed'
     });
 
-    // Return analysis to frontend
+    console.log(`[${pickId}] Analysis saved to Firestore`);
+
+    // Return to frontend
     res.status(200).json({
       success: true,
       pickId,
-      analysis,
-      message: 'Pick analyzed successfully'
+      analysis: {
+        recommendation: claudeAnalysis.recommendation,
+        reasoning: claudeAnalysis.reasoning,
+        redFlags: claudeAnalysis.redFlags,
+        greenFlags: claudeAnalysis.greenFlags,
+        legCount: claudeAnalysis.legCount
+      }
     });
+
   } catch (error) {
-    console.error('Error analyzing pick:', error);
+    console.error(`[${pickId}] Error:`, error);
     res.status(500).json({ 
       error: error.message,
-      details: 'Failed to analyze pick'
+      pickId
     });
+  }
+}
+
+async function getUserPerformance(userId) {
+  try {
+    const performanceRef = db.collection('users').doc(userId).collection('performance_stats').doc('overall');
+    const doc = await performanceRef.get();
+    
+    if (doc.exists) {
+      return doc.data();
+    }
+    return null;
+  } catch (error) {
+    console.log('Could not fetch user performance:', error);
+    return null;
   }
 }
