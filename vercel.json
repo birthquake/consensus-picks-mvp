@@ -2,11 +2,11 @@
   "crons": [
     {
       "path": "/api/cron/process-results",
-      "schedule": "0 * * * *"
+      "schedule": "0 1 * * *"
     },
     {
       "path": "/api/cron/update-stats",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 2 * * *"
     }
   ]
 }
