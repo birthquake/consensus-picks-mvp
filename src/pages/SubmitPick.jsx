@@ -1,5 +1,5 @@
 // FILE LOCATION: src/pages/SubmitPick.jsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { db, auth } from '../firebase/config';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import LegForm from '../components/LegForm';
@@ -7,20 +7,42 @@ import '../styles/SubmitPick.css';
 
 export default function SubmitPick() {
   const [sport, setSport] = useState('NFL');
+  const [games, setGames] = useState([]);
   const [game, setGame] = useState('');
+  const [gameLoading, setGameLoading] = useState(false);
   const [wager, setWager] = useState('2.00');
   const [legs, setLegs] = useState([
-    { player: '', stat: '', threshold: '', confidence: 'High' }
+    { player: '', stat: '', statCategory: '', confidence: 'High' }
   ]);
   const [reasoning, setReasoning] = useState('');
-  const [screenshotMode, setScreenshotMode] = useState(false);
-  const [screenshot, setScreenshot] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
+  // Fetch games when sport changes
+  useEffect(() => {
+    fetchGames();
+  }, [sport]);
+
+  const fetchGames = async () => {
+    setGameLoading(true);
+    try {
+      const response = await fetch(`/api/espn/get-games?sport=${sport}`);
+      const data = await response.json();
+      
+      if (data.success) {
+        setGames(data.games);
+        setGame(''); // Reset game selection
+      }
+    } catch (err) {
+      console.error('Error fetching games:', err);
+    } finally {
+      setGameLoading(false);
+    }
+  };
+
   const addLeg = () => {
-    setLegs([...legs, { player: '', stat: '', threshold: '', confidence: 'High' }]);
+    setLegs([...legs, { player: '', stat: '', statCategory: '', confidence: 'High' }]);
   };
 
   const removeLeg = (index) => {
@@ -33,13 +55,6 @@ export default function SubmitPick() {
     setLegs(newLegs);
   };
 
-  const handleScreenshotUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setScreenshot(file);
-    }
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -47,13 +62,13 @@ export default function SubmitPick() {
 
     try {
       // Validate inputs
-      if (!game.trim()) {
-        setError('Please enter a game');
+      if (!game) {
+        setError('Please select a game');
         setLoading(false);
         return;
       }
 
-      const filledLegs = legs.filter(leg => leg.player && leg.stat && leg.threshold);
+      const filledLegs = legs.filter(leg => leg.player && leg.stat && leg.statCategory);
       if (filledLegs.length === 0) {
         setError('Please add at least one leg');
         setLoading(false);
@@ -70,14 +85,13 @@ export default function SubmitPick() {
         reasoning,
         submittedAt: serverTimestamp(),
         status: 'pending_analysis',
-        // These will be populated by the analysis function
         analysis: null,
         userDecision: 'pending',
         result: null
       };
 
       // Add to Firestore
-      const docRef = await addDoc(
+      await addDoc(
         collection(db, 'users', auth.currentUser.uid, 'submitted_picks'),
         pickData
       );
@@ -87,9 +101,8 @@ export default function SubmitPick() {
       setSport('NFL');
       setGame('');
       setWager('2.00');
-      setLegs([{ player: '', stat: '', threshold: '', confidence: 'High' }]);
+      setLegs([{ player: '', stat: '', statCategory: '', confidence: 'High' }]);
       setReasoning('');
-      setScreenshot(null);
 
       setTimeout(() => {
         setSuccess(false);
@@ -120,12 +133,22 @@ export default function SubmitPick() {
         {/* Game Selection */}
         <div className="form-group">
           <label>Game:</label>
-          <input
-            type="text"
-            placeholder="e.g., KC Chiefs vs JAX Jaguars"
-            value={game}
-            onChange={(e) => setGame(e.target.value)}
-          />
+          {gameLoading ? (
+            <div className="loading-text">Loading games...</div>
+          ) : (
+            <select 
+              value={game} 
+              onChange={(e) => setGame(e.target.value)}
+              disabled={games.length === 0}
+            >
+              <option value="">Select a game...</option>
+              {games.map(g => (
+                <option key={g.id} value={g.name}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Wager Amount */}
@@ -148,6 +171,8 @@ export default function SubmitPick() {
               key={index}
               leg={leg}
               index={index}
+              sport={sport}
+              gameId={game}
               onUpdate={updateLeg}
               onRemove={removeLeg}
               canRemove={legs.length > 1}
@@ -167,21 +192,6 @@ export default function SubmitPick() {
             onChange={(e) => setReasoning(e.target.value)}
             rows="4"
           />
-        </div>
-
-        {/* Screenshot Upload (Future) */}
-        <div className="form-group">
-          <label>
-            <input
-              type="checkbox"
-              checked={screenshotMode}
-              onChange={(e) => setScreenshotMode(e.target.checked)}
-            />
-            Upload Bet Slip Screenshot (Coming Soon)
-          </label>
-          {screenshotMode && (
-            <input type="file" accept="image/*" onChange={handleScreenshotUpload} />
-          )}
         </div>
 
         {/* Error/Success Messages */}
