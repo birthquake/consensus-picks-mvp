@@ -49,16 +49,29 @@ export default function LegForm({
   const fetchPlayers = async () => {
     setPlayersLoading(true);
     try {
+      console.log('🔵 Fetching players...');
+      console.log('Sport:', sport);
+      console.log('Game ID:', gameId);
+      console.log('Category:', leg.statCategory);
+      
+      // gameId is the actual event ID from ESPN, use it as eventId
       const response = await fetch(
-        `/api/espn/get-players?sport=${sport}&gameId=${gameId}&category=${leg.statCategory}`
+        `/api/espn/get-players?sport=${sport}&gameId=${encodeURIComponent(gameId)}&category=${encodeURIComponent(leg.statCategory)}&gameName=${encodeURIComponent(gameId)}&eventId=${encodeURIComponent(gameId)}`
       );
       const data = await response.json();
       
+      console.log('📊 Players API response:', data);
+      
       if (data.success) {
+        console.log('✅ Players loaded:', data.players.length, 'players');
         setPlayers(data.players);
+      } else {
+        console.error('❌ Players API error:', data.error);
+        setPlayers([]);
       }
     } catch (err) {
-      console.error('Error fetching players:', err);
+      console.error('❌ Error fetching players:', err);
+      setPlayers([]);
     } finally {
       setPlayersLoading(false);
     }
@@ -104,7 +117,7 @@ export default function LegForm({
               value={leg.statCategory}
               onChange={(e) => {
                 onUpdate(index, 'statCategory', e.target.value);
-                onUpdate(index, 'player', ''); // Reset player
+                onUpdate(index, 'player', '');
                 onUpdate(index, 'stat', '');
               }}
             >
@@ -125,11 +138,12 @@ export default function LegForm({
             <div className="loading-text">Select category first...</div>
           ) : playersLoading ? (
             <div className="loading-text">Loading players...</div>
+          ) : players.length === 0 ? (
+            <div className="loading-text">No players found for this game</div>
           ) : (
             <select
               value={leg.player}
               onChange={(e) => onUpdate(index, 'player', e.target.value)}
-              disabled={players.length === 0}
             >
               <option value="">Select player...</option>
               {players.map(player => (
@@ -153,9 +167,9 @@ export default function LegForm({
         </div>
 
         {/* Threshold */}
-      <div className="input-group">
-  <label>Threshold:</label>
-  {leg.player && leg.statCategory ? (
+        <div className="input-group">
+          <label>Threshold:</label>
+          {leg.player && leg.statCategory ? (
             <div className="threshold-selector">
               <input
                 type="text"
@@ -177,7 +191,7 @@ export default function LegForm({
               </div>
             </div>
           ) : (
-            <input type="text" placeholder="Select player first..." disabled />
+            <input type="text" placeholder="Select player and category first..." disabled />
           )}
         </div>
 
