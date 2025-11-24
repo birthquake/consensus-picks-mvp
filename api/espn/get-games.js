@@ -49,15 +49,22 @@ async function fetchRealGames(sport) {
 
     const data = await response.json();
     const games = [];
+    const now = new Date();
+    
+    // Dynamic time windows based on sport
+    const timeWindowDays = getTimeWindow(sport);
+    const windowEnd = new Date(now.getTime() + timeWindowDays * 24 * 60 * 60 * 1000);
 
     if (data.events && Array.isArray(data.events)) {
       data.events.forEach(event => {
         const status = event.status?.type || 'SCHEDULED';
+        const gameTime = new Date(event.date);
         
-        // ONLY include games that haven't finished yet
         const isCompleted = status === 'FINAL' || status === 'COMPLETED' || status === 'COMPLETED_OT';
+        const isWithinWindow = gameTime >= now && gameTime <= windowEnd;
+        const isLive = status === 'IN_PROGRESS' || status === 'LIVE' || status === 'HALFTIME' || status === 'END_PERIOD';
         
-        if (!isCompleted) {
+        if (!isCompleted && (isWithinWindow || isLive)) {
           const competitors = event.competitions?.[0]?.competitors || [];
           
           if (competitors.length >= 2) {
@@ -71,20 +78,36 @@ async function fetchRealGames(sport) {
               awayTeam,
               startTime: event.date,
               status: mapStatus(status),
-              eventId: event.id
+              eventId: event.id,
+              gameTime: gameTime
             });
           }
         }
       });
     }
 
-    console.log(`✅ Found ${games.length} active games from ESPN`);
+    // Sort by game time
+    games.sort((a, b) => a.gameTime - b.gameTime);
+
+    console.log(`✅ Found ${games.length} active games from ESPN (${timeWindowDays}-day window)`);
     return games.length > 0 ? games : getMockGames(sport);
 
   } catch (error) {
     console.error('❌ ESPN API error:', error);
     return getMockGames(sport);
   }
+}
+
+function getTimeWindow(sport) {
+  // NFL has sparse games - show 7 days
+  // NBA, NHL, CBB have games almost every night - show 2 days
+  const windowMap = {
+    'NFL': 7,
+    'NBA': 2,
+    'NHL': 2,
+    'CollegeBasketball': 2
+  };
+  return windowMap[sport] || 2;
 }
 
 function mapStatus(status) {
@@ -104,20 +127,16 @@ function mapStatus(status) {
 function getMockGames(sport) {
   const gamesMap = {
     NFL: [
-      { id: 'nfl-1', name: 'Kansas City Chiefs at Jacksonville Jaguars', homeTeam: 'Jacksonville Jaguars', awayTeam: 'Kansas City Chiefs', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nfl-1' },
-      { id: 'nfl-2', name: 'Los Angeles Rams at San Francisco 49ers', homeTeam: 'San Francisco 49ers', awayTeam: 'Los Angeles Rams', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nfl-2' }
+      { id: 'nfl-1', name: 'Kansas City Chiefs at Jacksonville Jaguars', homeTeam: 'Jacksonville Jaguars', awayTeam: 'Kansas City Chiefs', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nfl-1' }
     ],
     NBA: [
-      { id: 'nba-1', name: 'Boston Celtics at Los Angeles Lakers', homeTeam: 'Los Angeles Lakers', awayTeam: 'Boston Celtics', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nba-1' },
-      { id: 'nba-2', name: 'Denver Nuggets at Golden State Warriors', homeTeam: 'Golden State Warriors', awayTeam: 'Denver Nuggets', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nba-2' }
+      { id: 'nba-1', name: 'Boston Celtics at Los Angeles Lakers', homeTeam: 'Los Angeles Lakers', awayTeam: 'Boston Celtics', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nba-1' }
     ],
     NHL: [
-      { id: 'nhl-1', name: 'Boston Bruins at New York Rangers', homeTeam: 'New York Rangers', awayTeam: 'Boston Bruins', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nhl-1' },
-      { id: 'nhl-2', name: 'Montreal Canadiens at Toronto Maple Leafs', homeTeam: 'Toronto Maple Leafs', awayTeam: 'Montreal Canadiens', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nhl-2' }
+      { id: 'nhl-1', name: 'Boston Bruins at New York Rangers', homeTeam: 'New York Rangers', awayTeam: 'Boston Bruins', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nhl-1' }
     ],
     CollegeBasketball: [
-      { id: 'cbb-1', name: 'North Carolina at Duke', homeTeam: 'Duke', awayTeam: 'North Carolina', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'cbb-1' },
-      { id: 'cbb-2', name: 'Texas at Kansas', homeTeam: 'Kansas', awayTeam: 'Texas', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'cbb-2' }
+      { id: 'cbb-1', name: 'North Carolina at Duke', homeTeam: 'Duke', awayTeam: 'North Carolina', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'cbb-1' }
     ]
   };
 
