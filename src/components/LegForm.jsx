@@ -153,9 +153,9 @@ export default function LegForm({
         </div>
 
         {/* Threshold */}
-        <div className="input-group">
-          <label>Threshold:</label>
-          {leg.player ? (
+      <div className="input-group">
+  <label>Threshold:</label>
+  {leg.player && leg.statCategory ? (
             <div className="threshold-selector">
               <input
                 type="text"
