@@ -4,6 +4,7 @@ import { auth } from '../firebase/config';
 import { signOut } from 'firebase/auth';
 import SubmitPick from './SubmitPick';
 import '../styles/Home.css';
+import PickHistory from './PickHistory';
 
 export default function Home({ user }) {
   const [currentPage, setCurrentPage] = useState('submit'); // submit, history, dashboard
