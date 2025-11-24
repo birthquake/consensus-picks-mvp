@@ -72,3 +72,53 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Add to existing LegForm.css */
+
+.loading-text {
+  padding: 8px;
+  color: #999;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.disabled-input {
+  background: #f0f0f0;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.threshold-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.threshold-selector input {
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.suggested-thresholds {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.threshold-suggestion {
+  padding: 6px 10px;
+  background: #e8f0ff;
+  color: #667eea;
+  border: 1px solid #667eea;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.threshold-suggestion:hover {
+  background: #667eea;
+  color: white;
+}
