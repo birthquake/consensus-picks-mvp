@@ -78,11 +78,15 @@ async function fetchRealGames(sport) {
 
       // Parse API-Sports response
       if (data.response && Array.isArray(data.response)) {
-        data.response.forEach(item => {
+        console.log(`📋 Total games in response: ${data.response.length}`);
+        
+        data.response.forEach((item, index) => {
           // Note: API-Sports wraps game data in nested structure
           const gameData = item.game;
           const teamData = item.teams;
           const leagueData = item.league;
+          
+          console.log(`🎮 Game ${index}: ${teamData.away.name} @ ${teamData.home.name} - League: ${leagueData.name}, Status: ${gameData.status.short}`);
           
           // Only include the correct league (NFL = 1, NBA = 1, etc)
           const leagueId = leagueData.id;
@@ -95,11 +99,15 @@ async function fetchRealGames(sport) {
           if (sport === 'NHL' && leagueName === 'NHL') shouldInclude = true;
           if (sport === 'CollegeBasketball' && leagueName === 'NCAA') shouldInclude = true;
           
+          console.log(`  League filter (${sport}): ${shouldInclude}`);
           if (!shouldInclude) return; // Skip this game
           
           // Only include upcoming or in-progress games, NOT finished games
           const status = gameData.status.short;
-          if (status === 'NS' || status === 'Q1' || status === 'Q2' || status === 'Q3' || status === 'Q4' || status === 'HT' || status === 'OT') {
+          const statusIncluded = status === 'NS' || status === 'Q1' || status === 'Q2' || status === 'Q3' || status === 'Q4' || status === 'HT' || status === 'OT';
+          console.log(`  Status filter (${status}): ${statusIncluded}`);
+          
+          if (statusIncluded) {
             const homeTeam = teamData.home.name;
             const awayTeam = teamData.away.name;
             
@@ -118,6 +126,7 @@ async function fetchRealGames(sport) {
               gameTime,
               apiSportsId: gameData.id // Important: store this for get-players.js to use
             });
+            console.log(`  ✅ Added game`);
           }
         });
       }
