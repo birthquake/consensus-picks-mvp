@@ -1,4 +1,4 @@
-/* SubmitPick.css - Image Upload Page Styling */
+/* SubmitPick.css - Image Upload Page Styling (Simplified - No Image Storage) */
 
 :root {
   --primary-bg: #0f1419;
@@ -270,6 +270,61 @@
   flex: 1;
 }
 
+/* Analysis Result */
+.sp-analysis-result {
+  background: var(--secondary-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  padding: 2rem;
+  margin-top: 2rem;
+  animation: slideUp 0.4s ease;
+}
+
+.sp-analysis-result h2 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin: 0 0 1rem 0;
+  color: var(--text-primary);
+}
+
+.analysis-intro {
+  margin: 0 0 1.5rem 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.analysis-text {
+  background: var(--tertiary-bg);
+  border-left: 3px solid var(--accent-green);
+  padding: 1.5rem;
+  border-radius: 0.5rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+  margin-bottom: 1.5rem;
+  font-size: 0.95rem;
+}
+
+.analysis-note {
+  margin: 0;
+  padding: 1rem;
+  background: rgba(72, 187, 120, 0.1);
+  border: 1px solid var(--success-color);
+  border-radius: 0.5rem;
+  color: #9ae6b4;
+  font-size: 0.9rem;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .sp-upload-container {
@@ -309,5 +364,9 @@
 
   .sp-preview-actions button {
     width: 100%;
+  }
+
+  .sp-analysis-result {
+    padding: 1.5rem;
   }
 }
