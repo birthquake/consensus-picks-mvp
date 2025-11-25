@@ -1,26 +1,80 @@
 // FILE LOCATION: src/pages/SubmitPick.jsx
+// REDESIGNED: DraftKings-inspired UI with game cards, category tabs, and player selections
 import { useState, useEffect } from 'react';
 import { db, auth } from '../firebase/config';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import LegForm from '../components/LegForm';
 import PickAnalysis from '../components/PickAnalysis';
 import '../styles/SubmitPick.css';
+
+// Icon Components (SVG)
+const Icons = {
+  ChevronRight: () => (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor">
+      <path d="M7 5l5 5-5 5" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  ),
+  X: () => (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor">
+      <path d="M3 3l12 12M15 3L3 15" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  ),
+  Plus: () => (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor">
+      <path d="M10 5v10M5 10h10" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  ),
+  Check: () => (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor">
+      <path d="M4 10l4 4 8-8" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  ),
+  Clock: () => (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor">
+      <circle cx="8" cy="8" r="7" strokeWidth="1.5" />
+      <path d="M8 4v4l3 2" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+  ChevronDown: () => (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor">
+      <path d="M5 7l4 4 4-4" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+};
+
+const STAT_CATEGORIES = {
+  NFL: [
+    { id: 'passing-yards', label: 'Passing Yards', group: 'passing' },
+    { id: 'passing-tds', label: 'Pass TDs', group: 'passing' },
+    { id: 'receiving-yards', label: 'Receiving Yards', group: 'receiving' },
+    { id: 'receiving-tds', label: 'Rec TDs', group: 'receiving' },
+    { id: 'rushing-yards', label: 'Rushing Yards', group: 'rushing' },
+    { id: 'rushing-tds', label: 'Rush TDs', group: 'rushing' }
+  ],
+  NBA: [
+    { id: 'points', label: 'Points', group: 'scoring' },
+    { id: 'rebounds', label: 'Rebounds', group: 'rebounds' },
+    { id: 'assists', label: 'Assists', group: 'assists' }
+  ],
+  NHL: [
+    { id: 'goals', label: 'Goals', group: 'goals' },
+    { id: 'assists', label: 'Assists', group: 'assists' },
+    { id: 'shots', label: 'Shots', group: 'shots' }
+  ]
+};
 
 export default function SubmitPick() {
   const [sport, setSport] = useState('NFL');
   const [games, setGames] = useState([]);
-  const [game, setGame] = useState('');
-  const [gameEventId, setGameEventId] = useState('');
-  const [gameLoading, setGameLoading] = useState(false);
+  const [selectedGameIndex, setSelectedGameIndex] = useState(0);
+  const [selectedCategory, setSelectedCategory] = useState('passing-yards');
   const [wager, setWager] = useState('2.00');
-  const [legs, setLegs] = useState([
-    { player: '', stat: '', statCategory: '', confidence: 'High' }
-  ]);
+  const [legs, setLegs] = useState([]);
   const [reasoning, setReasoning] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [analysis, setAnalysis] = useState(null);
+  const [gameLoading, setGameLoading] = useState(false);
 
   useEffect(() => {
     fetchGames();
@@ -28,84 +82,80 @@ export default function SubmitPick() {
 
   const fetchGames = async () => {
     setGameLoading(true);
-    setGame('');
-    setGameEventId('');
-    setAnalysis(null);
+    setSelectedGameIndex(0);
+    setLegs([]);
     try {
       const response = await fetch(`/api/espn/get-games?sport=${sport}`);
       const data = await response.json();
-      
-      if (data.success) {
+      if (data.success && data.games.length > 0) {
         setGames(data.games);
+      } else {
+        setGames([]);
       }
     } catch (err) {
       console.error('Error fetching games:', err);
-      setError('Failed to load games');
+      setGames([]);
     } finally {
       setGameLoading(false);
     }
   };
 
-  const addLeg = () => {
-    setLegs([...legs, { player: '', stat: '', statCategory: '', confidence: 'High' }]);
+  const currentGame = games[selectedGameIndex];
+  const categories = STAT_CATEGORIES[sport] || [];
+  const currentCategory = categories.find(c => c.id === selectedCategory);
+
+  const addLeg = (player, threshold) => {
+    if (!currentGame) return;
+    
+    const newLeg = {
+      id: `${Date.now()}`,
+      player,
+      statCategory: selectedCategory,
+      statLabel: currentCategory?.label,
+      threshold,
+      confidence: 'High',
+      game: currentGame.name,
+      gameId: currentGame.id
+    };
+    
+    setLegs([...legs, newLeg]);
   };
 
-  const removeLeg = (index) => {
-    setLegs(legs.filter((_, i) => i !== index));
-  };
-
-  const updateLeg = (index, field, value) => {
-    const newLegs = [...legs];
-    newLegs[index][field] = value;
-    setLegs(newLegs);
+  const removeLeg = (legId) => {
+    setLegs(legs.filter(leg => leg.id !== legId));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('🔵 FORM SUBMITTED - handleSubmit called');
+    if (legs.length === 0) {
+      setError('Please add at least one leg');
+      return;
+    }
+
     setError('');
     setLoading(true);
     setAnalysis(null);
 
     try {
-      console.log('✅ Starting validation...');
-      
       if (!auth.currentUser) {
-        console.error('❌ No user logged in');
         setError('You must be logged in');
         setLoading(false);
         return;
       }
-      console.log('✅ User logged in:', auth.currentUser.uid);
 
-      if (!game) {
-        console.warn('⚠️ No game selected');
+      if (!currentGame) {
         setError('Please select a game');
         setLoading(false);
         return;
       }
-      console.log('✅ Game selected:', game);
 
-      const filledLegs = legs.filter(leg => leg.player && leg.statCategory && leg.threshold);
-      console.log('✅ Filled legs count:', filledLegs.length);
-      
-      if (filledLegs.length === 0) {
-        console.warn('⚠️ No legs filled');
-        setError('Please add at least one leg');
-        setLoading(false);
-        return;
-      }
-
-      console.log('📝 All validation passed');
-      console.log('📝 Creating pick data with', filledLegs.length, 'legs');
-      
       const pickData = {
         userId: auth.currentUser.uid,
         sport,
-        game,
-        eventId: gameEventId,
+        game: currentGame.name,
+        eventId: currentGame.eventId,
         wager: parseFloat(wager),
-        originalLegs: filledLegs,
+        originalLegs: legs,
         reasoning,
         submittedAt: serverTimestamp(),
         status: 'pending_analysis',
@@ -114,59 +164,44 @@ export default function SubmitPick() {
         result: null
       };
 
-      console.log('💾 Saving to Firestore...');
       const docRef = await addDoc(
         collection(db, 'users', auth.currentUser.uid, 'submitted_picks'),
         pickData
       );
       const pickId = docRef.id;
-      console.log('✅ Pick saved with ID:', pickId);
 
-      console.log('🔍 Calling analysis endpoint...');
       const analysisResponse = await fetch('/api/picks/analyze-pick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           pickId,
           userId: auth.currentUser.uid,
-          pickData: {
-            sport,
-            game,
-            eventId: gameEventId,
-            wager: parseFloat(wager),
-            originalLegs: filledLegs,
-            reasoning
-          }
+          pickData
         })
       });
 
-      console.log('📊 Analysis response status:', analysisResponse.status);
       const analysisData = await analysisResponse.json();
-      console.log('📊 Analysis data received:', analysisData);
 
       if (!analysisData.success) {
-        console.error('❌ Analysis failed:', analysisData.error);
         setError('Analysis failed: ' + (analysisData.error || 'Unknown error'));
         setLoading(false);
         return;
       }
 
-      console.log('✅ Analysis successful');
       setAnalysis(analysisData.analysis);
       setSuccess(true);
 
       setTimeout(() => {
         setSport('NFL');
-        setGame('');
-        setGameEventId('');
+        setSelectedGameIndex(0);
         setWager('2.00');
-        setLegs([{ player: '', stat: '', statCategory: '', confidence: 'High' }]);
+        setLegs([]);
         setReasoning('');
         setSuccess(false);
       }, 3000);
 
     } catch (err) {
-      console.error('❌ CATCH ERROR:', err);
+      console.error('Error:', err);
       setError(err.message || 'Failed to submit pick');
     } finally {
       setLoading(false);
@@ -174,110 +209,218 @@ export default function SubmitPick() {
   };
 
   return (
-    <div className="submit-pick-container">
-      <h2>Submit a Pick for Analysis</h2>
-      <p className="subtitle">Get AI-powered refinements based on expert betting strategies</p>
-
-      <form onSubmit={handleSubmit} className="pick-form">
-        {/* Sport Selection */}
-        <div className="form-group">
-          <label>Sport:</label>
-          <select value={sport} onChange={(e) => setSport(e.target.value)}>
-            <option value="NFL">NFL</option>
-            <option value="NBA">NBA</option>
-            <option value="NHL">NHL</option>
-            <option value="CollegeBasketball">College Basketball</option>
-          </select>
+    <div className="submit-pick-container-v2">
+      {/* Header */}
+      <div className="sp-header">
+        <div className="sp-header-content">
+          <h1>Build Your Parlay</h1>
+          <p>AI-powered pick analysis & refinement</p>
         </div>
+      </div>
 
-        {/* Game Selection */}
-        <div className="form-group">
-          <label>Game:</label>
-          {gameLoading ? (
-            <div className="loading-text">Loading games...</div>
-          ) : (
-            <select 
-              value={game} 
-              onChange={(e) => {
-                const selectedGame = games.find(g => g.name === e.target.value);
-                setGame(e.target.value);
-                setGameEventId(selectedGame?.eventId || '');
-              }}
-              disabled={games.length === 0}
-            >
-              <option value="">Select a game...</option>
-              {games.map(g => (
-                <option key={g.id} value={g.name}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-          )}
-          {games.length === 0 && !gameLoading && (
-            <div className="helper-text">No games available for this sport</div>
-          )}
-        </div>
-
-        {/* Wager Amount */}
-        <div className="form-group">
-          <label>Wager Amount ($):</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0.50"
-            max="1000"
-            value={wager}
-            onChange={(e) => setWager(e.target.value)}
-            placeholder="Enter wager amount"
-          />
-          <div className="helper-text">Recommended: $1.50 - $4.00 for optimal Kelly sizing</div>
-        </div>
-
-        {/* Legs Section */}
-        <div className="legs-section">
-          <h3>Parlay Legs ({legs.length})</h3>
-          {legs.map((leg, index) => (
-            <LegForm
-              key={index}
-              leg={leg}
-              index={index}
-              sport={sport}
-              gameId={game}
-              gameEventId={gameEventId}
-              onUpdate={updateLeg}
-              onRemove={removeLeg}
-              canRemove={legs.length > 1}
-            />
-          ))}
-          <button type="button" onClick={addLeg} className="add-leg-btn">
-            + Add Leg
+      {/* Sport Selector */}
+      <div className="sp-sport-selector">
+        {['NFL', 'NBA', 'NHL'].map(s => (
+          <button
+            key={s}
+            className={`sport-btn ${sport === s ? 'active' : ''}`}
+            onClick={() => setSport(s)}
+          >
+            {s}
           </button>
-          <div className="helper-text">
-            Recommended: 5-7 legs for best hit rate. Too many legs = exponential difficulty.
+        ))}
+      </div>
+
+      {gameLoading ? (
+        <div className="sp-loading">Loading games...</div>
+      ) : games.length === 0 ? (
+        <div className="sp-empty">
+          <p>No games available for {sport}</p>
+          <p className="sp-empty-sub">Check back soon or select a different sport</p>
+        </div>
+      ) : (
+        <>
+          {/* Game Cards */}
+          <div className="sp-games-section">
+            <h2 className="sp-section-title">Select Game</h2>
+            <div className="sp-games-scroll">
+              {games.map((g, idx) => (
+                <button
+                  key={g.id}
+                  className={`sp-game-card ${selectedGameIndex === idx ? 'active' : ''}`}
+                  onClick={() => setSelectedGameIndex(idx)}
+                >
+                  <div className="game-card-content">
+                    <div className="game-matchup">
+                      <div className="team">{g.awayTeam}</div>
+                      <div className="at">@</div>
+                      <div className="team">{g.homeTeam}</div>
+                    </div>
+                    <div className="game-time">
+                      <Icons.Clock />
+                      <span>{new Date(g.startTime).toLocaleDateString()} {new Date(g.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
 
-        {/* Reasoning */}
-        <div className="form-group">
-          <label>Why do you like these picks?</label>
-          <textarea
-            placeholder="Share your reasoning and any edge you see..."
-            value={reasoning}
-            onChange={(e) => setReasoning(e.target.value)}
-            rows="4"
-          />
-          <div className="helper-text">Optional: Help us understand your edge</div>
-        </div>
+          {currentGame && (
+            <>
+              {/* Category Tabs */}
+              <div className="sp-categories-section">
+                <div className="sp-categories-scroll">
+                  {categories.map(cat => (
+                    <button
+                      key={cat.id}
+                      className={`sp-category-tab ${selectedCategory === cat.id ? 'active' : ''}`}
+                      onClick={() => setSelectedCategory(cat.id)}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-        {/* Messages */}
-        {error && <div className="error-message">{error}</div>}
-        {success && <div className="success-message">✅ Pick submitted and analyzed!</div>}
+              {/* Player Selection Area */}
+              <div className="sp-players-section">
+                <h2 className="sp-section-title">{currentCategory?.label}</h2>
+                <div className="sp-players-grid">
+                  {/* Mock players - in real app, fetch from API */}
+                  <div className="sp-player-card">
+                    <div className="player-header">
+                      <div className="player-avatar">JG</div>
+                      <div className="player-info">
+                        <div className="player-name">Player 1</div>
+                        <div className="player-season">Avg: --</div>
+                      </div>
+                    </div>
+                    <div className="player-thresholds">
+                      {['50+', '75+', '100+'].map(t => (
+                        <button
+                          key={t}
+                          className="threshold-btn"
+                          onClick={() => addLeg('Player 1', t)}
+                        >
+                          {t}
+                          <span className="odds">-110</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-        {/* Submit Button */}
-        <button type="submit" disabled={loading} className="submit-btn">
-          {loading ? 'Analyzing...' : 'Submit Pick for Analysis'}
-        </button>
-      </form>
+                  <div className="sp-player-card">
+                    <div className="player-header">
+                      <div className="player-avatar">P2</div>
+                      <div className="player-info">
+                        <div className="player-name">Player 2</div>
+                        <div className="player-season">Avg: --</div>
+                      </div>
+                    </div>
+                    <div className="player-thresholds">
+                      {['50+', '75+', '100+'].map(t => (
+                        <button
+                          key={t}
+                          className="threshold-btn"
+                          onClick={() => addLeg('Player 2', t)}
+                        >
+                          {t}
+                          <span className="odds">-110</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="sp-player-card">
+                    <div className="player-header">
+                      <div className="player-avatar">P3</div>
+                      <div className="player-info">
+                        <div className="player-name">Player 3</div>
+                        <div className="player-season">Avg: --</div>
+                      </div>
+                    </div>
+                    <div className="player-thresholds">
+                      {['50+', '75+', '100+'].map(t => (
+                        <button
+                          key={t}
+                          className="threshold-btn"
+                          onClick={() => addLeg('Player 3', t)}
+                        >
+                          {t}
+                          <span className="odds">-110</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Parlay Summary */}
+              {legs.length > 0 && (
+                <div className="sp-summary-section">
+                  <h2 className="sp-section-title">Parlay ({legs.length})</h2>
+                  
+                  <div className="sp-wager-input">
+                    <label>Wager</label>
+                    <div className="input-group">
+                      <span className="currency">$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.50"
+                        value={wager}
+                        onChange={(e) => setWager(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="sp-legs-list">
+                    {legs.map((leg, idx) => (
+                      <div key={leg.id} className="sp-leg-item">
+                        <div className="leg-number">{idx + 1}</div>
+                        <div className="leg-details">
+                          <div className="leg-stat">{leg.statLabel}</div>
+                          <div className="leg-player">{leg.player} {leg.threshold}</div>
+                        </div>
+                        <button
+                          className="leg-remove"
+                          onClick={() => removeLeg(leg.id)}
+                          title="Remove leg"
+                        >
+                          <Icons.X />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="sp-reasoning">
+                    <label>Why do you like these picks?</label>
+                    <textarea
+                      placeholder="Share your reasoning and edge..."
+                      value={reasoning}
+                      onChange={(e) => setReasoning(e.target.value)}
+                      rows="3"
+                    />
+                  </div>
+
+                  {error && <div className="sp-error">{error}</div>}
+                  {success && <div className="sp-success">✓ Pick submitted and analyzed!</div>}
+
+                  <button
+                    type="submit"
+                    disabled={loading || legs.length === 0}
+                    className="sp-submit-btn"
+                    onClick={handleSubmit}
+                  >
+                    {loading ? 'Analyzing...' : `Submit for Analysis`}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
 
       {/* Analysis Results */}
       {analysis && <PickAnalysis analysis={analysis} />}
