@@ -1,5 +1,5 @@
 // FILE LOCATION: src/pages/SubmitPick.jsx
-// REDESIGNED: Simple bet slip image upload
+// SIMPLIFIED: No image storage, base64 → Claude → store extracted data only
 
 import { useState, useRef } from 'react';
 import { db, auth } from '../firebase/config';
@@ -42,6 +42,7 @@ export default function SubmitPick() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [analysisResult, setAnalysisResult] = useState(null);
   const fileInputRef = useRef(null);
 
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -117,6 +118,7 @@ export default function SubmitPick() {
 
     setLoading(true);
     setError('');
+    setAnalysisResult(null);
 
     try {
       // Convert image to base64
@@ -124,67 +126,28 @@ export default function SubmitPick() {
       reader.onload = async (e) => {
         const imageBase64 = e.target.result.split(',')[1];
 
-        // Upload to backend
-        const response = await fetch('/api/picks/upload-image', {
+        // Send base64 directly to Claude for extraction + analysis
+        const response = await fetch('/api/picks/extract-and-analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             userId: auth.currentUser.uid,
-            imageBase64,
-            fileName: image.name
+            imageBase64
           })
         });
 
         const data = await response.json();
 
         if (!data.success) {
-          setError(data.error || 'Failed to upload image');
+          setError(data.error || 'Failed to analyze bet slip');
           setLoading(false);
           return;
         }
 
-        // Image uploaded successfully, now extract picks
-        const extractResponse = await fetch('/api/picks/extract-picks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: auth.currentUser.uid,
-            betId: data.betId,
-            imageUrl: data.image_url
-          })
-        });
-
-        const extractData = await extractResponse.json();
-
-        if (!extractData.success) {
-          setError('Failed to extract picks from image');
-          setLoading(false);
-          return;
-        }
-
-        // Picks extracted, now analyze
-        const analysisResponse = await fetch('/api/picks/analyze-with-history', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: auth.currentUser.uid,
-            betId: data.betId,
-            picks: extractData.picks,
-            imageBase64
-          })
-        });
-
-        const analysisData = await analysisResponse.json();
-
-        if (!analysisData.success) {
-          setError('Failed to analyze picks');
-          setLoading(false);
-          return;
-        }
-
-        // All successful
+        // Success!
+        setAnalysisResult(data);
         setSuccess(true);
-        setSuccessMessage(`✓ Bet analyzed! ${extractData.picks.length} picks identified`);
+        setSuccessMessage(`✓ Bet analyzed! ${data.picks.length} picks identified`);
         
         // Reset form after 3 seconds
         setTimeout(() => {
@@ -192,6 +155,7 @@ export default function SubmitPick() {
           setPreview(null);
           setSuccess(false);
           setSuccessMessage('');
+          setAnalysisResult(null);
           if (fileInputRef.current) {
             fileInputRef.current.value = '';
           }
@@ -212,6 +176,7 @@ export default function SubmitPick() {
     setImage(null);
     setPreview(null);
     setError('');
+    setAnalysisResult(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -320,6 +285,20 @@ export default function SubmitPick() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Analysis Result */}
+        {analysisResult && (
+          <div className="sp-analysis-result">
+            <h2>Analysis Complete</h2>
+            <p className="analysis-intro">Your personalized analysis:</p>
+            <div className="analysis-text">
+              {analysisResult.analysis}
+            </div>
+            <p className="analysis-note">
+              ✓ Your bet has been saved to your history and will be tracked when results come in.
+            </p>
           </div>
         )}
       </div>
