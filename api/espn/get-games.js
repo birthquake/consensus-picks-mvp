@@ -82,10 +82,24 @@ async function fetchRealGames(sport) {
           // Note: API-Sports wraps game data in nested structure
           const gameData = item.game;
           const teamData = item.teams;
+          const leagueData = item.league;
           
-          // Only include finished games or upcoming games (not in progress for now)
+          // Only include the correct league (NFL = 1, NBA = 1, etc)
+          const leagueId = leagueData.id;
+          const leagueName = leagueData.name;
+          
+          // Filter by sport
+          let shouldInclude = false;
+          if (sport === 'NFL' && leagueName === 'NFL') shouldInclude = true;
+          if (sport === 'NBA' && leagueName === 'NBA') shouldInclude = true;
+          if (sport === 'NHL' && leagueName === 'NHL') shouldInclude = true;
+          if (sport === 'CollegeBasketball' && leagueName === 'NCAA') shouldInclude = true;
+          
+          if (!shouldInclude) return; // Skip this game
+          
+          // Only include upcoming or in-progress games, NOT finished games
           const status = gameData.status.short;
-          if (status === 'FT' || status === 'AOT' || status === 'NS' || status === 'Q1' || status === 'Q2' || status === 'Q3' || status === 'Q4' || status === 'HT' || status === 'OT') {
+          if (status === 'NS' || status === 'Q1' || status === 'Q2' || status === 'Q3' || status === 'Q4' || status === 'HT' || status === 'OT') {
             const homeTeam = teamData.home.name;
             const awayTeam = teamData.away.name;
             
