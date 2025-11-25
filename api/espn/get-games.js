@@ -76,9 +76,14 @@ async function fetchRealGames(sport) {
 
       const data = await response.json();
 
+      // DEBUG: Log the actual response to see structure
+      console.log(`📦 API-Sports raw response:`, JSON.stringify(data, null, 2));
+
       // Parse API-Sports response
       if (data.response && Array.isArray(data.response)) {
         data.response.forEach(game => {
+          console.log(`🎮 Processing game:`, JSON.stringify(game, null, 2));
+          
           const homeTeam = game.teams.home.name;
           const awayTeam = game.teams.away.name;
           const gameTime = new Date(game.date);
