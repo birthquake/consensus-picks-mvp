@@ -63,7 +63,7 @@
   padding: 0.75rem 1.25rem;
   border: 2px solid var(--border-color);
   background: var(--secondary-bg);
-  color: var(--text-secondary);
+  color: #cbd5e0;
   border-radius: 0.5rem;
   font-weight: 600;
   font-size: 0.95rem;
@@ -154,10 +154,11 @@
   align-items: center;
   gap: 0.75rem;
   font-weight: 600;
+  color: #ffffff;
 }
 
 .game-matchup .at {
-  color: var(--text-secondary);
+  color: #cbd5e0;
   font-size: 0.85rem;
 }
 
@@ -165,7 +166,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: var(--text-secondary);
+  color: #cbd5e0;
   font-size: 0.85rem;
 }
 
@@ -207,7 +208,7 @@
   padding: 0.65rem 1.25rem;
   background: var(--secondary-bg);
   border: 2px solid var(--border-color);
-  color: var(--text-secondary);
+  color: #cbd5e0;
   border-radius: 0.5rem;
   font-weight: 600;
   font-size: 0.9rem;
@@ -280,13 +281,13 @@
 
 .player-name {
   font-weight: 600;
-  color: var(--text-primary);
+  color: #ffffff;
   margin-bottom: 0.25rem;
 }
 
 .player-season {
   font-size: 0.85rem;
-  color: var(--text-secondary);
+  color: #cbd5e0;
 }
 
 .player-thresholds {
@@ -299,7 +300,7 @@
   padding: 0.75rem 0.5rem;
   background: var(--tertiary-bg);
   border: 1px solid var(--border-color);
-  color: var(--text-primary);
+  color: #ffffff;
   border-radius: 0.5rem;
   font-weight: 600;
   font-size: 0.85rem;
@@ -319,7 +320,7 @@
 
 .odds {
   font-size: 0.7rem;
-  color: var(--text-secondary);
+  color: #a0aec0;
 }
 
 /* Summary Section */
@@ -338,120 +339,12 @@
   margin-bottom: 2rem;
 }
 
-.sp-wager-input label {
-  display: block;
-  font-weight: 600;
-  margin-bottom: 0.75rem;
-  color: var(--text-primary);
-}
-
-.input-group {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.currency {
-  position: absolute;
-  left: 1rem;
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-.input-group input {
-  width: 100%;
-  padding: 0.75rem 1rem 0.75rem 2rem;
-  background: var(--tertiary-bg);
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
-  border-radius: 0.5rem;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.input-group input:focus {
-  outline: none;
-  border-color: var(--accent-green);
-  box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.1);
-}
-
-/* Legs List */
-.sp-legs-list {
-  margin-bottom: 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.sp-leg-item {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 1rem;
-  background: var(--tertiary-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 0.5rem;
-}
-
-.leg-number {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--accent-green);
-  color: #0f1419;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 0.9rem;
-  flex-shrink: 0;
-}
-
-.leg-details {
-  flex: 1;
-  min-width: 0;
-}
-
-.leg-stat {
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-}
-
-.leg-player {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.leg-remove {
-  width: 36px;
-  height: 36px;
-  border-radius: 0.5rem;
-  background: transparent;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-  flex-shrink: 0;
-}
-
-.leg-remove:hover {
-  border-color: var(--error-color);
-  color: var(--error-color);
-}
-
-/* Reasoning */
-.sp-reasoning {
-  margin-bottom: 1.5rem;
-}
-
+.sp-wager-input label,
 .sp-reasoning label {
   display: block;
   font-weight: 600;
   margin-bottom: 0.75rem;
-  color: var(--text-primary);
+  color: #ffffff;
 }
 
 .sp-reasoning textarea {
@@ -527,13 +420,13 @@
   margin: 3rem auto;
   padding: 2rem 1.5rem;
   text-align: center;
-  color: var(--text-secondary);
+  color: #cbd5e0;
 }
 
 .sp-empty p:first-child {
   font-size: 1.2rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: #ffffff;
   margin-bottom: 0.5rem;
 }
 
