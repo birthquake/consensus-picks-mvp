@@ -76,29 +76,35 @@ async function fetchRealGames(sport) {
 
       const data = await response.json();
 
-      // DEBUG: Log the actual response to see structure
-      console.log(`📦 API-Sports raw response:`, JSON.stringify(data, null, 2));
-
       // Parse API-Sports response
       if (data.response && Array.isArray(data.response)) {
-        data.response.forEach(game => {
-          console.log(`🎮 Processing game:`, JSON.stringify(game, null, 2));
+        data.response.forEach(item => {
+          // Note: API-Sports wraps game data in nested structure
+          const gameData = item.game;
+          const teamData = item.teams;
           
-          const homeTeam = game.teams.home.name;
-          const awayTeam = game.teams.away.name;
-          const gameTime = new Date(game.date);
+          // Only include finished games or upcoming games (not in progress for now)
+          const status = gameData.status.short;
+          if (status === 'FT' || status === 'AOT' || status === 'NS' || status === 'Q1' || status === 'Q2' || status === 'Q3' || status === 'Q4' || status === 'HT' || status === 'OT') {
+            const homeTeam = teamData.home.name;
+            const awayTeam = teamData.away.name;
+            
+            // Create proper date from nested date object
+            const dateTimeStr = `${gameData.date.date}T${gameData.date.time}:00Z`;
+            const gameTime = new Date(dateTimeStr);
 
-          games.push({
-            id: game.id,
-            name: `${awayTeam} at ${homeTeam}`,
-            homeTeam,
-            awayTeam,
-            startTime: game.date,
-            status: mapApiSportsStatus(game.status.short),
-            eventId: game.id,
-            gameTime,
-            apiSportsId: game.id // Important: store this for get-players.js to use
-          });
+            games.push({
+              id: gameData.id,
+              name: `${awayTeam} at ${homeTeam}`,
+              homeTeam,
+              awayTeam,
+              startTime: dateTimeStr,
+              status: mapApiSportsStatus(status),
+              eventId: gameData.id,
+              gameTime,
+              apiSportsId: gameData.id // Important: store this for get-players.js to use
+            });
+          }
         });
       }
     }
