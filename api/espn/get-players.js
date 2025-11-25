@@ -1,4 +1,6 @@
 // FILE LOCATION: api/espn/get-players.js
+// NEW APPROACH: Use Athlete Gamelog endpoint instead of boxscore parsing
+
 export default async function handler(req, res) {
   const { sport, category, gameName, eventId } = req.query;
 
@@ -6,6 +8,8 @@ export default async function handler(req, res) {
     if (!sport || !category || !gameName || !eventId) {
       return res.status(400).json({ error: 'Sport, category, gameName, and eventId required' });
     }
+
+    console.log('🔵 [GET-PLAYERS] Fetching players via gamelog:', { sport, category, eventId });
 
     const players = await fetchRealPlayers(sport, category, gameName, eventId);
 
@@ -18,7 +22,7 @@ export default async function handler(req, res) {
       source: 'espn_live'
     });
   } catch (error) {
-    console.error('Error fetching players:', error);
+    console.error('❌ [GET-PLAYERS] Error:', error);
     res.status(200).json({
       success: true,
       sport,
@@ -34,6 +38,7 @@ export default async function handler(req, res) {
 async function fetchRealPlayers(sport, category, gameName, eventId) {
   try {
     if (!eventId) {
+      console.log('⚠️ No eventId provided');
       return getMockPlayers(sport, category, gameName);
     }
 
@@ -45,67 +50,161 @@ async function fetchRealPlayers(sport, category, gameName, eventId) {
     };
 
     const config = leagueMap[sport];
-    if (!config) return getMockPlayers(sport, category, gameName);
-
-    // Fetch game summary/boxscore
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/summary?event=${eventId}`;
-    
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`ESPN API returned ${response.status}`);
+    if (!config) {
+      console.log('⚠️ Invalid sport:', sport);
+      return getMockPlayers(sport, category, gameName);
     }
 
-    const data = await response.json();
-    const teams = gameName.split(' at ').map(t => t.trim().toLowerCase());
-    const players = [];
+    // Step 1: Get game info to extract teams and date
+    console.log('📡 Step 1: Fetching game info...');
+    const gameInfo = await getGameInfo(config, eventId);
+    if (!gameInfo || !gameInfo.teams || gameInfo.teams.length === 0) {
+      console.log('⚠️ Could not fetch game info');
+      return getMockPlayers(sport, category, gameName);
+    }
 
-    // Parse boxscore for player stats
-    if (data.boxscore?.teams) {
-      data.boxscore.teams.forEach(team => {
-        const teamName = team.team?.displayName || '';
+    const gameDate = new Date(gameInfo.date);
+    console.log(`✅ Game date: ${gameDate.toISOString()}, Teams: ${gameInfo.teams.join(', ')}`);
+
+    // Step 2: Get rosters for both teams
+    console.log('📡 Step 2: Fetching team rosters...');
+    const allPlayers = [];
+    
+    for (const teamId of gameInfo.teamIds) {
+      const roster = await getTeamRoster(config, teamId);
+      if (roster && roster.length > 0) {
+        console.log(`  ✅ Got ${roster.length} players for team ${teamId}`);
+        allPlayers.push(...roster);
+      }
+    }
+
+    if (allPlayers.length === 0) {
+      console.log('⚠️ No players found in rosters');
+      return getMockPlayers(sport, category, gameName);
+    }
+
+    // Step 3: For each player, get their gamelog and find the stat for this game
+    console.log(`📡 Step 3: Fetching gamelogs for ${allPlayers.length} players...`);
+    const playersWithStats = [];
+
+    for (const player of allPlayers) {
+      try {
+        const gameStat = await getPlayerGameStat(config, player.id, gameDate, category);
         
-        const isInGame = teams.some(t => 
-          teamName.toLowerCase().includes(t) || t.includes(teamName.toLowerCase())
-        );
-
-        if (isInGame && team.players) {
-          team.players.forEach(playerData => {
-            const player = playerData.person;
-            const stats = playerData.stats || [];
-
-            if (player?.displayName) {
-              // Get the stat value for this category
-              const statValue = extractStatValue(stats, category, sport);
-
-              if (statValue !== null && statValue !== undefined) {
-                players.push({
-                  id: player.id,
-                  name: player.displayName,
-                  team: teamName,
-                  avg: Math.round(statValue * 10) / 10
-                });
-              }
-            }
+        if (gameStat !== null && gameStat !== undefined) {
+          playersWithStats.push({
+            id: player.id,
+            name: player.name,
+            team: player.team,
+            avg: Math.round(gameStat * 10) / 10
           });
         }
-      });
+      } catch (err) {
+        // Skip individual player errors
+        console.log(`  ⚠️ Could not get stat for ${player.name}: ${err.message}`);
+      }
     }
 
-    console.log(`✅ Found ${players.length} players with category ${category}`);
-    return players.length > 0 ? players : getMockPlayers(sport, category, gameName);
+    console.log(`✅ Found ${playersWithStats.length} players with stats`);
+    return playersWithStats.length > 0 ? playersWithStats : getMockPlayers(sport, category, gameName);
 
   } catch (error) {
-    console.error('Error fetching real players:', error);
+    console.error('❌ [FETCH-REAL] Error:', error);
     return getMockPlayers(sport, category, gameName);
   }
 }
 
-function extractStatValue(stats, category, sport) {
-  // Map categories to ESPN stat field names
+async function getGameInfo(config, eventId) {
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/summary?event=${eventId}`;
+    console.log(`  📡 Fetching: ${url}`);
+
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Status ${response.status}`);
+
+    const data = await response.json();
+    const competitors = data.competitions?.[0]?.competitors || [];
+
+    if (competitors.length < 2) return null;
+
+    const teams = competitors.map(c => c.team?.displayName).filter(Boolean);
+    const teamIds = competitors.map(c => c.team?.id).filter(Boolean);
+    const date = data.competitions?.[0]?.date;
+
+    return {
+      teams,
+      teamIds,
+      date
+    };
+  } catch (error) {
+    console.error('❌ [GET-GAME-INFO] Error:', error);
+    return null;
+  }
+}
+
+async function getTeamRoster(config, teamId) {
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/teams/${teamId}/roster`;
+    console.log(`  📡 Fetching roster for team ${teamId}`);
+
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Status ${response.status}`);
+
+    const data = await response.json();
+    const athletes = data.athletes || [];
+
+    return athletes.map(athlete => ({
+      id: athlete.id,
+      name: athlete.displayName,
+      team: data.team?.displayName || ''
+    }));
+  } catch (error) {
+    console.error(`❌ [GET-ROSTER] Error for team ${teamId}:`, error);
+    return null;
+  }
+}
+
+async function getPlayerGameStat(config, athleteId, gameDate, category) {
+  try {
+    const url = `https://site.web.api.espn.com/apis/common/v3/sports/${config.sport}/${config.league}/athletes/${athleteId}/gamelog`;
+    
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Status ${response.status}`);
+
+    const data = await response.json();
+    const games = data.stats || [];
+
+    if (!Array.isArray(games) || games.length === 0) {
+      return null;
+    }
+
+    // Find the game matching our date (same day)
+    const gameDateStr = gameDate.toISOString().split('T')[0];
+    
+    for (const game of games) {
+      const gameGameDate = new Date(game.date);
+      const gameGameDateStr = gameGameDate.toISOString().split('T')[0];
+
+      if (gameGameDateStr === gameDateStr) {
+        // Found the matching game, extract the stat
+        const statValue = extractStatFromGamelog(game, category);
+        return statValue;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error(`❌ [GET-GAMELOG] Error for athlete ${athleteId}:`, error);
+    return null;
+  }
+}
+
+function extractStatFromGamelog(game, category) {
+  // Map categories to gamelog field names
   const categoryMap = {
-    'passing_yards': ['passingYards', 'passingYd', 'passing'],
-    'receiving_yards': ['receivingYards', 'receivingYd', 'receiving'],
-    'rushing_yards': ['rushingYards', 'rushingYd', 'rushing'],
+    'passing_yards': ['passingYards', 'passing_yds', 'pass_yds'],
+    'receiving_yards': ['receivingYards', 'receiving_yds', 'rec_yds'],
+    'rushing_yards': ['rushingYards', 'rushing_yds', 'rush_yds'],
     'receptions': ['receivingReceptions', 'receptions', 'rec'],
     'touchdowns': ['touchdowns', 'total_td', 'td'],
     'points': ['points', 'pts'],
@@ -114,32 +213,48 @@ function extractStatValue(stats, category, sport) {
     'shots_on_goal': ['shots', 'sog'],
     'goals': ['goals', 'goal'],
     'hits': ['hits'],
-    '3_pointers': ['threePointFieldGoalsMade', 'three_pointers']
+    '3_pointers': ['threePointFieldGoalsMade', 'three_pointers', '3p']
   };
 
   const categoryKey = category.toLowerCase().replace(/[-\s]/g, '_');
   const possibleNames = categoryMap[categoryKey] || [category];
 
-  // Search through stats to find matching field
-  for (const stat of stats) {
-    const statName = (stat.name || '').toLowerCase().replace(/[-\s]/g, '_');
-    const abbr = (stat.abbreviation || '').toLowerCase().replace(/[-\s]/g, '_');
-    
-    // Check if any of the possible names match
-    for (const possibleName of possibleNames) {
-      const normalized = possibleName.toLowerCase().replace(/[-\s]/g, '_');
+  // First check if game has a stats object
+  if (game.stats && typeof game.stats === 'object') {
+    for (const [key, value] of Object.entries(game.stats)) {
+      const normalizedKey = key.toLowerCase().replace(/[-\s]/g, '_');
       
-      if (
-        statName.includes(normalized) ||
-        abbr.includes(normalized) ||
-        stat.name?.toLowerCase().includes(possibleName.toLowerCase())
-      ) {
-        const value = parseInt(stat.displayValue || stat.value || 0);
-        return !isNaN(value) ? value : 0;
+      for (const possibleName of possibleNames) {
+        const normalized = possibleName.toLowerCase().replace(/[-\s]/g, '_');
+        
+        if (normalizedKey.includes(normalized) || normalized.includes(normalizedKey)) {
+          const numValue = parseInt(value) || parseFloat(value) || 0;
+          if (!isNaN(numValue)) {
+            console.log(`    ✅ Found ${category}: ${numValue} (from field: ${key})`);
+            return numValue;
+          }
+        }
       }
     }
   }
 
+  // Also check top-level properties
+  for (const possibleName of possibleNames) {
+    const normalized = possibleName.toLowerCase().replace(/[-\s]/g, '_');
+    for (const [key, value] of Object.entries(game)) {
+      const normalizedKey = key.toLowerCase().replace(/[-\s]/g, '_');
+      
+      if (normalizedKey.includes(normalized) || normalized.includes(normalizedKey)) {
+        const numValue = parseInt(value) || parseFloat(value) || 0;
+        if (!isNaN(numValue)) {
+          console.log(`    ✅ Found ${category}: ${numValue} (from field: ${key})`);
+          return numValue;
+        }
+      }
+    }
+  }
+
+  console.log(`    ⚠️ Could not find stat "${category}" in gamelog`);
   return null;
 }
 
