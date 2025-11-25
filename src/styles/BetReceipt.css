@@ -1,0 +1,319 @@
+/* BetReceipt.css - Styled bet receipt display */
+
+:root {
+  --primary-bg: #0f1419;
+  --secondary-bg: #1a1f2e;
+  --tertiary-bg: #252d3d;
+  --accent-green: #00d4aa;
+  --text-primary: #ffffff;
+  --text-secondary: #cbd5e0;
+  --border-color: #2d3748;
+  --success-color: #48bb78;
+  --error-color: #f56565;
+  --warning-color: #ed8936;
+}
+
+.bet-receipt {
+  background: var(--secondary-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  transition: all 0.2s ease;
+}
+
+.bet-receipt:hover {
+  border-color: var(--accent-green);
+  box-shadow: 0 4px 20px rgba(0, 212, 170, 0.1);
+}
+
+/* Header */
+.br-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+}
+
+.br-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.br-sportsbook {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.br-date {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.br-date svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Status Badge */
+.br-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.br-status svg {
+  width: 14px;
+  height: 14px;
+}
+
+.br-status-pending {
+  background: rgba(237, 137, 54, 0.1);
+  color: #fbd38d;
+  border: 1px solid var(--warning-color);
+}
+
+.br-status-won {
+  background: rgba(72, 187, 120, 0.1);
+  color: #9ae6b4;
+  border: 1px solid var(--success-color);
+}
+
+.br-status-lost {
+  background: rgba(245, 101, 101, 0.1);
+  color: #fc8181;
+  border: 1px solid var(--error-color);
+}
+
+/* Picks List */
+.br-picks {
+  margin-bottom: 1.5rem;
+}
+
+.br-pick {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--tertiary-bg);
+}
+
+.br-pick:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.br-pick-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: linear-gradient(135deg, var(--accent-green), #00d4aa);
+  color: #0f1419;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.br-pick-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.br-pick-player {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  margin-bottom: 0.25rem;
+}
+
+.br-pick-stat {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.br-pick-odds {
+  font-weight: 600;
+  color: var(--accent-green);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+/* Divider */
+.br-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 1.5rem 0;
+}
+
+/* Wager Section */
+.br-wager-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.br-wager-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+}
+
+.br-label {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.br-value {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.br-value svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Potential Payout */
+.br-potential {
+  padding: 0.75rem;
+  background: linear-gradient(135deg, rgba(0, 212, 170, 0.1), rgba(0, 212, 170, 0.05));
+  border-radius: 0.5rem;
+  border-left: 3px solid var(--accent-green);
+}
+
+.br-potential-text {
+  color: var(--accent-green);
+}
+
+/* Result */
+.br-result {
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  border-left: 3px solid;
+}
+
+.br-win {
+  background: rgba(72, 187, 120, 0.1);
+  border-left-color: var(--success-color);
+}
+
+.br-loss {
+  background: rgba(245, 101, 101, 0.1);
+  border-left-color: var(--error-color);
+}
+
+.br-result-text {
+  font-weight: 700;
+}
+
+.br-win-text {
+  color: #9ae6b4;
+}
+
+.br-loss-text {
+  color: #fc8181;
+}
+
+/* Analysis */
+.br-analysis {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.br-analysis-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.75rem;
+}
+
+.br-analysis-text {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--tertiary-bg);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  border-left: 3px solid var(--accent-green);
+}
+
+/* Status Variations */
+.bet-receipt.status-won {
+  border-left: 4px solid var(--success-color);
+}
+
+.bet-receipt.status-lost {
+  border-left: 4px solid var(--error-color);
+}
+
+.bet-receipt.status-pending {
+  border-left: 4px solid var(--warning-color);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .bet-receipt {
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .br-header {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .br-status {
+    width: fit-content;
+  }
+
+  .br-pick {
+    gap: 0.75rem;
+  }
+
+  .br-pick-num {
+    width: 24px;
+    height: 24px;
+    font-size: 0.75rem;
+  }
+
+  .br-pick-player {
+    font-size: 0.9rem;
+  }
+
+  .br-pick-stat {
+    font-size: 0.8rem;
+  }
+
+  .br-wager-row {
+    padding: 0.5rem 0;
+  }
+
+  .br-analysis-text {
+    font-size: 0.85rem;
+    padding: 0.75rem;
+  }
+}
