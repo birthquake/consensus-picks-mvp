@@ -1,4 +1,6 @@
 // FILE LOCATION: api/espn/get-games.js
+// UPDATED TO USE API-SPORTS ONLY (replaces ESPN)
+
 export default async function handler(req, res) {
   const { sport } = req.query;
 
@@ -13,7 +15,7 @@ export default async function handler(req, res) {
       success: true,
       sport,
       games,
-      source: 'espn_live'
+      source: 'api_sports'
     });
   } catch (error) {
     console.error('Error fetching games:', error);
@@ -28,98 +30,100 @@ export default async function handler(req, res) {
 }
 
 async function fetchRealGames(sport) {
+  // API-Sports league mapping
   const leagueMap = {
-    'NFL': { league: 'nfl', sport: 'football' },
-    'NBA': { league: 'nba', sport: 'basketball' },
-    'NHL': { league: 'nhl', sport: 'hockey' },
-    'CollegeBasketball': { league: 'mens-college-basketball', sport: 'basketball' }
+    'NFL': { baseUrl: 'https://v1.american-football.api-sports.io', leagueId: 1 },
+    'NBA': { baseUrl: 'https://v1.basketball.api-sports.io', leagueId: 1 },
+    'NHL': { baseUrl: 'https://v1.hockey.api-sports.io', leagueId: 1 },
+    'CollegeBasketball': { baseUrl: 'https://v1.basketball.api-sports.io', leagueId: 2 }
   };
 
   const config = leagueMap[sport];
   if (!config) return getMockGames(sport);
 
+  const apiKey = process.env.API_SPORTS_KEY;
+  if (!apiKey) {
+    console.error('❌ API_SPORTS_KEY not found in environment variables');
+    return getMockGames(sport);
+  }
+
   try {
-    const url = `https://site.web.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?region=us&lang=en`;
-    console.log(`📡 Fetching ESPN games from: ${url}`);
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`ESPN API returned ${response.status}`);
-    }
-
-    const data = await response.json();
     const games = [];
     const now = new Date();
     
-    // Dynamic time windows based on sport
-    const timeWindowDays = getTimeWindow(sport);
-    const windowEnd = new Date(now.getTime() + timeWindowDays * 24 * 60 * 60 * 1000);
+    // Determine how many days to check
+    const daysToCheck = sport === 'NFL' ? 7 : 2; // NFL is sparse, other sports have daily games
 
-    if (data.events && Array.isArray(data.events)) {
-      data.events.forEach(event => {
-        const status = event.status?.type || 'SCHEDULED';
-        const gameTime = new Date(event.date);
-        
-        const isCompleted = status === 'FINAL' || status === 'COMPLETED' || status === 'COMPLETED_OT';
-        const isWithinWindow = gameTime >= now && gameTime <= windowEnd;
-        const isLive = status === 'IN_PROGRESS' || status === 'LIVE' || status === 'HALFTIME' || status === 'END_PERIOD';
-        
-        if (!isCompleted && (isWithinWindow || isLive)) {
-          const competitors = event.competitions?.[0]?.competitors || [];
-          
-          if (competitors.length >= 2) {
-            const homeTeam = competitors.find(c => c.homeAway === 'home')?.team?.displayName || 'Team A';
-            const awayTeam = competitors.find(c => c.homeAway === 'away')?.team?.displayName || 'Team B';
-            
-            games.push({
-              id: event.id,
-              name: `${awayTeam} at ${homeTeam}`,
-              homeTeam,
-              awayTeam,
-              startTime: event.date,
-              status: mapStatus(status),
-              eventId: event.id,
-              gameTime: gameTime
-            });
-          }
+    // Check each day
+    for (let i = 0; i < daysToCheck; i++) {
+      const checkDate = new Date(now);
+      checkDate.setDate(checkDate.getDate() + i);
+      const dateStr = checkDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+
+      const url = `${config.baseUrl}/games?date=${dateStr}`;
+      console.log(`📡 Fetching ${sport} games from API-Sports for ${dateStr}`);
+
+      const response = await fetch(url, {
+        headers: {
+          'x-rapidapi-key': apiKey
         }
       });
+
+      if (!response.ok) {
+        console.error(`API-Sports returned ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+
+      // Parse API-Sports response
+      if (data.response && Array.isArray(data.response)) {
+        data.response.forEach(game => {
+          const homeTeam = game.teams.home.name;
+          const awayTeam = game.teams.away.name;
+          const gameTime = new Date(game.date);
+
+          games.push({
+            id: game.id,
+            name: `${awayTeam} at ${homeTeam}`,
+            homeTeam,
+            awayTeam,
+            startTime: game.date,
+            status: mapApiSportsStatus(game.status.short),
+            eventId: game.id,
+            gameTime,
+            apiSportsId: game.id // Important: store this for get-players.js to use
+          });
+        });
+      }
     }
 
     // Sort by game time
     games.sort((a, b) => a.gameTime - b.gameTime);
 
-    console.log(`✅ Found ${games.length} active games from ESPN (${timeWindowDays}-day window)`);
+    console.log(`✅ Found ${games.length} active games from API-Sports`);
     return games.length > 0 ? games : getMockGames(sport);
 
   } catch (error) {
-    console.error('❌ ESPN API error:', error);
+    console.error('❌ API-Sports error:', error);
     return getMockGames(sport);
   }
 }
 
-function getTimeWindow(sport) {
-  // NFL has sparse games - show 7 days
-  // NBA, NHL, CBB have games almost every night - show 2 days
-  const windowMap = {
-    'NFL': 7,
-    'NBA': 2,
-    'NHL': 2,
-    'CollegeBasketball': 2
-  };
-  return windowMap[sport] || 2;
-}
-
-function mapStatus(status) {
+function mapApiSportsStatus(status) {
+  // API-Sports status codes: NS, Q1-Q4, OT, HT, FT, AOT, CANC, PST
   const statusMap = {
-    'SCHEDULED': 'scheduled',
-    'IN_PROGRESS': 'in_progress',
-    'LIVE': 'in_progress',
-    'HALFTIME': 'halftime',
-    'END_PERIOD': 'in_progress',
-    'FINAL': 'final',
-    'COMPLETED': 'final',
-    'COMPLETED_OT': 'final'
+    'NS': 'scheduled',    // Not Started
+    'Q1': 'in_progress',
+    'Q2': 'in_progress',
+    'Q3': 'in_progress',
+    'Q4': 'in_progress',
+    'OT': 'in_progress',  // Overtime
+    'HT': 'halftime',
+    'FT': 'final',        // Full Time
+    'AOT': 'final',       // After Overtime
+    'CANC': 'cancelled',
+    'PST': 'postponed'
   };
   return statusMap[status] || 'scheduled';
 }
@@ -127,16 +131,16 @@ function mapStatus(status) {
 function getMockGames(sport) {
   const gamesMap = {
     NFL: [
-      { id: 'nfl-1', name: 'Kansas City Chiefs at Jacksonville Jaguars', homeTeam: 'Jacksonville Jaguars', awayTeam: 'Kansas City Chiefs', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nfl-1' }
+      { id: 'nfl-1', name: 'Kansas City Chiefs at Jacksonville Jaguars', homeTeam: 'Jacksonville Jaguars', awayTeam: 'Kansas City Chiefs', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nfl-1', apiSportsId: 'nfl-1' }
     ],
     NBA: [
-      { id: 'nba-1', name: 'Boston Celtics at Los Angeles Lakers', homeTeam: 'Los Angeles Lakers', awayTeam: 'Boston Celtics', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nba-1' }
+      { id: 'nba-1', name: 'Boston Celtics at Los Angeles Lakers', homeTeam: 'Los Angeles Lakers', awayTeam: 'Boston Celtics', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nba-1', apiSportsId: 'nba-1' }
     ],
     NHL: [
-      { id: 'nhl-1', name: 'Boston Bruins at New York Rangers', homeTeam: 'New York Rangers', awayTeam: 'Boston Bruins', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nhl-1' }
+      { id: 'nhl-1', name: 'Boston Bruins at New York Rangers', homeTeam: 'New York Rangers', awayTeam: 'Boston Bruins', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'nhl-1', apiSportsId: 'nhl-1' }
     ],
     CollegeBasketball: [
-      { id: 'cbb-1', name: 'North Carolina at Duke', homeTeam: 'Duke', awayTeam: 'North Carolina', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'cbb-1' }
+      { id: 'cbb-1', name: 'North Carolina at Duke', homeTeam: 'Duke', awayTeam: 'North Carolina', startTime: new Date().toISOString(), status: 'scheduled', eventId: 'cbb-1', apiSportsId: 'cbb-1' }
     ]
   };
 
