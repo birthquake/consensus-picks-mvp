@@ -1,4 +1,4 @@
-/* BetReceipt.css - Styled bet receipt display */
+/* BetReceipt.css - Styled bet receipt display (collapsible) */
 
 :root {
   --primary-bg: #0f1419;
@@ -17,9 +17,9 @@
   background: var(--secondary-bg);
   border: 1px solid var(--border-color);
   border-radius: 0.75rem;
-  padding: 1.5rem;
   margin-bottom: 1.5rem;
   transition: all 0.2s ease;
+  overflow: hidden;
 }
 
 .bet-receipt:hover {
@@ -27,19 +27,42 @@
   box-shadow: 0 4px 20px rgba(0, 212, 170, 0.1);
 }
 
+/* Collapsible Header Button */
+.br-header-button {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 1.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+}
+
+.br-header-button:hover {
+  background: rgba(0, 212, 170, 0.05);
+}
+
 /* Header */
 .br-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 1.5rem;
   gap: 1rem;
+  width: 100%;
 }
 
 .br-header-left {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  text-align: left;
+}
+
+.br-header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
 
 .br-sportsbook {
@@ -94,6 +117,37 @@
   background: rgba(245, 101, 101, 0.1);
   color: #fc8181;
   border: 1px solid var(--error-color);
+}
+
+/* Chevron Icon */
+.br-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+  color: var(--text-secondary);
+}
+
+.br-chevron.expanded {
+  transform: rotate(180deg);
+  color: var(--accent-green);
+}
+
+/* Expandable Content */
+.br-content {
+  padding: 0 1.5rem 1.5rem 1.5rem;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Picks List */
@@ -277,8 +331,11 @@
 /* Responsive */
 @media (max-width: 768px) {
   .bet-receipt {
-    padding: 1rem;
     margin-bottom: 1rem;
+  }
+
+  .br-header-button {
+    padding: 1rem;
   }
 
   .br-header {
@@ -286,8 +343,17 @@
     gap: 0.75rem;
   }
 
+  .br-header-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .br-status {
-    width: fit-content;
+    flex: 1;
+  }
+
+  .br-content {
+    padding: 0 1rem 1rem 1rem;
   }
 
   .br-pick {
