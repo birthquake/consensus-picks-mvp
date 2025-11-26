@@ -126,13 +126,14 @@ export default function SubmitPick() {
       reader.onload = async (e) => {
         const imageBase64 = e.target.result.split(',')[1];
 
-        // Send base64 directly to Claude for extraction + analysis
+        // Send base64 and media type directly to Claude for extraction + analysis
         const response = await fetch('/api/picks/extract-and-analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             userId: auth.currentUser.uid,
-            imageBase64
+            imageBase64,
+            imageMediaType: image.type  // ← Pass actual media type (image/jpeg, image/png, image/webp)
           })
         });
 
