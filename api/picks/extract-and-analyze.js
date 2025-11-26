@@ -3,7 +3,7 @@
 // No Firebase Storage - only stores extracted data
 
 import { Anthropic } from '@anthropic-ai/sdk';
-import { initializeApp, cert } from 'firebase-admin/app';
+import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
 // Initialize Firebase Admin
@@ -16,7 +16,7 @@ try {
   });
 } catch (err) {
   // App already initialized
-  app = require('firebase-admin/app').getApp();
+  app = getApp();
 }
 
 const db = getFirestore(app);
