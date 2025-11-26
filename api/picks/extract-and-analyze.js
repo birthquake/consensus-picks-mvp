@@ -112,18 +112,30 @@ Try your best to extract what you can see, even if some fields are unclear.`
     // Parse extracted data
     let extractedData;
     try {
-      const responseText = extractionMessage.content[0].text;
-      console.log('🔍 Claude raw response:', responseText);
+      let responseText = extractionMessage.content[0].text;
+      console.log('🔍 Claude raw response (first 500 chars):', responseText.substring(0, 500));
+      console.log('🔍 Claude response length:', responseText.length);
       
-      const jsonText = responseText
+      // Try multiple cleanup approaches
+      let jsonText = responseText
         .replace(/```json\n?/g, '')
         .replace(/```\n?/g, '')
         .trim();
+      
+      // If still has markdown, try more aggressive cleaning
+      if (jsonText.includes('```')) {
+        jsonText = jsonText.replace(/^```[\s\S]*?\n/, '').replace(/\n```$/, '');
+      }
+      
+      console.log('📝 Cleaned JSON (first 500 chars):', jsonText.substring(0, 500));
+      console.log('📝 Cleaned JSON length:', jsonText.length);
+      
       extractedData = JSON.parse(jsonText);
-      console.log('✅ Parsed extraction data:', extractedData);
+      console.log('✅ Parsed extraction data:', JSON.stringify(extractedData).substring(0, 200));
     } catch (parseError) {
-      console.error('❌ Failed to parse extraction:', parseError);
-      console.error('Response text was:', extractionMessage.content[0].text);
+      console.error('❌ Failed to parse extraction:', parseError.message);
+      console.error('❌ Error at position:', parseError.message.match(/position (\d+)/)?.[1]);
+      console.error('Response text was:', extractionMessage.content[0].text.substring(0, 1000));
       return res.status(400).json({
         success: false,
         error: 'Could not parse picks from image. Please ensure it\'s a clear bet slip screenshot.'
