@@ -121,49 +121,51 @@ export default function SubmitPick() {
     setAnalysisResult(null);
 
     try {
-      // Convert image to base64
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const imageBase64 = e.target.result.split(',')[1];
+      // Convert image to base64 (wait for FileReader to complete)
+      const imageBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          resolve(e.target.result.split(',')[1]);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(image);
+      });
 
-        // Send base64 and media type directly to Claude for extraction + analysis
-        const response = await fetch('/api/picks/extract-and-analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: auth.currentUser.uid,
-            imageBase64,
-            imageMediaType: image.type  // ← Pass actual media type (image/jpeg, image/png, image/webp)
-          })
-        });
+      // Send base64 and media type directly to Claude for extraction + analysis
+      const response = await fetch('/api/picks/extract-and-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: auth.currentUser.uid,
+          imageBase64,
+          imageMediaType: image.type  // ← Pass actual media type (image/jpeg, image/png, image/webp)
+        })
+      });
 
-        const data = await response.json();
+      const data = await response.json();
 
-        if (!data.success) {
-          setError(data.error || 'Failed to analyze bet slip');
-          setLoading(false);
-          return;
+      if (!data.success) {
+        setError(data.error || 'Failed to analyze bet slip');
+        setLoading(false);
+        return;
+      }
+
+      // Success!
+      setAnalysisResult(data);
+      setSuccess(true);
+      setSuccessMessage(`✓ Bet analyzed! ${data.picks.length} picks identified`);
+      
+      // Reset form after 3 seconds
+      setTimeout(() => {
+        setImage(null);
+        setPreview(null);
+        setSuccess(false);
+        setSuccessMessage('');
+        setAnalysisResult(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
         }
-
-        // Success!
-        setAnalysisResult(data);
-        setSuccess(true);
-        setSuccessMessage(`✓ Bet analyzed! ${data.picks.length} picks identified`);
-        
-        // Reset form after 3 seconds
-        setTimeout(() => {
-          setImage(null);
-          setPreview(null);
-          setSuccess(false);
-          setSuccessMessage('');
-          setAnalysisResult(null);
-          if (fileInputRef.current) {
-            fileInputRef.current.value = '';
-          }
-        }, 3000);
-      };
-
-      reader.readAsDataURL(image);
+      }, 3000);
 
     } catch (err) {
       console.error('Error:', err);
