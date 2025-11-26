@@ -69,6 +69,10 @@ export default function History() {
           ...doc.data()
         }));
 
+        console.log('📊 Fetched bets for status:', selectedStatus);
+        console.log('📊 Number of bets:', fetchedBets.length);
+        console.log('📊 First few bets:', fetchedBets.slice(0, 2).map(b => ({ id: b.id, status: b.status, created_at: b.created_at })));
+
         // Sort based on sortBy preference
         if (sortBy === 'oldest') {
           fetchedBets.reverse();
