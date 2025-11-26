@@ -60,21 +60,24 @@ export default async function handler(req, res) {
             },
             {
               type: 'text',
-              text: `Analyze this sports bet slip screenshot and extract all the picks/bets. Return ONLY valid JSON (no markdown, no extra text).
+              text: `Analyze this sports bet slip screenshot and extract all the picks/bets visible. Return ONLY valid JSON (no markdown, no extra text).
 
-For each pick, extract:
-- player: Player name (string)
-- stat: Stat name (e.g., "Passing Yards", "Receiving Yards", "Points")
-- bet_type: Type of bet - "Over", "Under", "Moneyline", "Spread", "Parlay Leg", etc.
-- line: The number line (e.g., 280 for Over 280) (number)
-- odds: The odds (e.g., -110) (number)
-- sport: Sport (NFL, NBA, NHL, MLB, etc.) (string)
+For each pick/bet line you see, extract:
+- player: Player or team name
+- stat: The stat being bet on (e.g., "Passing Yards", "Receiving Yards", "Points", "Spread", "Moneyline", etc.)
+- bet_type: Type of bet - "Over", "Under", "Moneyline", "Spread", or the direction if visible
+- line: The number/line for the bet (if visible as a number)
+- odds: The odds shown (e.g., -110, +150)
+- sport: Sport (NFL, NBA, NHL, MLB, College Football, etc.) - infer if not obvious
 
 Also identify:
-- sportsbook: Which sportsbook (DraftKings, FanDuel, BetMGM, etc.)
-- parlay_legs: Number of legs if it's a parlay (number or null)
-- potential_payout: The payout shown (number or null)
-- wager_amount: The wager amount shown (number or null)
+- sportsbook: Which sportsbook (DraftKings, FanDuel, BetMGM, Draftkings, etc.)
+- parlay_legs: Number of legs if it's a parlay (or number of picks)
+- potential_payout: The payout amount shown (look for "to win" or total payout)
+- wager_amount: The amount wagered/bet
+
+IMPORTANT: Be flexible with what counts as a pick. Accept any bet shown on the slip.
+If any field is not visible or unclear, use null.
 
 Return JSON format:
 {
@@ -94,10 +97,12 @@ Return JSON format:
   ]
 }
 
-If you cannot extract valid picks or the image doesn't show a bet slip, return:
+If you cannot extract ANY valid picks from this image, return:
 {
   "error": "Could not extract picks from this image"
-}`
+}
+
+Try your best to extract what you can see, even if some fields are unclear.`
             }
           ]
         }
