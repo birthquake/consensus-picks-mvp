@@ -113,13 +113,17 @@ Try your best to extract what you can see, even if some fields are unclear.`
     let extractedData;
     try {
       const responseText = extractionMessage.content[0].text;
+      console.log('🔍 Claude raw response:', responseText);
+      
       const jsonText = responseText
         .replace(/```json\n?/g, '')
         .replace(/```\n?/g, '')
         .trim();
       extractedData = JSON.parse(jsonText);
+      console.log('✅ Parsed extraction data:', extractedData);
     } catch (parseError) {
       console.error('❌ Failed to parse extraction:', parseError);
+      console.error('Response text was:', extractionMessage.content[0].text);
       return res.status(400).json({
         success: false,
         error: 'Could not parse picks from image. Please ensure it\'s a clear bet slip screenshot.'
