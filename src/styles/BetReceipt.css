@@ -315,6 +315,77 @@
   border-left: 3px solid var(--accent-green);
 }
 
+/* Markdown styling */
+.br-analysis-text h1,
+.br-analysis-text h2,
+.br-analysis-text h3,
+.br-analysis-text h4,
+.br-analysis-text h5,
+.br-analysis-text h6 {
+  color: var(--accent-green);
+  font-weight: 700;
+  margin: 1rem 0 0.5rem 0;
+  line-height: 1.3;
+}
+
+.br-analysis-text h1 { font-size: 1.3rem; }
+.br-analysis-text h2 { font-size: 1.15rem; }
+.br-analysis-text h3 { font-size: 1rem; }
+
+.br-analysis-text p {
+  margin: 0.5rem 0;
+}
+
+.br-analysis-text strong,
+.br-analysis-text b {
+  color: var(--accent-green);
+  font-weight: 700;
+}
+
+.br-analysis-text em,
+.br-analysis-text i {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.br-analysis-text ul,
+.br-analysis-text ol {
+  margin: 0.75rem 0;
+  padding-left: 1.5rem;
+}
+
+.br-analysis-text li {
+  margin: 0.5rem 0;
+  color: var(--text-primary);
+}
+
+.br-analysis-text li strong {
+  color: var(--accent-green);
+}
+
+.br-analysis-text code {
+  background: rgba(0, 212, 170, 0.1);
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.25rem;
+  color: var(--accent-green);
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+}
+
+.br-analysis-text blockquote {
+  border-left: 3px solid var(--accent-green);
+  padding-left: 1rem;
+  margin: 0.75rem 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.br-analysis-text hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 1rem 0;
+}
+
 /* Status Variations */
 .bet-receipt.status-won {
   border-left: 4px solid var(--success-color);
