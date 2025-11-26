@@ -11,12 +11,13 @@ const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{
 
 let app;
 try {
+  // Try to get existing app first
+  app = getApp();
+} catch (err) {
+  // App doesn't exist, initialize it
   app = initializeApp({
     credential: cert(serviceAccount)
   });
-} catch (err) {
-  // App already initialized
-  app = getApp();
 }
 
 const db = getFirestore(app);
