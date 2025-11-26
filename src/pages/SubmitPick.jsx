@@ -131,6 +131,12 @@ export default function SubmitPick() {
         reader.readAsDataURL(image);
       });
 
+      // Determine media type (iOS sometimes returns empty, so fallback to jpeg)
+      let mediaType = image.type;
+      if (!mediaType || !mediaType.startsWith('image/')) {
+        mediaType = 'image/jpeg'; // Default fallback for iOS
+      }
+
       // Send base64 and media type directly to Claude for extraction + analysis
       const response = await fetch('/api/picks/extract-and-analyze', {
         method: 'POST',
@@ -138,7 +144,7 @@ export default function SubmitPick() {
         body: JSON.stringify({
           userId: auth.currentUser.uid,
           imageBase64,
-          imageMediaType: image.type  // ← Pass actual media type (image/jpeg, image/png, image/webp)
+          imageMediaType: mediaType  // ← Pass actual media type with fallback
         })
       });
 
