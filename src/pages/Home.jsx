@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { auth } from '../firebase/config';
 import SubmitPick from './SubmitPick';
-import PickHistory from './PickHistory';
+import History from './History';
 import Dashboard from './Dashboard';
 import '../styles/Home.css';
 
@@ -55,7 +55,7 @@ export default function Home() {
       {/* Tab Content */}
       <div className="tab-content">
         {activeTab === 'submit' && <SubmitPick />}
-        {activeTab === 'history' && <PickHistory />}
+        {activeTab === 'history' && <History />}
         {activeTab === 'dashboard' && <Dashboard />}
       </div>
     </div>
