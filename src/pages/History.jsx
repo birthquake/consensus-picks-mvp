@@ -223,24 +223,17 @@ export default function History() {
                 }
                 
                 return (
-                  <BetReceipt
-                    key={bet.id}
-                    picks={bet.picks}
-                    sportsbook={bet.sportsbook}
-                    parlay_legs={bet.parlay_legs}
-                    wager_amount={bet.wager_amount}
-                    potential_payout={bet.potential_payout}
-                    analysis={bet.analysis}
-                    status={bet.status}
-                    profit_loss={bet.profit_loss}
-                    created_at={createdAt}
-                  />
+                  <div key={bet.id} style={{ marginBottom: '2rem', padding: '1rem', border: '2px solid red' }}>
+                    <h3 style={{ color: 'white' }}>Bet: {bet.sportsbook}</h3>
+                    <p style={{ color: 'white' }}>Picks: {bet.picks?.length || 0}</p>
+                    <p style={{ color: 'white' }}>Analysis: {bet.analysis?.substring(0, 50)}...</p>
+                  </div>
                 );
               } catch (error) {
-                console.error('Error rendering BetReceipt:', error);
+                console.error('Error rendering bet:', error);
                 return (
                   <div key={bet.id} style={{ color: 'red', padding: '1rem' }}>
-                    Error rendering bet {bet.id}
+                    Error rendering bet {bet.id}: {error.message}
                   </div>
                 );
               }
