@@ -137,6 +137,15 @@ export default function SubmitPick() {
         mediaType = 'image/jpeg'; // Default fallback for iOS
       }
 
+      console.log('DEBUG: Image info -', {
+        fileName: image.name,
+        fileSize: image.size,
+        fileType: image.type,
+        determinedMediaType: mediaType,
+        base64Length: imageBase64.length,
+        base64Start: imageBase64.substring(0, 50)
+      });
+
       // Send base64 and media type directly to Claude for extraction + analysis
       const response = await fetch('/api/picks/extract-and-analyze', {
         method: 'POST',
@@ -160,18 +169,7 @@ export default function SubmitPick() {
       setAnalysisResult(data);
       setSuccess(true);
       setSuccessMessage(`✓ Bet analyzed! ${data.picks.length} picks identified`);
-      
-      // Reset form after 3 seconds
-      setTimeout(() => {
-        setImage(null);
-        setPreview(null);
-        setSuccess(false);
-        setSuccessMessage('');
-        setAnalysisResult(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
-      }, 3000);
+      setLoading(false);
 
     } catch (err) {
       console.error('Error:', err);
@@ -308,6 +306,13 @@ export default function SubmitPick() {
             <p className="analysis-note">
               ✓ Your bet has been saved to your history and will be tracked when results come in.
             </p>
+            <button
+              onClick={clearImage}
+              className="sp-submit-btn"
+              style={{ marginTop: '1.5rem' }}
+            >
+              Upload Another Bet
+            </button>
           </div>
         )}
       </div>
