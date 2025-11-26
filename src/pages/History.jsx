@@ -212,20 +212,26 @@ export default function History() {
           </div>
         ) : (
           <div className="h-bets-list">
-            {displayBets.map(bet => (
-              <BetReceipt
-                key={bet.id}
-                picks={bet.picks}
-                sportsbook={bet.sportsbook}
-                parlay_legs={bet.parlay_legs}
-                wager_amount={bet.wager_amount}
-                potential_payout={bet.potential_payout}
-                analysis={bet.analysis}
-                status={bet.status}
-                profit_loss={bet.profit_loss}
-                created_at={bet.created_at?.toDate?.() || new Date(bet.created_at)}
-              />
-            ))}
+            <div style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+              DEBUG: Rendering {displayBets.length} bets
+            </div>
+            {displayBets.map(bet => {
+              console.log('🎨 Rendering BetReceipt for bet:', bet.id, bet);
+              return (
+                <BetReceipt
+                  key={bet.id}
+                  picks={bet.picks}
+                  sportsbook={bet.sportsbook}
+                  parlay_legs={bet.parlay_legs}
+                  wager_amount={bet.wager_amount}
+                  potential_payout={bet.potential_payout}
+                  analysis={bet.analysis}
+                  status={bet.status}
+                  profit_loss={bet.profit_loss}
+                  created_at={bet.created_at?.toDate?.() || new Date(bet.created_at)}
+                />
+              );
+            })}
           </div>
         )}
       </div>
