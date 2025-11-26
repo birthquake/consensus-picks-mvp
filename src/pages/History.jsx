@@ -212,25 +212,38 @@ export default function History() {
           </div>
         ) : (
           <div className="h-bets-list">
-            <div style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              DEBUG: Rendering {displayBets.length} bets
-            </div>
             {displayBets.map(bet => {
-              console.log('🎨 Rendering BetReceipt for bet:', bet.id, bet);
-              return (
-                <BetReceipt
-                  key={bet.id}
-                  picks={bet.picks}
-                  sportsbook={bet.sportsbook}
-                  parlay_legs={bet.parlay_legs}
-                  wager_amount={bet.wager_amount}
-                  potential_payout={bet.potential_payout}
-                  analysis={bet.analysis}
-                  status={bet.status}
-                  profit_loss={bet.profit_loss}
-                  created_at={bet.created_at?.toDate?.() || new Date(bet.created_at)}
-                />
-              );
+              try {
+                // Safe timestamp conversion
+                let createdAt = bet.created_at;
+                if (bet.created_at && typeof bet.created_at.toDate === 'function') {
+                  createdAt = bet.created_at.toDate();
+                } else if (typeof bet.created_at === 'string') {
+                  createdAt = new Date(bet.created_at);
+                }
+                
+                return (
+                  <BetReceipt
+                    key={bet.id}
+                    picks={bet.picks}
+                    sportsbook={bet.sportsbook}
+                    parlay_legs={bet.parlay_legs}
+                    wager_amount={bet.wager_amount}
+                    potential_payout={bet.potential_payout}
+                    analysis={bet.analysis}
+                    status={bet.status}
+                    profit_loss={bet.profit_loss}
+                    created_at={createdAt}
+                  />
+                );
+              } catch (error) {
+                console.error('Error rendering BetReceipt:', error);
+                return (
+                  <div key={bet.id} style={{ color: 'red', padding: '1rem' }}>
+                    Error rendering bet {bet.id}
+                  </div>
+                );
+              }
             })}
           </div>
         )}
