@@ -1,10 +1,16 @@
 // FILE LOCATION: src/components/BetReceipt.jsx
-// Displays extracted bet slip in a receipt format
+// Displays extracted bet slip in a receipt format (collapsible)
 
+import { useState } from 'react';
 import '../styles/BetReceipt.css';
 
 // SVG Icons
 const Icons = {
+  ChevronDown: () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  ),
   Calendar: () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -49,7 +55,7 @@ export default function BetReceipt({
   profit_loss = null,
   created_at = new Date().toISOString()
 }) {
-  console.log('🎨 BetReceipt rendering:', { sportsbook, picksCount: picks.length, status });
+  const [isExpanded, setIsExpanded] = useState(false);
   
   // Format date
   const formatDate = (isoString) => {
@@ -103,86 +109,107 @@ export default function BetReceipt({
   return (
     <div className={`bet-receipt status-${status === 'complete' ? (profit_loss >= 0 ? 'won' : 'lost') : 'pending'}`}>
       
-      {/* Header */}
-      <div className="br-header">
-        <div className="br-header-left">
-          <div className="br-sportsbook">{sportsbook}</div>
-          <div className="br-date">
-            <Icons.Calendar />
-            <span>{formatDate(created_at)}</span>
+      {/* Collapsible Header */}
+      <button 
+        className="br-header-button"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="br-header">
+          <div className="br-header-left">
+            <div className="br-sportsbook">{sportsbook}</div>
+            <div className="br-date">
+              <Icons.Calendar />
+              <span>{formatDate(created_at)}</span>
+            </div>
+          </div>
+          <div className="br-header-right">
+            <div className={statusBadge.class}>
+              <statusBadge.icon />
+              <span>{statusBadge.text}</span>
+            </div>
+            <div className={`br-chevron ${isExpanded ? 'expanded' : ''}`}>
+              <Icons.ChevronDown />
+            </div>
           </div>
         </div>
-        <div className={statusBadge.class}>
-          <statusBadge.icon />
-          <span>{statusBadge.text}</span>
-        </div>
-      </div>
+      </button>
 
-      {/* Picks */}
-      <div className="br-picks">
-        {picks.map((pick, index) => (
-          <div key={index} className="br-pick">
-            <div className="br-pick-num">{index + 1}</div>
-            <div className="br-pick-details">
-              <div className="br-pick-player">{pick.player}</div>
-              <div className="br-pick-stat">
-                {pick.stat} {pick.bet_type} {pick.line}
+      {/* Expandable Content */}
+      {isExpanded && (
+        <div className="br-content">
+          {/* Picks */}
+          <div className="br-picks">
+            {picks.map((pick, index) => (
+              <div key={index} className="br-pick">
+                <div className="br-pick-num">{index + 1}</div>
+                <div className="br-pick-details">
+                  <div className="br-pick-player">{pick.player}</div>
+                  <div className="br-pick-stat">
+                    {pick.stat} {pick.bet_type} {pick.line}
+                  </div>
+                </div>
+                <div className="br-pick-odds">{pick.odds > 0 ? '+' : ''}{pick.odds}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="br-divider" />
+
+          {/* Wager Section */}
+          <div className="br-wager-section">
+            {parlay_legs && (
+              <div className="br-wager-row">
+                <span className="br-label">Parlay Legs</span>
+                <span className="br-value">{parlay_legs}</span>
+              </div>
+            )}
+            <div className="br-wager-row">
+              <span className="br-label">Wager Amount</span>
+              <span className="br-value">
+                <Icons.DollarSign />
+                {formatCurrency(wager_amount)}
+              </span>
+            </div>
+            
+            <div className="br-potential">
+              <div className="br-wager-row">
+                <span className="br-label br-potential-text">Potential Payout</span>
+                <span className="br-value br-potential-text">
+                  <Icons.DollarSign />
+                  {formatCurrency(potential_payout)}
+                </span>
               </div>
             </div>
-            <div className="br-pick-odds">{pick.odds > 0 ? '+' : ''}{pick.odds}</div>
           </div>
-        ))}
-      </div>
 
-      <div className="br-divider" />
+          {/* Result (if completed) */}
+          {status === 'complete' && profit_loss !== null && (
+            <>
+              <div className="br-divider" />
+              <div className={`br-result ${profit_loss >= 0 ? 'br-win' : 'br-loss'}`}>
+                <div className="br-wager-row">
+                  <span className="br-label">Final Result</span>
+                  <span className={`br-value br-result-text ${profit_loss >= 0 ? 'br-win-text' : 'br-loss-text'}`}>
+                    <Icons.DollarSign />
+                    {profit_loss >= 0 ? '+' : ''}{formatCurrency(profit_loss)}
+                  </span>
+                </div>
+              </div>
+            </>
+          )}
 
-      {/* Wager Section */}
-      <div className="br-wager-section">
-        {parlay_legs && (
-          <div className="br-wager-row">
-            <span className="br-label">Parlay Legs</span>
-            <span className="br-value">{parlay_legs}</span>
-          </div>
-        )}
-        <div className="br-wager-row">
-          <span className="br-label">Wager Amount</span>
-          <span className="br-value">
-            <Icons.DollarSign />
-            {formatCurrency(wager_amount)}
-          </span>
-        </div>
-        
-        <div className="br-potential">
-          <div className="br-wager-row">
-            <span className="br-label br-potential-text">Potential Payout</span>
-            <span className="br-value br-potential-text">
-              <Icons.DollarSign />
-              {formatCurrency(potential_payout)}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Result (if completed) */}
-      {status === 'complete' && profit_loss !== null && (
-        <div className={`br-result ${profit_loss >= 0 ? 'br-win' : 'br-loss'}`}>
-          <div className="br-wager-row">
-            <span className="br-label">Final Result</span>
-            <span className={`br-value br-result-text ${profit_loss >= 0 ? 'br-win-text' : 'br-loss-text'}`}>
-              <Icons.DollarSign />
-              {profit_loss >= 0 ? '+' : ''}{formatCurrency(profit_loss)}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Analysis */}
-      {analysis && (
-        <div className="br-analysis">
-          <div className="br-analysis-label">Personalized Analysis</div>
-          <div className="br-analysis-text">
-            {analysis}
-          </div>
+          {/* Analysis */}
+          {analysis && (
+            <>
+              <div className="br-divider" />
+              <div className="br-analysis">
+                <div className="br-analysis-label">Personalized Analysis</div>
+                <div className="br-analysis-text">
+                  {analysis}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
