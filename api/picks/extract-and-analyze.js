@@ -1,380 +1,321 @@
-// FILE LOCATION: api/picks/extract-and-analyze.js
-// SIMPLIFIED: Takes base64 image, extracts picks + analyzes with user history in ONE call
-// No Firebase Storage - only stores extracted data
+// FILE LOCATION: src/pages/SubmitPick.jsx
+// SIMPLIFIED: No image storage, base64 → Claude → store extracted data only
 
-import { Anthropic } from '@anthropic-ai/sdk';
-import { initializeApp, cert, getApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { useState, useRef } from 'react';
+import { db, auth } from '../firebase/config';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import '../styles/SubmitPick.css';
 
-// Initialize Firebase Admin
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{}');
+// SVG Icons
+const Icons = {
+  Upload: () => (
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  ),
+  X: () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  ),
+  Check: () => (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  ),
+  AlertCircle: () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="8" x2="12" y2="12" />
+      <line x1="12" y1="16" x2="12.01" y2="16" />
+    </svg>
+  )
+};
 
-let app;
-try {
-  // Try to get existing app first
-  app = getApp();
-} catch (err) {
-  // App doesn't exist, initialize it
-  app = initializeApp({
-    credential: cert(serviceAccount)
-  });
-}
+export default function SubmitPick() {
+  const [image, setImage] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [analysisResult, setAnalysisResult] = useState(null);
+  const fileInputRef = useRef(null);
 
-const db = getFirestore(app);
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY
-});
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+  const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const { userId, imageBase64, imageMediaType } = req.body;
-
-  try {
-    if (!userId || !imageBase64) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: userId, imageBase64'
-      });
+  const validateFile = (file) => {
+    if (!ACCEPTED_TYPES.includes(file.type)) {
+      setError('Please upload a JPEG, PNG, or WebP image');
+      return false;
     }
-
-    console.log(`🔍 Extracting picks from image for user ${userId}`);
-
-    // Step 1: Extract picks from image using Claude vision
-    const extractionMessage = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 3000,  // ← Increased from 1024 to handle large parlays
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: imageMediaType || 'image/jpeg',
-                data: imageBase64
-              }
-            },
-            {
-              type: 'text',
-              text: `Analyze this sports bet slip screenshot and extract all the picks/bets visible. Return ONLY valid JSON (no markdown, no extra text).
-
-For each pick/bet line you see, extract:
-- player: Player or team name
-- stat: The stat being bet on (e.g., "Passing Yards", "Receiving Yards", "Points", "Spread", "Moneyline", etc.)
-- bet_type: Type of bet - "Over", "Under", "Moneyline", "Spread", or the direction if visible
-- line: The number/line for the bet (if visible as a number)
-- odds: The odds shown (e.g., -110, +150)
-- sport: Sport (NFL, NBA, NHL, MLB, College Football, etc.) - infer if not obvious
-
-Also identify:
-- sportsbook: Which sportsbook (DraftKings, FanDuel, BetMGM, Draftkings, etc.)
-- parlay_legs: Number of legs if it's a parlay (or number of picks)
-- potential_payout: The payout amount shown (look for "to win" or total payout)
-- wager_amount: The amount wagered/bet
-
-IMPORTANT: Be flexible with what counts as a pick. Accept any bet shown on the slip.
-If any field is not visible or unclear, use null.
-
-Return JSON format:
-{
-  "sportsbook": "DraftKings",
-  "parlay_legs": 3,
-  "wager_amount": 50,
-  "potential_payout": 420,
-  "picks": [
-    {
-      "player": "Patrick Mahomes",
-      "stat": "Passing Yards",
-      "bet_type": "Over",
-      "line": 280,
-      "odds": -110,
-      "sport": "NFL"
+    if (file.size > MAX_FILE_SIZE) {
+      setError('Image must be smaller than 5MB');
+      return false;
     }
-  ]
-}
-
-If you cannot extract ANY valid picks from this image, return:
-{
-  "error": "Could not extract picks from this image"
-}
-
-Try your best to extract what you can see, even if some fields are unclear.`
-            }
-          ]
-        }
-      ]
-    });
-
-    // Parse extracted data
-    let extractedData;
-    try {
-      let responseText = extractionMessage.content[0].text;
-      console.log('🔍 Claude raw response (first 500 chars):', responseText.substring(0, 500));
-      console.log('🔍 Claude response length:', responseText.length);
-      
-      // Try multiple cleanup approaches
-      let jsonText = responseText
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-      
-      // If still has markdown, try more aggressive cleaning
-      if (jsonText.includes('```')) {
-        jsonText = jsonText.replace(/^```[\s\S]*?\n/, '').replace(/\n```$/, '');
-      }
-      
-      console.log('📝 Cleaned JSON (first 500 chars):', jsonText.substring(0, 500));
-      console.log('📝 Cleaned JSON length:', jsonText.length);
-      
-      extractedData = JSON.parse(jsonText);
-      console.log('✅ Parsed extraction data:', JSON.stringify(extractedData).substring(0, 200));
-    } catch (parseError) {
-      console.error('❌ Failed to parse extraction:', parseError.message);
-      console.error('❌ Error at position:', parseError.message.match(/position (\d+)/)?.[1]);
-      console.error('Response text was:', extractionMessage.content[0].text.substring(0, 1000));
-      return res.status(400).json({
-        success: false,
-        error: 'Could not parse picks from image. Please ensure it\'s a clear bet slip screenshot.'
-      });
-    }
-
-    if (extractedData.error) {
-      console.warn('⚠️ Extraction error:', extractedData.error);
-      return res.status(400).json({
-        success: false,
-        error: extractedData.error
-      });
-    }
-
-    if (!extractedData.picks || extractedData.picks.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No picks found in the image'
-      });
-    }
-
-    console.log(`✅ Extracted ${extractedData.picks.length} picks`);
-
-    // Step 2: Fetch user's past bets for context
-    const betsSnapshot = await db
-      .collection('users')
-      .doc(userId)
-      .collection('bets')
-      .where('status', '==', 'complete')
-      .limit(50)
-      .get();
-
-    const analytics = calculateAnalytics(betsSnapshot.docs);
-    const userContext = buildUserContext(analytics);
-
-    console.log(`📈 User stats - Bets: ${analytics.total_bets}, Win Rate: ${analytics.win_rate}%`);
-
-    // Step 3: Analyze picks with user history context
-    const analysisMessage = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 1500,
-      messages: [
-        {
-          role: 'user',
-          content: `You are an expert sports betting analyst. Analyze this user's new bet slip and provide personalized refinement analysis.
-
-${userContext}
-
-NEW BETS TO ANALYZE:
-${formatPicksForAnalysis(extractedData.picks)}
-
-Provide personalized analysis that:
-1. Acknowledges how these picks fit their historical style
-2. Highlights their strengths (e.g., "Your QB passing props hit 73%")
-3. Warns about weak areas (e.g., "You're 0-4 on rushing bets")
-4. Gives specific confidence level (High/Medium/Low)
-5. Suggests any adjustments based on their pattern
-6. Validates picks against their hit rate by category
-
-Be encouraging but honest. Reference their specific numbers when possible. Keep it concise (2-3 paragraphs).`
-        }
-      ]
-    });
-
-    const analysis = analysisMessage.content[0].text;
-    console.log(`✅ Analysis generated`);
-
-    // Step 4: Store in Firestore (no image storage)
-    const betDocRef = await db.collection('users').doc(userId).collection('bets').add({
-      // Extracted data
-      picks: extractedData.picks,
-      sportsbook: extractedData.sportsbook || 'Unknown',
-      parlay_legs: extractedData.parlay_legs || null,
-      wager_amount: extractedData.wager_amount || null,
-      potential_payout: extractedData.potential_payout || null,
-      
-      // Analysis
-      analysis: analysis,
-      user_analytics_snapshot: analytics,
-      
-      // Status tracking
-      status: 'pending_results',
-      created_at: new Date(),
-      analyzed_at: new Date(),
-      
-      // Results (filled in later by cron job)
-      outcomes: null,
-      profit_loss: null,
-      completed_at: null
-    });
-
-    console.log(`📝 Bet saved to Firestore: ${betDocRef.id}`);
-
-    return res.status(200).json({
-      success: true,
-      betId: betDocRef.id,
-      sportsbook: extractedData.sportsbook,
-      picks: extractedData.picks,
-      parlay_legs: extractedData.parlay_legs,
-      wager_amount: extractedData.wager_amount,
-      potential_payout: extractedData.potential_payout,
-      analysis: analysis,
-      user_stats: {
-        total_bets: analytics.total_bets,
-        win_rate: analytics.win_rate,
-        roi: analytics.roi
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Error:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to process bet slip'
-    });
-  }
-}
-
-function calculateAnalytics(docs) {
-  const bets = docs.map(doc => doc.data());
-  
-  if (bets.length === 0) {
-    return {
-      total_bets: 0,
-      wins: 0,
-      losses: 0,
-      win_rate: 0,
-      total_profit: 0,
-      roi: 0,
-      by_category: {},
-      by_league: {},
-      best_category: 'N/A',
-      worst_category: 'N/A'
-    };
-  }
-
-  // Count completed bets
-  const wins = bets.filter(b => b.profit_loss > 0).length;
-  const losses = bets.filter(b => b.profit_loss <= 0).length;
-  const win_rate = Math.round((wins / bets.length) * 100);
-
-  // Calculate profit
-  const total_profit = bets.reduce((sum, b) => sum + (b.profit_loss || 0), 0);
-  const total_wagered = bets.reduce((sum, b) => sum + (b.wager_amount || 0), 0);
-  const roi = total_wagered > 0 ? Math.round((total_profit / total_wagered) * 100) : 0;
-
-  // Category breakdown
-  const by_category = {};
-  const by_league = {};
-
-  bets.forEach(bet => {
-    if (bet.picks && Array.isArray(bet.picks)) {
-      bet.picks.forEach(pick => {
-        const category = `${pick.stat}_${pick.bet_type}`;
-        if (!by_category[category]) {
-          by_category[category] = { wins: 0, total: 0 };
-        }
-        by_category[category].total++;
-        if (bet.profit_loss > 0) {
-          by_category[category].wins++;
-        }
-
-        const league = pick.sport || 'Unknown';
-        if (!by_league[league]) {
-          by_league[league] = { wins: 0, total: 0 };
-        }
-        by_league[league].total++;
-        if (bet.profit_loss > 0) {
-          by_league[league].wins++;
-        }
-      });
-    }
-  });
-
-  // Find best/worst
-  let best = { category: 'N/A', rate: 0 };
-  let worst = { category: 'N/A', rate: 1 };
-
-  Object.entries(by_category).forEach(([category, data]) => {
-    const rate = data.total > 0 ? data.wins / data.total : 0;
-    if (rate > best.rate && data.total >= 3) {
-      best = { category, rate: Math.round(rate * 100) };
-    }
-    if (rate < worst.rate && data.total >= 3) {
-      worst = { category, rate: Math.round(rate * 100) };
-    }
-  });
-
-  return {
-    total_bets: bets.length,
-    wins,
-    losses,
-    win_rate,
-    total_profit,
-    roi,
-    by_category,
-    by_league,
-    best_category: best.category,
-    best_rate: best.rate,
-    worst_category: worst.category,
-    worst_rate: worst.rate
+    return true;
   };
-}
 
-function buildUserContext(analytics) {
-  if (analytics.total_bets === 0) {
-    return 'USER PROFILE: This is a new user with no betting history yet. Provide general advice.';
-  }
+  const handleFileSelect = (file) => {
+    setError('');
+    
+    if (!validateFile(file)) {
+      return;
+    }
 
-  let context = `USER PROFILE:
-- Total Bets: ${analytics.total_bets}
-- Overall Win Rate: ${analytics.win_rate}%
-- Total Profit/Loss: $${analytics.total_profit > 0 ? '+' : ''}${analytics.total_profit}
-- ROI: ${analytics.roi}%`;
+    setImage(file);
 
-  if (analytics.best_category !== 'N/A') {
-    context += `\n- Best Category: ${analytics.best_category} (${analytics.best_rate}% hit rate)`;
-  }
-  if (analytics.worst_category !== 'N/A') {
-    context += `\n- Worst Category: ${analytics.worst_category} (${analytics.worst_rate}% hit rate)`;
-  }
+    // Create preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setPreview(e.target.result);
+    };
+    reader.readAsDataURL(file);
+  };
 
-  const leagues = Object.entries(analytics.by_league)
-    .map(([league, data]) => {
-      const rate = data.total > 0 ? Math.round((data.wins / data.total) * 100) : 0;
-      return `${league}: ${rate}%`;
-    })
-    .join(', ');
-  
-  if (leagues) {
-    context += `\n- By League: ${leagues}`;
-  }
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.currentTarget.classList.add('drag-over');
+  };
 
-  context += '\n\nUse this data to provide PERSONALIZED feedback.';
-  return context;
-}
+  const handleDragLeave = (e) => {
+    e.currentTarget.classList.remove('drag-over');
+  };
 
-function formatPicksForAnalysis(picks) {
-  return picks.map((pick, idx) => 
-    `${idx + 1}. ${pick.player} - ${pick.stat} ${pick.bet_type} ${pick.line} (${pick.odds})`
-  ).join('\n');
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+    
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      handleFileSelect(file);
+    }
+  };
+
+  const handleFileInputChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleFileSelect(file);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!image) {
+      setError('Please select an image');
+      return;
+    }
+
+    if (!auth.currentUser) {
+      setError('You must be logged in');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setAnalysisResult(null);
+
+    try {
+      // Convert image to base64 (wait for FileReader to complete)
+      const imageBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          resolve(e.target.result.split(',')[1]);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(image);
+      });
+
+      // Determine media type (iOS sometimes returns empty, so fallback to jpeg)
+      let mediaType = image.type;
+      if (!mediaType || !mediaType.startsWith('image/')) {
+        mediaType = 'image/jpeg'; // Default fallback for iOS
+      }
+
+      console.log('DEBUG: Image info -', {
+        fileName: image.name,
+        fileSize: image.size,
+        fileType: image.type,
+        determinedMediaType: mediaType,
+        base64Length: imageBase64.length,
+        base64Start: imageBase64.substring(0, 50)
+      });
+
+      // Send base64 and media type directly to Claude for extraction + analysis
+      const response = await fetch('/api/picks/extract-and-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: auth.currentUser.uid,
+          imageBase64,
+          imageMediaType: mediaType  // ← Pass actual media type with fallback
+        })
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        setError(data.error || 'Failed to analyze bet slip');
+        setLoading(false);
+        return;
+      }
+
+      // Success!
+      setAnalysisResult(data);
+      setSuccess(true);
+      setSuccessMessage(`✓ Bet analyzed! ${data.picks.length} picks identified`);
+      setLoading(false);
+
+    } catch (err) {
+      console.error('Error:', err);
+      setError(err.message || 'Something went wrong');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearImage = () => {
+    setImage(null);
+    setPreview(null);
+    setError('');
+    setAnalysisResult(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div className="sp-upload-container">
+      {/* Header */}
+      <div className="sp-upload-header">
+        <h1>Upload Your Bet Slip</h1>
+        <p>Take a screenshot of your bet and we'll analyze it for you</p>
+      </div>
+
+      {/* Main Content */}
+      <div className="sp-upload-content">
+        {!preview ? (
+          // Upload Area
+          <form onSubmit={handleSubmit}>
+            <div
+              className="sp-upload-zone"
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileInputChange}
+                style={{ display: 'none' }}
+              />
+
+              <div className="sp-upload-icon">
+                <Icons.Upload />
+              </div>
+
+              <h2>Drag image here</h2>
+              <p>or click to select</p>
+              <small>PNG, JPG, or WebP (max 5MB)</small>
+            </div>
+
+            {error && (
+              <div className="sp-error-message">
+                <Icons.AlertCircle />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {success && (
+              <div className="sp-success-message">
+                <Icons.Check />
+                <span>{successMessage}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || !image}
+              className="sp-submit-btn"
+            >
+              {loading ? 'Analyzing...' : 'Submit for Analysis'}
+            </button>
+          </form>
+        ) : (
+          // Preview Area
+          <div className="sp-preview-section">
+            <div className="sp-preview-image">
+              <img src={preview} alt="Bet slip preview" />
+            </div>
+
+            <div className="sp-preview-info">
+              <h2>Ready to analyze?</h2>
+              <p>File: {image.name}</p>
+              <p>Size: {(image.size / 1024).toFixed(1)} KB</p>
+
+              {error && (
+                <div className="sp-error-message">
+                  <Icons.AlertCircle />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              {success && (
+                <div className="sp-success-message">
+                  <Icons.Check />
+                  <span>{successMessage}</span>
+                </div>
+              )}
+
+              <div className="sp-preview-actions">
+                <button
+                  onClick={clearImage}
+                  disabled={loading}
+                  className="sp-cancel-btn"
+                >
+                  Choose Different
+                </button>
+
+                <button
+                  onClick={handleSubmit}
+                  disabled={loading}
+                  className="sp-analyze-btn"
+                >
+                  {loading ? 'Analyzing...' : 'Analyze This Bet'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Analysis Result */}
+        {analysisResult && (
+          <div className="sp-analysis-result">
+            <h2>Analysis Complete</h2>
+            <p className="analysis-intro">Your personalized analysis:</p>
+            <div className="analysis-text">
+              {analysisResult.analysis}
+            </div>
+            <p className="analysis-note">
+              ✓ Your bet has been saved to your history and will be tracked when results come in.
+            </p>
+            <button
+              onClick={clearImage}
+              className="sp-submit-btn"
+              style={{ marginTop: '1.5rem' }}
+            >
+              Upload Another Bet
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
