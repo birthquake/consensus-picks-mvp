@@ -45,7 +45,7 @@ export default async function handler(req, res) {
     // Step 1: Extract picks from image using Claude vision
     const extractionMessage = await anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 1024,
+      max_tokens: 3000,  // ← Increased from 1024 to handle large parlays
       messages: [
         {
           role: 'user',
