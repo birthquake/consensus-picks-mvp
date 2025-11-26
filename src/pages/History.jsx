@@ -77,7 +77,9 @@ export default function History() {
         setBets(fetchedBets);
       } catch (err) {
         console.error('Error fetching bets:', err);
-        setError('Failed to load your bets');
+        console.error('Error code:', err.code);
+        console.error('Error message:', err.message);
+        setError(`Failed to load your bets: ${err.message}`);
       } finally {
         setLoading(false);
       }
