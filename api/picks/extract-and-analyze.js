@@ -29,7 +29,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { userId, imageBase64 } = req.body;
+  const { userId, imageBase64, imageMediaType } = req.body;
 
   try {
     if (!userId || !imageBase64) {
@@ -43,7 +43,7 @@ export default async function handler(req, res) {
 
     // Step 1: Extract picks from image using Claude vision
     const extractionMessage = await anthropic.messages.create({
-      model: 'claude-opus-4-1-20250805',
+      model: 'claude-sonnet-4-5-20250929',
       max_tokens: 1024,
       messages: [
         {
@@ -53,7 +53,7 @@ export default async function handler(req, res) {
               type: 'image',
               source: {
                 type: 'base64',
-                media_type: 'image/jpeg',
+                media_type: imageMediaType || 'image/jpeg',
                 data: imageBase64
               }
             },
@@ -153,7 +153,7 @@ If you cannot extract valid picks or the image doesn't show a bet slip, return:
 
     // Step 3: Analyze picks with user history context
     const analysisMessage = await anthropic.messages.create({
-      model: 'claude-opus-4-1-20250805',
+      model: 'claude-sonnet-4-5-20250929',
       max_tokens: 1500,
       messages: [
         {
