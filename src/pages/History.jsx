@@ -103,6 +103,14 @@ export default function History() {
     displayBets = bets.filter(b => b.status === selectedStatus);
   }
 
+  console.log('🎯 Rendering with:', {
+    selectedStatus,
+    totalBets: bets.length,
+    displayBetsLength: displayBets.length,
+    isEmpty: displayBets.length === 0,
+    loading
+  });
+
   // Further filter by result if complete
   if (selectedStatus === 'complete') {
     // This is handled by the status filter above, but if we want won/lost filters:
