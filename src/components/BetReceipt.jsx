@@ -2,6 +2,7 @@
 // Displays extracted bet slip in a receipt format (collapsible)
 
 import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import '../styles/BetReceipt.css';
 
 // SVG Icons
@@ -205,7 +206,7 @@ export default function BetReceipt({
               <div className="br-analysis">
                 <div className="br-analysis-label">Personalized Analysis</div>
                 <div className="br-analysis-text">
-                  {analysis}
+                  <ReactMarkdown>{analysis}</ReactMarkdown>
                 </div>
               </div>
             </>
