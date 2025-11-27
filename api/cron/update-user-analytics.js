@@ -19,8 +19,8 @@ try {
 const db = getFirestore(app);
 
 export default async function handler(req, res) {
-  // Only allow POST from Vercel cron
-  if (req.method !== 'POST') {
+  // Only allow GET from Vercel cron scheduler
+  if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
