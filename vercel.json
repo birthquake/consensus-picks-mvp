@@ -1,12 +1,12 @@
 {
   "crons": [
     {
-      "path": "/api/cron/process-results",
-      "schedule": "0 1 * * *"
+      "path": "/api/cron/fetch-game-results",
+      "schedule": "0 12 * * *"
     },
     {
-      "path": "/api/cron/update-stats",
-      "schedule": "0 2 * * *"
+      "path": "/api/cron/update-user-analytics",
+      "schedule": "15 12 * * *"
     }
   ]
 }
