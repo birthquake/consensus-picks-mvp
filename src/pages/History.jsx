@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { auth, db } from '../firebase/config';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
 import '../styles/History.css';
 
 // Icons
@@ -83,6 +83,26 @@ export default function History() {
   const [gradeFilter, setGradeFilter] = useState('all');
   const [dateRange, setDateRange] = useState('all');
 
+  // Handle archiving a bet slip
+  const handleDeleteBet = async (betId) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      const betRef = doc(db, 'users', user.uid, 'bets', betId);
+      await updateDoc(betRef, {
+        archived: true,
+        archivedAt: new Date()
+      });
+
+      // Remove from local state
+      setBets(bets.filter(b => b.id !== betId));
+      setExpandedId(null);
+    } catch (err) {
+      console.error('Error deleting bet:', err);
+    }
+  };
+
   // Fetch bets from Firebase
   useEffect(() => {
     const fetchBets = async () => {
@@ -102,10 +122,11 @@ export default function History() {
         
         const fetchedBets = [];
         snapshot.forEach(doc => {
-          fetchedBets.push({
-            id: doc.id,
-            ...doc.data()
-          });
+          const bet = { id: doc.id, ...doc.data() };
+          // Filter out archived bets from display
+          if (!bet.archived) {
+            fetchedBets.push(bet);
+          }
         });
 
         setBets(fetchedBets);
@@ -448,6 +469,17 @@ export default function History() {
                         <p>{bet.analysis}</p>
                       </div>
                     )}
+
+                    <button 
+                      className="delete-bet-btn"
+                      onClick={() => {
+                        if (confirm('This will remove the bet from your history (kept for analytics)')) {
+                          handleDeleteBet(bet.id);
+                        }
+                      }}
+                    >
+                      Delete from History
+                    </button>
                   </div>
                 )}
               </div>
