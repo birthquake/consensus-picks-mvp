@@ -2,9 +2,8 @@
 // Bet history with real Firebase data, expandable cards, working filters
 
 import { useState, useEffect } from 'react';
-import { auth } from '../firebase/firebase-config';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../firebase/firebase-config';
+import { auth, db } from '../firebase/config';
+import { collection, getDocs } from 'firebase/firestore';
 import '../styles/History.css';
 
 // Icons
@@ -140,14 +139,21 @@ export default function History() {
     return 'pending';
   };
 
-  // Calculate grade based on analysis or placeholder
+  // Extract grade from analysis text
   const getGrade = (bet) => {
-    // If you add a grade field to Firebase, use it here
-    // For now, returning N/A for pending, A/C for won/lost as example
-    const status = mapStatus(bet.status);
-    if (status === 'pending') return 'N/A';
-    if (status === 'won') return 'A';
-    return 'C';
+    if (!bet.analysis) return 'N/A';
+    
+    const analysis = bet.analysis.toLowerCase();
+    
+    // Look for confidence levels
+    if (analysis.includes('high confidence')) return 'A';
+    if (analysis.includes('medium-high confidence') || analysis.includes('medium/high')) return 'B';
+    if (analysis.includes('medium confidence')) return 'C';
+    if (analysis.includes('medium-low confidence') || analysis.includes('medium/low')) return 'D';
+    if (analysis.includes('low confidence')) return 'F';
+    
+    // Fallback if no explicit confidence mentioned
+    return 'N/A';
   };
 
   // Format date
