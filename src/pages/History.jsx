@@ -1,7 +1,10 @@
 // FILE LOCATION: src/pages/History.jsx
-// Improved bet history with expandable cards and working filters
+// Bet history with real Firebase data, expandable cards, working filters
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { auth } from '../firebase/firebase-config';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../firebase/firebase-config';
 import '../styles/History.css';
 
 // Icons
@@ -70,6 +73,10 @@ const Icons = {
 };
 
 export default function History() {
+  // State
+  const [bets, setBets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [activeStatus, setActiveStatus] = useState('all');
   const [sortOrder, setSortOrder] = useState('newest');
   const [expandedId, setExpandedId] = useState(null);
@@ -77,100 +84,125 @@ export default function History() {
   const [gradeFilter, setGradeFilter] = useState('all');
   const [dateRange, setDateRange] = useState('all');
 
-  // Mock data with more details
-  const bets = [
-    {
-      id: 1,
-      date: '2025-11-27',
-      time: '11:45 AM',
-      status: 'pending',
-      grade: 'N/A',
-      picks: 3,
-      wager: 50,
-      potential: 1247.50,
-      pickDetails: [
-        'LeBron James O 24.5 Pts',
-        'Lakers vs Celtics ML',
-        'Jalen Brunson O 18.5 Ast'
-      ]
-    },
-    {
-      id: 2,
-      date: '2025-11-26',
-      time: '2:30 PM',
-      status: 'won',
-      grade: 'A',
-      picks: 2,
-      wager: 100,
-      potential: 380,
-      result: 320,
-      pickDetails: [
-        'Kansas City ML',
-        'Patrick Mahomes O 250 Yards'
-      ]
-    },
-    {
-      id: 3,
-      date: '2025-11-26',
-      time: '9:15 AM',
-      status: 'lost',
-      grade: 'C',
-      picks: 1,
-      wager: 75,
-      potential: 200,
-      result: -75,
-      pickDetails: [
-        'New York Giants +3.5'
-      ]
-    },
-    {
-      id: 4,
-      date: '2025-11-25',
-      time: '3:20 PM',
-      status: 'pending',
-      grade: 'N/A',
-      picks: 4,
-      wager: 25,
-      potential: 890,
-      pickDetails: [
-        'Boston Celtics ML',
-        'Jayson Tatum O 26.5 Pts',
-        'Derrick White U 15.5 Ast',
-        'Game Total O 215.5'
-      ]
-    }
-  ];
+  // Fetch bets from Firebase
+  useEffect(() => {
+    const fetchBets = async () => {
+      try {
+        setLoading(true);
+        const user = auth.currentUser;
+        
+        if (!user) {
+          setError('Not logged in');
+          setLoading(false);
+          return;
+        }
 
-  const statusCounts = {
-    all: bets.length,
-    pending: bets.filter(b => b.status === 'pending').length,
-    won: bets.filter(b => b.status === 'won').length,
-    lost: bets.filter(b => b.status === 'lost').length
+        // Reference to user's bets subcollection
+        const betsRef = collection(db, 'users', user.uid, 'bets');
+        const snapshot = await getDocs(betsRef);
+        
+        const fetchedBets = [];
+        snapshot.forEach(doc => {
+          fetchedBets.push({
+            id: doc.id,
+            ...doc.data()
+          });
+        });
+
+        setBets(fetchedBets);
+        setError(null);
+      } catch (err) {
+        console.error('Error fetching bets:', err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchBets();
+  }, []);
+
+  // Get bet type from parlay_legs
+  const getBetType = (paralyLegs) => {
+    if (!paralyLegs) return 'Unknown';
+    if (paralyLegs === 1) return 'Single Bet';
+    if (paralyLegs === 2) return '2-Leg Parlay';
+    if (paralyLegs === 3) return '3-Leg Parlay';
+    if (paralyLegs === 4) return '4-Leg Parlay';
+    return `${paralyLegs}-Leg Parlay`;
   };
 
-  const statusOptions = [
-    { id: 'all', label: 'All' },
-    { id: 'pending', label: 'Pending' },
-    { id: 'won', label: 'Won' },
-    { id: 'lost', label: 'Lost' }
-  ];
+  // Map Firebase status to display status
+  const mapStatus = (firebaseStatus) => {
+    if (firebaseStatus === 'pending_results') return 'pending';
+    if (firebaseStatus === 'completed_won') return 'won';
+    if (firebaseStatus === 'completed_lost') return 'lost';
+    return 'pending';
+  };
+
+  // Calculate grade based on analysis or placeholder
+  const getGrade = (bet) => {
+    // If you add a grade field to Firebase, use it here
+    // For now, returning N/A for pending, A/C for won/lost as example
+    const status = mapStatus(bet.status);
+    if (status === 'pending') return 'N/A';
+    if (status === 'won') return 'A';
+    return 'C';
+  };
+
+  // Format date
+  const formatDate = (timestamp) => {
+    if (!timestamp) return 'Unknown';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric'
+    });
+  };
+
+  // Get status info
+  const getStatusInfo = (status) => {
+    if (status === 'pending') {
+      return { class: 'pending', icon: Icons.Clock2, label: 'Pending' };
+    } else if (status === 'won') {
+      return { class: 'won', icon: Icons.Check, label: 'Won' };
+    } else {
+      return { class: 'lost', icon: Icons.X, label: 'Lost' };
+    }
+  };
+
+  // Get grade class
+  const getGradeClass = (grade) => {
+    if (grade === 'N/A') return 'grade-na';
+    const letter = grade.charAt(0).toLowerCase();
+    return `grade-${letter}`;
+  };
+
+  // Count statuses
+  const statusCounts = {
+    all: bets.length,
+    pending: bets.filter(b => mapStatus(b.status) === 'pending').length,
+    won: bets.filter(b => mapStatus(b.status) === 'won').length,
+    lost: bets.filter(b => mapStatus(b.status) === 'lost').length
+  };
 
   // Apply filters
-  let filteredBets = activeStatus === 'all' 
-    ? bets 
-    : bets.filter(b => b.status === activeStatus);
+  let filtered = activeStatus === 'all' 
+    ? [...bets] 
+    : bets.filter(b => mapStatus(b.status) === activeStatus);
 
   if (gradeFilter !== 'all') {
-    filteredBets = filteredBets.filter(b => {
-      if (gradeFilter === 'na') return b.grade === 'N/A';
-      return b.grade.toLowerCase() === gradeFilter.toLowerCase();
+    filtered = filtered.filter(b => {
+      const grade = getGrade(b);
+      if (gradeFilter === 'na') return grade === 'N/A';
+      return grade.toLowerCase() === gradeFilter.toLowerCase();
     });
   }
 
   if (dateRange !== 'all') {
     const now = new Date();
-    filteredBets = filteredBets.filter(b => {
-      const betDate = new Date(b.date);
+    filtered = filtered.filter(b => {
+      const betDate = b.created_at?.toDate ? b.created_at.toDate() : new Date(b.created_at);
       if (dateRange === 'week') {
         const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
         return betDate >= weekAgo;
@@ -183,37 +215,36 @@ export default function History() {
     });
   }
 
-  const sortedBets = [...filteredBets].sort((a, b) => {
-    const dateA = new Date(a.date);
-    const dateB = new Date(b.date);
+  // Sort
+  const sorted = [...filtered].sort((a, b) => {
+    const dateA = a.created_at?.toDate ? a.created_at.toDate() : new Date(a.created_at);
+    const dateB = b.created_at?.toDate ? b.created_at.toDate() : new Date(b.created_at);
     return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
   });
 
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric'
-    });
-  };
-
-  const getStatusInfo = (status) => {
-    if (status === 'pending') {
-      return { class: 'pending', icon: Icons.Clock2, label: 'Pending' };
-    } else if (status === 'won') {
-      return { class: 'won', icon: Icons.Check, label: 'Won' };
-    } else {
-      return { class: 'lost', icon: Icons.X, label: 'Lost' };
-    }
-  };
-
-  const getGradeClass = (grade) => {
-    if (grade === 'N/A') return 'grade-na';
-    const letter = grade.charAt(0).toLowerCase();
-    return `grade-${letter}`;
-  };
-
   const activeFiltersCount = (gradeFilter !== 'all' ? 1 : 0) + (dateRange !== 'all' ? 1 : 0);
+
+  if (loading) {
+    return (
+      <div className="history-page">
+        <div className="history-header">
+          <h2>Your Bets</h2>
+          <p>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="history-page">
+        <div className="history-header">
+          <h2>Your Bets</h2>
+          <p>Error: {error}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="history-page">
@@ -225,19 +256,18 @@ export default function History() {
 
       {/* Filters */}
       <div className="filters-section">
+        {/* Status Buttons */}
         <div className="filter-group">
           <label>Status</label>
           <div className="status-buttons">
-            {statusOptions.map(option => (
+            {['all', 'pending', 'won', 'lost'].map(status => (
               <button
-                key={option.id}
-                className={`status-btn ${activeStatus === option.id ? 'active' : ''}`}
-                onClick={() => setActiveStatus(option.id)}
+                key={status}
+                className={`status-btn ${activeStatus === status ? 'active' : ''}`}
+                onClick={() => setActiveStatus(status)}
               >
-                {option.label}
-                <span style={{ marginLeft: '0.35rem', fontSize: '0.8rem' }}>
-                  {statusCounts[option.id]}
-                </span>
+                {status.charAt(0).toUpperCase() + status.slice(1)}
+                <span>{statusCounts[status]}</span>
               </button>
             ))}
           </div>
@@ -253,7 +283,7 @@ export default function History() {
             <span>{sortOrder === 'newest' ? 'Newest First' : 'Oldest First'}</span>
           </button>
           <button 
-            className="filter-btn"
+            className={`filter-btn ${showFilters ? 'active' : ''}`}
             onClick={() => setShowFilters(!showFilters)}
           >
             <Icons.Filter />
@@ -324,34 +354,37 @@ export default function History() {
       </div>
 
       {/* Bet Cards */}
-      {sortedBets.length > 0 ? (
+      {sorted.length > 0 ? (
         <div className="bet-cards">
-          {sortedBets.map(bet => {
-            const statusInfo = getStatusInfo(bet.status);
-            const gradeClass = getGradeClass(bet.grade);
+          {sorted.map(bet => {
+            const status = mapStatus(bet.status);
+            const statusInfo = getStatusInfo(status);
+            const grade = getGrade(bet);
+            const gradeClass = getGradeClass(grade);
             const isExpanded = expandedId === bet.id;
+            const betType = getBetType(bet.parlay_legs);
 
             return (
-              <div 
-                key={bet.id} 
-                className={`bet-card ${isExpanded ? 'expanded' : ''}`}
-              >
+              <div key={bet.id} className={`bet-card ${isExpanded ? 'expanded' : ''}`}>
                 <button
                   className="bet-card-button"
                   onClick={() => setExpandedId(isExpanded ? null : bet.id)}
+                  type="button"
                 >
                   <div className="bet-card-content">
                     <div className="bet-card-icon">
                       <Icons.Sportsbook />
                     </div>
                     <div className="bet-card-info">
-                      <h3 className="bet-card-title">Bet Slip • {formatDate(bet.date)} {bet.time}</h3>
+                      <h3 className="bet-card-title">
+                        {betType} • {formatDate(bet.created_at)}
+                      </h3>
                       <div className="bet-card-meta">
                         <div className="bet-card-meta-item">
-                          {bet.picks} Pick{bet.picks !== 1 ? 's' : ''}
+                          {bet.parlay_legs} Pick{bet.parlay_legs !== 1 ? 's' : ''}
                         </div>
                         <div className="bet-card-meta-item">
-                          ${bet.wager.toFixed(2)} wager
+                          ${bet.wager_amount?.toFixed(2)} wager
                         </div>
                       </div>
                     </div>
@@ -359,7 +392,7 @@ export default function History() {
 
                   <div className="bet-card-status">
                     <div className={`grade-badge-small ${gradeClass}`}>
-                      {bet.grade}
+                      {grade}
                     </div>
                     <div className={`status-badge ${statusInfo.class}`}>
                       <statusInfo.icon />
@@ -376,10 +409,12 @@ export default function History() {
                   <div className="bet-card-expanded">
                     <div className="expanded-picks">
                       <h4>Picks</h4>
-                      {bet.pickDetails.map((pick, idx) => (
+                      {bet.picks && bet.picks.map((pick, idx) => (
                         <div key={idx} className="expanded-pick">
                           <span className="pick-num">{idx + 1}</span>
-                          <span>{pick}</span>
+                          <span>
+                            {pick.player} {pick.stat} {pick.bet_type} {pick.line}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -387,19 +422,26 @@ export default function History() {
                     <div className="expanded-details">
                       <div className="detail-row">
                         <span>Wager</span>
-                        <span>${bet.wager.toFixed(2)}</span>
+                        <span>${bet.wager_amount?.toFixed(2)}</span>
                       </div>
                       <div className="detail-row">
                         <span>Potential Win</span>
-                        <span className="accent">${bet.potential.toFixed(2)}</span>
+                        <span className="accent">${bet.potential_payout?.toFixed(2) || 'N/A'}</span>
                       </div>
-                      {bet.status !== 'pending' && (
-                        <div className={`detail-row ${bet.result >= 0 ? 'won' : 'lost'}`}>
+                      {status !== 'pending' && (
+                        <div className={`detail-row result ${bet.profit_loss >= 0 ? 'won' : 'lost'}`}>
                           <span>Result</span>
-                          <span>{bet.result >= 0 ? '+' : ''}{bet.result >= 0 ? '$' : '-$'}{Math.abs(bet.result).toFixed(2)}</span>
+                          <span>{bet.profit_loss >= 0 ? '+' : ''}{bet.profit_loss >= 0 ? '$' : '-$'}{Math.abs(bet.profit_loss).toFixed(2)}</span>
                         </div>
                       )}
                     </div>
+
+                    {bet.analysis && (
+                      <div className="expanded-analysis">
+                        <h4>Analysis</h4>
+                        <p>{bet.analysis}</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
