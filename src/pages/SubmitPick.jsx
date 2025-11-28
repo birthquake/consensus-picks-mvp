@@ -1,5 +1,5 @@
 // FILE LOCATION: src/pages/SubmitPick.jsx
-// Clean bet upload with fake bet slip placeholder
+// Clean bet upload with image compression for long bet slips
 
 import { useState } from 'react';
 import { auth } from '../firebase/config';
@@ -33,7 +33,45 @@ export default function SubmitPick() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const handleImageSelect = (file) => {
+  // Compress image before converting to base64
+  const compressImage = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          // Reduce dimensions - keep aspect ratio but limit height to 2000px
+          // This significantly reduces file size for long screenshots
+          if (height > 2000) {
+            const ratio = width / height;
+            height = 2000;
+            width = height * ratio;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Compress to JPEG with 0.8 quality
+          // This reduces size dramatically while maintaining readability
+          const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
+          resolve(compressedBase64);
+        };
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.src = e.target.result;
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleImageSelect = async (file) => {
     if (!file) return;
 
     if (file.size > 5 * 1024 * 1024) {
@@ -46,16 +84,23 @@ export default function SubmitPick() {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
+    try {
+      setLoading(true);
+      setError('');
+      
+      // Compress the image before storing
+      const compressedBase64 = await compressImage(file);
+      
       setSelectedImage({
         file: file,
-        preview: e.target.result,
+        preview: compressedBase64,
         name: file.name
       });
-      setError('');
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      setError('Failed to process image. Please try another.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDragOver = (e) => {
