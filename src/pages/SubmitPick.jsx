@@ -247,10 +247,20 @@ export default function SubmitPick() {
               {analysisResult.grade}
             </div>
             <div>
-              <div style={{ color: '#00d4ff', fontSize: '14px', fontWeight: '600' }}>
-                Confidence: {analysisResult.confidence}
+              <div style={{ color: '#999', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                Grade Assessment
               </div>
-              <div style={{ color: '#999', fontSize: '14px', marginTop: '4px' }}>
+              <div style={{ color: '#00d4ff', fontSize: '16px', fontWeight: '600', marginBottom: '6px' }}>
+                {analysisResult.grade === 'A' && '✓ Strong Pick'}
+                {analysisResult.grade === 'B' && '✓ Good Pick'}
+                {analysisResult.grade === 'C' && 'Moderate Risk'}
+                {analysisResult.grade === 'D' && 'High Risk'}
+                {analysisResult.grade === 'F' && '⚠ Poor Pick'}
+              </div>
+              <div style={{ color: '#ccc', fontSize: '13px', marginBottom: '8px' }}>
+                {analysisResult.confidence} confidence in this assessment
+              </div>
+              <div style={{ color: '#999', fontSize: '13px', lineHeight: '1.5' }}>
                 {analysisResult.reason}
               </div>
             </div>
