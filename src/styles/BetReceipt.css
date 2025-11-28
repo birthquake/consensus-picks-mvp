@@ -1,554 +1,264 @@
-/* BetReceipt.css - Styled bet receipt with letter grade */
+/* FILE LOCATION: src/styles/SubmitPick.css
+   Premium bet upload with native betting app styling */
 
-:root {
-  --primary-bg: #0f1419;
-  --secondary-bg: #1a1f2e;
-  --tertiary-bg: #252d3d;
-  --accent-green: #00d4aa;
-  --accent-green-hover: #00e5b8;
-  --text-primary: #ffffff;
-  --text-secondary: #cbd5e0;
-  --border-color: #2d3748;
-  --success-color: #48bb78;
-  --error-color: #f56565;
-  --warning-color: #ed8936;
-}
-
-.bet-receipt {
-  background: var(--secondary-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 0.75rem;
-  margin-bottom: 1.5rem;
-  transition: all 0.2s ease;
-  overflow: hidden;
-}
-
-.bet-receipt:hover {
-  border-color: var(--accent-green);
-  box-shadow: 0 4px 20px rgba(0, 212, 170, 0.1);
-}
-
-/* Grade Card */
-.br-grade-card {
-  background: linear-gradient(135deg, rgba(0, 212, 170, 0.05), rgba(0, 212, 170, 0.02));
-  border-bottom: 2px solid rgba(0, 212, 170, 0.2);
-  padding: 1.25rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-}
-
-.grade-display {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.grade-icon {
-  width: 56px;
-  height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.75rem;
-  font-size: 1.75rem;
-}
-
-.br-grade-card.grade-a .grade-icon {
-  background: linear-gradient(135deg, #9ae6b4, #68d391);
-  color: #1a202c;
-}
-
-.br-grade-card.grade-b .grade-icon {
-  background: linear-gradient(135deg, #9ae6b4, #68d391);
-  color: #1a202c;
-  opacity: 0.8;
-}
-
-.br-grade-card.grade-c .grade-icon {
-  background: linear-gradient(135deg, #fbd38d, #f6ad55);
-  color: #1a202c;
-}
-
-.br-grade-card.grade-d .grade-icon {
-  background: linear-gradient(135deg, #fc8181, #f56565);
-  color: white;
-}
-
-.br-grade-card.grade-f .grade-icon {
-  background: linear-gradient(135deg, #fc8181, #e53e3e);
-  color: white;
-}
-
-.br-grade-card.grade-na .grade-icon {
-  background: linear-gradient(135deg, #cbd5e0, #a0aec0);
-  color: #1a202c;
-}
-
-.grade-content {
+.submit-page {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-}
-
-.grade-label {
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.grade-value {
-  font-size: 1.75rem;
-  font-weight: 800;
-  color: var(--text-primary);
-  letter-spacing: -0.5px;
-}
-
-.grade-reasoning {
+  gap: var(--space-lg);
+  padding: var(--space-lg) 0;
   flex: 1;
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  line-height: 1.4;
-  font-weight: 500;
-  text-align: right;
 }
 
-/* Collapsible Header Button */
-.br-header-button {
-  width: 100%;
-  background: none;
-  border: none;
-  padding: 1.5rem;
-  cursor: pointer;
-  transition: all 0.2s ease;
+/* Alert Messages */
+.alert {
   display: flex;
   align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  animation: slideInUp var(--transition-base);
 }
 
-.br-header-button:hover {
-  background: rgba(0, 212, 170, 0.05);
-}
-
-/* Header */
-.br-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  width: 100%;
-}
-
-.br-header-left {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  text-align: left;
-}
-
-.br-header-right {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.br-sportsbook {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.br-date {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-}
-
-.br-date svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* Status Badge */
-.br-status {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  font-size: 0.85rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.br-status svg {
-  width: 14px;
-  height: 14px;
-}
-
-.br-status-pending {
-  background: rgba(237, 137, 54, 0.1);
-  color: #fbd38d;
-  border: 1px solid var(--warning-color);
-}
-
-.br-status-won {
-  background: rgba(72, 187, 120, 0.1);
-  color: #9ae6b4;
-  border: 1px solid var(--success-color);
-}
-
-.br-status-lost {
-  background: rgba(245, 101, 101, 0.1);
-  color: #fc8181;
-  border: 1px solid var(--error-color);
-}
-
-/* Chevron Icon */
-.br-chevron {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.2s ease;
-  color: var(--text-secondary);
-}
-
-.br-chevron.expanded {
-  transform: rotate(180deg);
-  color: var(--accent-green);
-}
-
-/* Expandable Content */
-.br-content {
-  padding: 0 1.5rem 1.5rem 1.5rem;
-  animation: slideDown 0.2s ease;
-}
-
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Picks List */
-.br-picks {
-  margin-bottom: 1.5rem;
-}
-
-.br-pick {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 1rem 0;
-  border-bottom: 1px solid var(--tertiary-bg);
-}
-
-.br-pick:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.br-pick-num {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: linear-gradient(135deg, var(--accent-green), #00d4aa);
-  color: #0f1419;
-  border-radius: 50%;
-  font-weight: 700;
-  font-size: 0.85rem;
+.alert svg {
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
 }
 
-.br-pick-details {
-  flex: 1;
-  min-width: 0;
+.alert-error {
+  background: rgba(220, 38, 38, 0.15);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  color: #dc2626;
 }
 
-.br-pick-player {
-  font-weight: 600;
-  color: var(--text-primary);
-  font-size: 0.95rem;
-  margin-bottom: 0.25rem;
+.alert-success {
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #22c55e;
 }
 
-.br-pick-stat {
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-}
-
-.br-pick-odds {
-  font-weight: 600;
-  color: var(--accent-green);
-  font-size: 0.9rem;
-  white-space: nowrap;
-}
-
-/* Divider */
-.br-divider {
-  height: 1px;
-  background: var(--border-color);
-  margin: 1.5rem 0;
-}
-
-/* Wager Section */
-.br-wager-section {
+/* Upload Card */
+.upload-card {
+  background: white;
+  border-radius: 16px;
+  padding: var(--space-2xl);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
+  gap: var(--space-2xl);
+  flex: 1;
 }
 
-.br-wager-row {
+/* Upload Drop Zone */
+.upload-drop-zone {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
-  padding: 0.75rem 0;
+  justify-content: center;
+  gap: var(--space-lg);
+  padding: var(--space-3xl) var(--space-xl);
+  border: 2px dashed #e5e7eb;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  text-align: center;
 }
 
-.br-label {
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  font-weight: 500;
+.upload-drop-zone:hover {
+  border-color: #5b4f9f;
+  background: rgba(91, 79, 159, 0.02);
 }
 
-.br-value {
+.upload-drop-zone.active {
+  border-color: #5b4f9f;
+  background: rgba(91, 79, 159, 0.05);
+  transform: scale(1.01);
+}
+
+.upload-icon {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  color: var(--text-primary);
-  font-weight: 600;
-  font-size: 0.95rem;
+  justify-content: center;
+  color: #9ca3af;
 }
 
-.br-value svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* Potential Payout */
-.br-potential {
-  padding: 0.75rem;
-  background: linear-gradient(135deg, rgba(0, 212, 170, 0.1), rgba(0, 212, 170, 0.05));
-  border-radius: 0.5rem;
-  border-left: 3px solid var(--accent-green);
-}
-
-.br-potential-text {
-  color: var(--accent-green);
-}
-
-/* Result */
-.br-result {
-  padding: 0.75rem;
-  border-radius: 0.5rem;
-  border-left: 3px solid;
-}
-
-.br-win {
-  background: rgba(72, 187, 120, 0.1);
-  border-left-color: var(--success-color);
-}
-
-.br-loss {
-  background: rgba(245, 101, 101, 0.1);
-  border-left-color: var(--error-color);
-}
-
-.br-result-text {
+.upload-drop-zone h2 {
+  font-size: 1.5rem;
   font-weight: 700;
+  color: #1f2937;
+  margin: 0;
 }
 
-.br-win-text {
-  color: #9ae6b4;
+.upload-drop-zone p {
+  color: #6b7280;
+  font-size: var(--font-size-base);
+  margin: 0;
 }
 
-.br-loss-text {
-  color: #fc8181;
+.file-hint {
+  font-size: var(--font-size-sm) !important;
+  color: #9ca3af !important;
 }
 
-/* Analysis */
-.br-analysis {
-  margin-top: 1.5rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--border-color);
-}
-
-.br-analysis-label {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 0.75rem;
-}
-
-.br-analysis-text {
-  font-size: 0.9rem;
-  line-height: 1.5;
-  color: var(--text-primary);
-  background: var(--tertiary-bg);
-  padding: 1rem;
-  border-radius: 0.5rem;
-  border-left: 3px solid var(--accent-green);
-}
-
-/* Markdown styling */
-.br-analysis-text h1,
-.br-analysis-text h2,
-.br-analysis-text h3,
-.br-analysis-text h4,
-.br-analysis-text h5,
-.br-analysis-text h6 {
-  color: var(--accent-green);
-  font-weight: 700;
-  margin: 1rem 0 0.5rem 0;
-  line-height: 1.3;
-}
-
-.br-analysis-text h1 { font-size: 1.3rem; }
-.br-analysis-text h2 { font-size: 1.15rem; }
-.br-analysis-text h3 { font-size: 1rem; }
-
-.br-analysis-text p {
-  margin: 0.5rem 0;
-}
-
-.br-analysis-text strong,
-.br-analysis-text b {
-  color: var(--accent-green);
-  font-weight: 700;
-}
-
-.br-analysis-text em,
-.br-analysis-text i {
-  color: var(--text-secondary);
-  font-style: italic;
-}
-
-.br-analysis-text ul,
-.br-analysis-text ol {
-  margin: 0.75rem 0;
-  padding-left: 1.5rem;
-}
-
-.br-analysis-text li {
-  margin: 0.5rem 0;
-  color: var(--text-primary);
-}
-
-.br-analysis-text li strong {
-  color: var(--accent-green);
-}
-
-.br-analysis-text code {
-  background: rgba(0, 212, 170, 0.1);
-  padding: 0.2rem 0.4rem;
-  border-radius: 0.25rem;
-  color: var(--accent-green);
-  font-family: 'Courier New', monospace;
-  font-size: 0.85rem;
-}
-
-.br-analysis-text blockquote {
-  border-left: 3px solid var(--accent-green);
-  padding-left: 1rem;
-  margin: 0.75rem 0;
-  color: var(--text-secondary);
-  font-style: italic;
-}
-
-.br-analysis-text hr {
+.btn-upload {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-2xl);
+  background: #5b4f9f;
+  color: white;
   border: none;
-  border-top: 1px solid var(--border-color);
-  margin: 1rem 0;
+  border-radius: 10px;
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+  transition: all var(--transition-base);
+  font-size: var(--font-size-base);
 }
 
-/* Status Variations */
-.bet-receipt.status-won {
-  border-left: 4px solid var(--success-color);
+.btn-upload:hover {
+  background: #4a4080;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(91, 79, 159, 0.3);
 }
 
-.bet-receipt.status-lost {
-  border-left: 4px solid var(--error-color);
+.btn-upload svg {
+  width: 20px;
+  height: 20px;
 }
 
-.bet-receipt.status-pending {
-  border-left: 4px solid var(--warning-color);
+/* Preview Card */
+.preview-card {
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f3f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-height: 400px;
+  flex: 1;
+}
+
+.preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Action Buttons */
+.action-buttons {
+  display: flex;
+  gap: var(--space-md);
+}
+
+.btn-primary,
+.btn-secondary {
+  flex: 1;
+  padding: var(--space-md) var(--space-lg);
+  border-radius: 10px;
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-base);
+  transition: all var(--transition-base);
+  border: none;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: #5b4f9f;
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #4a4080;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(91, 79, 159, 0.3);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: #f3f4f6;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #eff6ff;
+  border-color: #5b4f9f;
+  color: #5b4f9f;
+}
+
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Responsive */
 @media (max-width: 768px) {
-  .bet-receipt {
-    margin-bottom: 1rem;
+  .upload-card {
+    padding: var(--space-xl);
+    border-radius: 12px;
+    gap: var(--space-xl);
   }
 
-  .br-header-button {
-    padding: 1rem;
+  .upload-drop-zone {
+    padding: var(--space-2xl) var(--space-lg);
+    gap: var(--space-md);
   }
 
-  .br-header {
+  .upload-drop-zone h2 {
+    font-size: 1.25rem;
+  }
+
+  .upload-drop-zone p {
+    font-size: var(--font-size-sm);
+  }
+
+  .upload-icon svg {
+    width: 60px;
+    height: 60px;
+  }
+
+  .action-buttons {
     flex-direction: column;
-    gap: 0.75rem;
   }
 
-  .br-header-right {
-    width: 100%;
-    justify-content: space-between;
+  .btn-primary,
+  .btn-secondary {
+    padding: var(--space-md);
+  }
+}
+
+@media (max-width: 480px) {
+  .submit-page {
+    padding: var(--space-md) 0;
   }
 
-  .br-status {
-    flex: 1;
+  .upload-card {
+    padding: var(--space-lg);
+    border-radius: 12px;
+    gap: var(--space-lg);
   }
 
-  .br-content {
-    padding: 0 1rem 1rem 1rem;
+  .upload-drop-zone {
+    padding: var(--space-xl) var(--space-md);
   }
 
-  .br-grade-card {
-    flex-direction: column;
-    gap: 0.75rem;
+  .upload-drop-zone h2 {
+    font-size: 1.1rem;
   }
 
-  .grade-reasoning {
-    text-align: left;
+  .upload-icon svg {
+    width: 60px;
+    height: 60px;
   }
 
-  .br-pick {
-    gap: 0.75rem;
-  }
-
-  .br-pick-num {
-    width: 24px;
-    height: 24px;
-    font-size: 0.75rem;
-  }
-
-  .br-pick-player {
-    font-size: 0.9rem;
-  }
-
-  .br-pick-stat {
-    font-size: 0.8rem;
-  }
-
-  .br-wager-row {
-    padding: 0.5rem 0;
-  }
-
-  .br-analysis-text {
-    font-size: 0.85rem;
-    padding: 0.75rem;
+  .btn-upload {
+    padding: var(--space-sm) var(--space-lg);
+    font-size: var(--font-size-sm);
   }
 }
