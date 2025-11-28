@@ -118,7 +118,7 @@ export default function Home() {
               onClick={() => {
                 setActiveTab(item.id);
                 setMobileMenuOpen(false);
-              }
+              }}
             >
               <item.icon />
               <span>{item.label}</span>
