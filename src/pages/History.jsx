@@ -160,20 +160,14 @@ export default function History() {
     return 'pending';
   };
 
-  // Extract grade from analysis text
+  // Extract grade from stored grade property or analysis
   const getGrade = (bet) => {
+    // Use stored grade if available (from new extraction)
+    if (bet.grade) return bet.grade;
+    
+    // Fallback for older bets that don't have grade property
     if (!bet.analysis) return 'N/A';
     
-    const analysis = bet.analysis.toLowerCase();
-    
-    // Look for confidence levels
-    if (analysis.includes('high confidence')) return 'A';
-    if (analysis.includes('medium-high confidence') || analysis.includes('medium/high')) return 'B';
-    if (analysis.includes('medium confidence')) return 'C';
-    if (analysis.includes('medium-low confidence') || analysis.includes('medium/low')) return 'D';
-    if (analysis.includes('low confidence')) return 'F';
-    
-    // Fallback if no explicit confidence mentioned
     return 'N/A';
   };
 
@@ -466,7 +460,44 @@ export default function History() {
                     {bet.analysis && (
                       <div className="expanded-analysis">
                         <h4>Analysis</h4>
-                        <p>{bet.analysis}</p>
+                        {typeof bet.analysis === 'string' ? (
+                          <p>{bet.analysis}</p>
+                        ) : (
+                          <>
+                            {bet.analysis.pickAnalysis && (
+                              <>
+                                <h5>Pick Analysis</h5>
+                                <p>{bet.analysis.pickAnalysis}</p>
+                              </>
+                            )}
+                            {bet.analysis.strengths && bet.analysis.strengths.length > 0 && (
+                              <>
+                                <h5>Strengths</h5>
+                                <ul>
+                                  {bet.analysis.strengths.map((strength, idx) => (
+                                    <li key={idx}>{strength}</li>
+                                  ))}
+                                </ul>
+                              </>
+                            )}
+                            {bet.analysis.risks && bet.analysis.risks.length > 0 && (
+                              <>
+                                <h5>Risks</h5>
+                                <ul>
+                                  {bet.analysis.risks.map((risk, idx) => (
+                                    <li key={idx}>{risk}</li>
+                                  ))}
+                                </ul>
+                              </>
+                            )}
+                            {bet.analysis.recommendedAdjustments && (
+                              <>
+                                <h5>Recommendations</h5>
+                                <p>{bet.analysis.recommendedAdjustments}</p>
+                              </>
+                            )}
+                          </>
+                        )}
                       </div>
                     )}
 
