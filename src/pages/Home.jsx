@@ -69,11 +69,7 @@ export default function Home() {
       <header className="home-header">
         <div className="header-wrapper">
           <div className="header-logo">
-            <div className="logo-icon">⭐</div>
-            <div className="logo-text">
-              <h1>PaiGrade</h1>
-              <p>Smart Bet Evaluation</p>
-            </div>
+            <h1>PaiGrade</h1>
           </div>
 
           {/* Desktop Nav */}
