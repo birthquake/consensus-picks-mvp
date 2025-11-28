@@ -1,5 +1,5 @@
 // FILE LOCATION: src/pages/SubmitPick.jsx
-// Professional bet upload component
+// Premium bet upload with native betting app empty state design
 
 import { useState } from 'react';
 import { auth } from '../firebase/config';
@@ -8,21 +8,29 @@ import '../styles/SubmitPick.css';
 // Icons
 const Icons = {
   Upload: () => (
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="17 8 12 3 7 8" />
       <line x1="12" y1="3" x2="12" y2="15" />
     </svg>
   ),
-  X: () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
+  BetSlip: () => (
+    <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" />
+      <line x1="7" y1="8" x2="17" y2="8" />
+      <line x1="7" y1="12" x2="17" y2="12" />
+      <line x1="7" y1="16" x2="17" y2="16" />
     </svg>
   ),
   Check: () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <polyline points="20 6 9 17 4 12" />
+    </svg>
+  ),
+  X: () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   )
 };
@@ -102,7 +110,7 @@ export default function SubmitPick() {
         throw new Error(data.error || 'Failed to analyze bet slip');
       }
 
-      setSuccess('✓ Bet slip analyzed successfully! Check your History.');
+      setSuccess('✓ Bet analyzed successfully!');
       setSelectedImage(null);
       
       setTimeout(() => {
@@ -117,14 +125,8 @@ export default function SubmitPick() {
   };
 
   return (
-    <div className="submit-container">
-      {/* Header */}
-      <div className="submit-header">
-        <h2>Submit Bet Slip</h2>
-        <p>Upload a screenshot of your bet for AI analysis and grading</p>
-      </div>
-
-      {/* Error Message */}
+    <div className="submit-page">
+      {/* Error Alert */}
       {error && (
         <div className="alert alert-error">
           <Icons.X />
@@ -132,7 +134,7 @@ export default function SubmitPick() {
         </div>
       )}
 
-      {/* Success Message */}
+      {/* Success Alert */}
       {success && (
         <div className="alert alert-success">
           <Icons.Check />
@@ -140,21 +142,26 @@ export default function SubmitPick() {
         </div>
       )}
 
-      {/* Upload Area */}
+      {/* Upload Card */}
       {!selectedImage ? (
-        <div
-          className="upload-area"
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => document.getElementById('file-input').click()}
-        >
-          <div className="upload-content">
+        <div className="upload-card">
+          <div
+            className="upload-drop-zone"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => document.getElementById('file-input').click()}
+          >
             <div className="upload-icon">
-              <Icons.Upload />
+              <Icons.BetSlip />
             </div>
-            <h3>Choose or drag image here</h3>
-            <p>PNG, JPG, or WebP (max 5MB)</p>
+            <h2>No Bets Submitted Yet</h2>
+            <p>Upload your first bet slip to get AI analysis and grading</p>
+            <button className="btn-upload">
+              <Icons.Upload />
+              <span>Choose Image or Drag Here</span>
+            </button>
+            <p className="file-hint">PNG, JPG, or WebP (max 5MB)</p>
           </div>
           <input
             id="file-input"
@@ -165,12 +172,12 @@ export default function SubmitPick() {
           />
         </div>
       ) : (
-        /* Preview Section */
-        <div className="preview-section">
-          <div className="preview-image-wrapper">
+        /* Preview Card */
+        <div className="upload-card">
+          <div className="preview-card">
             <img src={selectedImage.preview} alt="Preview" className="preview-image" />
           </div>
-          <div className="preview-actions">
+          <div className="action-buttons">
             <button
               className="btn-secondary"
               onClick={() => setSelectedImage(null)}
