@@ -1,5 +1,5 @@
 // FILE LOCATION: src/pages/History.jsx
-// Improved bet history with better cards and buttons
+// Improved bet history with expandable cards and working filters
 
 import { useState } from 'react';
 import '../styles/History.css';
@@ -45,9 +45,9 @@ const Icons = {
       <polyline points="12 6 12 12 16 14" />
     </svg>
   ),
-  ChevronRight: () => (
+  ChevronDown: () => (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polyline points="9 18 15 12 9 6" />
+      <polyline points="6 9 12 15 18 9" />
     </svg>
   ),
   Sort: () => (
@@ -60,42 +60,84 @@ const Icons = {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
     </svg>
+  ),
+  Close: () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
   )
 };
 
 export default function History() {
   const [activeStatus, setActiveStatus] = useState('all');
   const [sortOrder, setSortOrder] = useState('newest');
+  const [expandedId, setExpandedId] = useState(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [gradeFilter, setGradeFilter] = useState('all');
+  const [dateRange, setDateRange] = useState('all');
 
-  // Mock data
+  // Mock data with more details
   const bets = [
     {
       id: 1,
-      sportsbook: 'DraftKings',
       date: '2025-11-27',
+      time: '11:45 AM',
       status: 'pending',
-      grade: 'N/A'
+      grade: 'N/A',
+      picks: 3,
+      wager: 50,
+      potential: 1247.50,
+      pickDetails: [
+        'LeBron James O 24.5 Pts',
+        'Lakers vs Celtics ML',
+        'Jalen Brunson O 18.5 Ast'
+      ]
     },
     {
       id: 2,
-      sportsbook: 'FanDuel',
       date: '2025-11-26',
+      time: '2:30 PM',
       status: 'won',
-      grade: 'A'
+      grade: 'A',
+      picks: 2,
+      wager: 100,
+      potential: 380,
+      result: 320,
+      pickDetails: [
+        'Kansas City ML',
+        'Patrick Mahomes O 250 Yards'
+      ]
     },
     {
       id: 3,
-      sportsbook: 'DraftKings',
       date: '2025-11-26',
+      time: '9:15 AM',
       status: 'lost',
-      grade: 'C'
+      grade: 'C',
+      picks: 1,
+      wager: 75,
+      potential: 200,
+      result: -75,
+      pickDetails: [
+        'New York Giants +3.5'
+      ]
     },
     {
       id: 4,
-      sportsbook: 'BetMGM',
       date: '2025-11-25',
+      time: '3:20 PM',
       status: 'pending',
-      grade: 'N/A'
+      grade: 'N/A',
+      picks: 4,
+      wager: 25,
+      potential: 890,
+      pickDetails: [
+        'Boston Celtics ML',
+        'Jayson Tatum O 26.5 Pts',
+        'Derrick White U 15.5 Ast',
+        'Game Total O 215.5'
+      ]
     }
   ];
 
@@ -107,15 +149,39 @@ export default function History() {
   };
 
   const statusOptions = [
-    { id: 'all', label: 'All', icon: null },
-    { id: 'pending', label: 'Pending', icon: null },
-    { id: 'won', label: 'Won', icon: null },
-    { id: 'lost', label: 'Lost', icon: null }
+    { id: 'all', label: 'All' },
+    { id: 'pending', label: 'Pending' },
+    { id: 'won', label: 'Won' },
+    { id: 'lost', label: 'Lost' }
   ];
 
-  const filteredBets = activeStatus === 'all' 
+  // Apply filters
+  let filteredBets = activeStatus === 'all' 
     ? bets 
     : bets.filter(b => b.status === activeStatus);
+
+  if (gradeFilter !== 'all') {
+    filteredBets = filteredBets.filter(b => {
+      if (gradeFilter === 'na') return b.grade === 'N/A';
+      return b.grade.toLowerCase() === gradeFilter.toLowerCase();
+    });
+  }
+
+  if (dateRange !== 'all') {
+    const now = new Date();
+    filteredBets = filteredBets.filter(b => {
+      const betDate = new Date(b.date);
+      if (dateRange === 'week') {
+        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        return betDate >= weekAgo;
+      }
+      if (dateRange === 'month') {
+        const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        return betDate >= monthAgo;
+      }
+      return true;
+    });
+  }
 
   const sortedBets = [...filteredBets].sort((a, b) => {
     const dateA = new Date(a.date);
@@ -127,8 +193,7 @@ export default function History() {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', { 
       month: 'short', 
-      day: 'numeric',
-      year: 'numeric'
+      day: 'numeric'
     });
   };
 
@@ -147,6 +212,8 @@ export default function History() {
     const letter = grade.charAt(0).toLowerCase();
     return `grade-${letter}`;
   };
+
+  const activeFiltersCount = (gradeFilter !== 'all' ? 1 : 0) + (dateRange !== 'all' ? 1 : 0);
 
   return (
     <div className="history-page">
@@ -185,12 +252,75 @@ export default function History() {
             <Icons.Sort />
             <span>{sortOrder === 'newest' ? 'Newest First' : 'Oldest First'}</span>
           </button>
-          <button className="filter-btn">
+          <button 
+            className="filter-btn"
+            onClick={() => setShowFilters(!showFilters)}
+          >
             <Icons.Filter />
             <span>Filters</span>
-            <div className="filter-badge">1</div>
+            {activeFiltersCount > 0 && <div className="filter-badge">{activeFiltersCount}</div>}
           </button>
         </div>
+
+        {/* Filter Modal */}
+        {showFilters && (
+          <div className="filter-modal">
+            <div className="filter-modal-header">
+              <h3>Filters</h3>
+              <button className="filter-close" onClick={() => setShowFilters(false)}>
+                <Icons.Close />
+              </button>
+            </div>
+
+            <div className="filter-modal-content">
+              <div className="filter-section">
+                <label>Grade</label>
+                <div className="filter-options">
+                  {['all', 'a', 'b', 'c', 'd', 'f', 'na'].map(grade => (
+                    <button
+                      key={grade}
+                      className={`filter-option ${gradeFilter === grade ? 'active' : ''}`}
+                      onClick={() => setGradeFilter(grade)}
+                    >
+                      {grade === 'all' ? 'All Grades' : grade === 'na' ? 'N/A' : grade.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-section">
+                <label>Date Range</label>
+                <div className="filter-options">
+                  {[
+                    { id: 'all', label: 'All Time' },
+                    { id: 'week', label: 'Last 7 Days' },
+                    { id: 'month', label: 'Last 30 Days' }
+                  ].map(range => (
+                    <button
+                      key={range.id}
+                      className={`filter-option ${dateRange === range.id ? 'active' : ''}`}
+                      onClick={() => setDateRange(range.id)}
+                    >
+                      {range.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-modal-footer">
+                <button 
+                  className="filter-reset"
+                  onClick={() => {
+                    setGradeFilter('all');
+                    setDateRange('all');
+                  }}
+                >
+                  Reset Filters
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bet Cards */}
@@ -199,41 +329,79 @@ export default function History() {
           {sortedBets.map(bet => {
             const statusInfo = getStatusInfo(bet.status);
             const gradeClass = getGradeClass(bet.grade);
+            const isExpanded = expandedId === bet.id;
 
             return (
-              <div key={bet.id} className="bet-card">
-                <div className="bet-card-content">
-                  <div className="bet-card-icon">
-                    <Icons.Sportsbook />
-                  </div>
-                  <div className="bet-card-info">
-                    <h3 className="bet-card-title">{bet.sportsbook}</h3>
-                    <div className="bet-card-meta">
-                      <div className="bet-card-meta-item">
-                        <Icons.Calendar />
-                        <span>{formatDate(bet.date)}</span>
-                      </div>
-                      <div className="bet-card-meta-item">
-                        <Icons.Clock />
-                        <statusInfo.icon style={{ width: '14px', height: '14px' }} />
-                        <span>{statusInfo.label}</span>
+              <div 
+                key={bet.id} 
+                className={`bet-card ${isExpanded ? 'expanded' : ''}`}
+              >
+                <button
+                  className="bet-card-button"
+                  onClick={() => setExpandedId(isExpanded ? null : bet.id)}
+                >
+                  <div className="bet-card-content">
+                    <div className="bet-card-icon">
+                      <Icons.Sportsbook />
+                    </div>
+                    <div className="bet-card-info">
+                      <h3 className="bet-card-title">Bet Slip • {formatDate(bet.date)} {bet.time}</h3>
+                      <div className="bet-card-meta">
+                        <div className="bet-card-meta-item">
+                          {bet.picks} Pick{bet.picks !== 1 ? 's' : ''}
+                        </div>
+                        <div className="bet-card-meta-item">
+                          ${bet.wager.toFixed(2)} wager
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="bet-card-status">
-                  <div className={`grade-badge-small ${gradeClass}`}>
-                    {bet.grade}
+                  <div className="bet-card-status">
+                    <div className={`grade-badge-small ${gradeClass}`}>
+                      {bet.grade}
+                    </div>
+                    <div className={`status-badge ${statusInfo.class}`}>
+                      <statusInfo.icon />
+                      <span>{statusInfo.label}</span>
+                    </div>
+                    <div className={`bet-card-chevron ${isExpanded ? 'expanded' : ''}`}>
+                      <Icons.ChevronDown />
+                    </div>
                   </div>
-                  <div className={`status-badge ${statusInfo.class}`}>
-                    <statusInfo.icon />
-                    <span>{statusInfo.label}</span>
+                </button>
+
+                {/* Expanded Content */}
+                {isExpanded && (
+                  <div className="bet-card-expanded">
+                    <div className="expanded-picks">
+                      <h4>Picks</h4>
+                      {bet.pickDetails.map((pick, idx) => (
+                        <div key={idx} className="expanded-pick">
+                          <span className="pick-num">{idx + 1}</span>
+                          <span>{pick}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="expanded-details">
+                      <div className="detail-row">
+                        <span>Wager</span>
+                        <span>${bet.wager.toFixed(2)}</span>
+                      </div>
+                      <div className="detail-row">
+                        <span>Potential Win</span>
+                        <span className="accent">${bet.potential.toFixed(2)}</span>
+                      </div>
+                      {bet.status !== 'pending' && (
+                        <div className={`detail-row ${bet.result >= 0 ? 'won' : 'lost'}`}>
+                          <span>Result</span>
+                          <span>{bet.result >= 0 ? '+' : ''}{bet.result >= 0 ? '$' : '-$'}{Math.abs(bet.result).toFixed(2)}</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="bet-card-chevron">
-                    <Icons.ChevronRight />
-                  </div>
-                </div>
+                )}
               </div>
             );
           })}
@@ -242,7 +410,7 @@ export default function History() {
         <div className="empty-state">
           <Icons.Sportsbook />
           <h3>No Bets Found</h3>
-          <p>Upload your first bet slip to see it here</p>
+          <p>Try adjusting your filters or upload your first bet slip</p>
         </div>
       )}
     </div>
