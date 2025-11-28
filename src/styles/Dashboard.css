@@ -1,5 +1,5 @@
 /* FILE LOCATION: src/styles/Dashboard.css
-   Premium analytics dashboard styling for PaiGrade */
+   Premium analytics dashboard styling for PaiGrade - Light & Dark mode support */
 
 :root {
   --primary-bg: #0f1419;
@@ -15,9 +15,26 @@
   --warning-color: #ed8936;
 }
 
+/* Light mode */
+@media (prefers-color-scheme: light) {
+  :root {
+    --primary-bg: #f8f9fa;
+    --secondary-bg: #ffffff;
+    --tertiary-bg: #f0f2f5;
+    --accent-green: #00d4aa;
+    --accent-green-hover: #00c99a;
+    --text-primary: #1a202c;
+    --text-secondary: #718096;
+    --border-color: #e2e8f0;
+    --success-color: #38a169;
+    --error-color: #e53e3e;
+    --warning-color: #d69e2e;
+  }
+}
+
 .d-container {
   min-height: 100vh;
-  background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%);
+  background: linear-gradient(135deg, var(--primary-bg) 0%, var(--secondary-bg) 100%);
   color: var(--text-primary);
   padding: 2rem 1.5rem;
 }
@@ -33,10 +50,7 @@
   font-size: 2rem;
   font-weight: 700;
   margin: 0 0 0.5rem 0;
-  background: linear-gradient(135deg, var(--accent-green), #00d4aa);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--accent-green);
 }
 
 .d-header p {
@@ -59,7 +73,7 @@
   background: rgba(245, 101, 101, 0.1);
   border: 1px solid var(--error-color);
   border-radius: 0.75rem;
-  color: #fc8181;
+  color: var(--error-color);
 }
 
 .d-empty {
@@ -127,8 +141,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #0f1419;
+  color: #ffffff;
   flex-shrink: 0;
+}
+
+@media (prefers-color-scheme: light) {
+  .d-metric-icon {
+    color: #ffffff;
+  }
 }
 
 .d-metric-icon.trending {
@@ -187,7 +207,7 @@
   font-size: 1.3rem;
   font-weight: 600;
   margin: 0 0 1.5rem 0;
-  color: var(--text-primary);
+  color: var(--accent-green);
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -382,8 +402,14 @@
 
 /* Insights */
 .d-insights {
-  background: linear-gradient(135deg, rgba(0, 212, 170, 0.05), rgba(0, 212, 170, 0.02));
+  background: rgba(0, 212, 170, 0.05);
   border: 1px solid var(--border-color);
+}
+
+@media (prefers-color-scheme: light) {
+  .d-insights {
+    background: rgba(0, 212, 170, 0.03);
+  }
 }
 
 .d-insight-list {
@@ -409,6 +435,18 @@
 .d-insight-list li:hover {
   background: rgba(0, 212, 170, 0.05);
   color: var(--text-primary);
+}
+
+/* Animations */
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Responsive */
