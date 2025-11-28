@@ -1,5 +1,5 @@
 // FILE LOCATION: src/pages/Home.jsx
-// Premium home page with modern navigation and layout
+// PaiGrade - AI-powered bet grading and analytics
 
 import { useState } from 'react';
 import { auth } from '../firebase/config';
@@ -58,9 +58,9 @@ export default function Home() {
   };
 
   const navItems = [
-    { id: 'submit', label: 'Submit Pick', icon: Icons.Upload },
+    { id: 'submit', label: 'Submit Bet', icon: Icons.Upload },
     { id: 'history', label: 'History', icon: Icons.Clock },
-    { id: 'dashboard', label: 'Dashboard', icon: Icons.TrendingUp }
+    { id: 'dashboard', label: 'Analytics', icon: Icons.TrendingUp }
   ];
 
   return (
@@ -69,10 +69,10 @@ export default function Home() {
       <header className="home-header">
         <div className="header-wrapper">
           <div className="header-logo">
-            <div className="logo-icon">📊</div>
+            <div className="logo-icon">⭐</div>
             <div className="logo-text">
-              <h1>Consensus Picks</h1>
-              <p>AI Sports Betting</p>
+              <h1>PaiGrade</h1>
+              <p>Smart Bet Evaluation</p>
             </div>
           </div>
 
