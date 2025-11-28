@@ -29,13 +29,6 @@ const Icons = {
       <polyline points="17 6 23 6 23 12" />
     </svg>
   ),
-  Menu: () => (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <line x1="3" y1="6" x2="21" y2="6" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <line x1="3" y1="18" x2="21" y2="18" />
-    </svg>
-  ),
   LogOut: () => (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -47,7 +40,6 @@ const Icons = {
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('submit');
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleLogout = async () => {
     try {
@@ -68,20 +60,15 @@ export default function Home() {
       {/* Header */}
       <header className="home-header">
         <div className="header-wrapper">
-          <div className="header-logo">
-            <h1>PaiGrade</h1>
-          </div>
+          <h1 className="header-title">PaiGrade</h1>
 
-          {/* Desktop Nav */}
-          <nav className="header-nav desktop-only">
+          {/* Navigation */}
+          <nav className="header-nav">
             {navItems.map(item => (
               <button
                 key={item.id}
-                className={`nav-item ${activeTab === item.id ? 'active' : ''}`}
-                onClick={() => {
-                  setActiveTab(item.id);
-                  setMobileMenuOpen(false);
-                }}
+                className={`nav-btn ${activeTab === item.id ? 'active' : ''}`}
+                onClick={() => setActiveTab(item.id)}
               >
                 <item.icon />
                 <span>{item.label}</span>
@@ -91,37 +78,9 @@ export default function Home() {
 
           <button onClick={handleLogout} className="logout-btn">
             <Icons.LogOut />
-            <span className="desktop-only">Logout</span>
           </button>
         </div>
-
-        {/* Mobile Menu Button */}
-        <button 
-          className="mobile-menu-btn mobile-only"
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        >
-          <Icons.Menu />
-        </button>
       </header>
-
-      {/* Mobile Nav */}
-      {mobileMenuOpen && (
-        <nav className="mobile-nav">
-          {navItems.map(item => (
-            <button
-              key={item.id}
-              className={`mobile-nav-item ${activeTab === item.id ? 'active' : ''}`}
-              onClick={() => {
-                setActiveTab(item.id);
-                setMobileMenuOpen(false);
-              }}
-            >
-              <item.icon />
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
-      )}
 
       {/* Tab Content */}
       <main className="tab-content">
