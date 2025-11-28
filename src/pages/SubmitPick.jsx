@@ -1,5 +1,5 @@
 // FILE LOCATION: src/pages/SubmitPick.jsx
-// Premium bet upload with native betting app empty state design
+// Clean bet upload with fake bet slip placeholder
 
 import { useState } from 'react';
 import { auth } from '../firebase/config';
@@ -8,18 +8,10 @@ import '../styles/SubmitPick.css';
 // Icons
 const Icons = {
   Upload: () => (
-    <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="17 8 12 3 7 8" />
       <line x1="12" y1="3" x2="12" y2="15" />
-    </svg>
-  ),
-  BetSlip: () => (
-    <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" />
-      <line x1="7" y1="8" x2="17" y2="8" />
-      <line x1="7" y1="12" x2="17" y2="12" />
-      <line x1="7" y1="16" x2="17" y2="16" />
     </svg>
   ),
   Check: () => (
@@ -110,7 +102,7 @@ export default function SubmitPick() {
         throw new Error(data.error || 'Failed to analyze bet slip');
       }
 
-      setSuccess('✓ Bet analyzed successfully!');
+      setSuccess('Bet analyzed! Check History to see results.');
       setSelectedImage(null);
       
       setTimeout(() => {
@@ -142,55 +134,95 @@ export default function SubmitPick() {
         </div>
       )}
 
-      {/* Upload Card */}
+      {/* Upload Section */}
       {!selectedImage ? (
-        <div className="upload-card">
-          <div
-            className="upload-drop-zone"
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onClick={() => document.getElementById('file-input').click()}
-          >
-            <div className="upload-icon">
-              <Icons.BetSlip />
+        <>
+          {/* Upload Box */}
+          <div className="upload-box">
+            <div
+              className="upload-zone"
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => document.getElementById('file-input').click()}
+            >
+              <div className="upload-icon">
+                <Icons.Upload />
+              </div>
+              <h2>Upload Bet Slip</h2>
+              <p>Drag image here or click to browse</p>
+              <p className="file-hint">PNG, JPG, or WebP (max 5MB)</p>
             </div>
-            <h2>No Bets Submitted Yet</h2>
-            <p>Upload your first bet slip to get AI analysis and grading</p>
-            <button className="btn-upload">
-              <Icons.Upload />
-              <span>Choose Image or Drag Here</span>
-            </button>
-            <p className="file-hint">PNG, JPG, or WebP (max 5MB)</p>
+            <input
+              id="file-input"
+              type="file"
+              accept=".png,.jpg,.jpeg,.webp"
+              onChange={(e) => handleImageSelect(e.target.files[0])}
+              style={{ display: 'none' }}
+            />
           </div>
-          <input
-            id="file-input"
-            type="file"
-            accept=".png,.jpg,.jpeg,.webp"
-            onChange={(e) => handleImageSelect(e.target.files[0])}
-            style={{ display: 'none' }}
-          />
-        </div>
+
+          {/* Fake Bet Slip Placeholder */}
+          <div className="placeholder-section">
+            <h3>Example Bet Slip</h3>
+            <div className="fake-bet-slip">
+              <div className="slip-header">
+                <div className="slip-logo">DraftKings</div>
+                <div className="slip-time">11:45 AM</div>
+              </div>
+
+              <div className="slip-picks">
+                <div className="pick-row">
+                  <span className="pick-label">Pick 1</span>
+                  <span className="pick-value">LeBron James O 24.5 Pts</span>
+                </div>
+                <div className="pick-row">
+                  <span className="pick-label">Pick 2</span>
+                  <span className="pick-value">Lakers vs Celtics ML</span>
+                </div>
+                <div className="pick-row">
+                  <span className="pick-label">Pick 3</span>
+                  <span className="pick-value">Jalen Brunson O 18.5 Ast</span>
+                </div>
+              </div>
+
+              <div className="slip-divider"></div>
+
+              <div className="slip-footer">
+                <div className="slip-row">
+                  <span>Wager</span>
+                  <span>$50.00</span>
+                </div>
+                <div className="slip-row">
+                  <span>Potential Win</span>
+                  <span className="accent">$1,247.50</span>
+                </div>
+              </div>
+            </div>
+            <p className="placeholder-hint">Upload your bet slip and we'll grade it with AI</p>
+          </div>
+        </>
       ) : (
-        /* Preview Card */
-        <div className="upload-card">
-          <div className="preview-card">
-            <img src={selectedImage.preview} alt="Preview" className="preview-image" />
+        /* Preview & Submit */
+        <div className="preview-section">
+          <div className="preview-image">
+            <img src={selectedImage.preview} alt="Bet slip preview" />
           </div>
+
           <div className="action-buttons">
             <button
               className="btn-secondary"
               onClick={() => setSelectedImage(null)}
               disabled={loading}
             >
-              Change Image
+              Change
             </button>
             <button
               className="btn-primary"
               onClick={handleSubmit}
               disabled={loading}
             >
-              {loading ? 'Analyzing...' : 'Analyze Bet'}
+              {loading ? 'Analyzing...' : 'Submit'}
             </button>
           </div>
         </div>
