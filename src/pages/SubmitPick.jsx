@@ -1,5 +1,5 @@
 // FILE LOCATION: src/pages/SubmitPick.jsx
-// Clean bet upload with image compression for long bet slips
+// Clean bet upload with image compression + loading animation + styled analysis
 
 import { useState } from 'react';
 import { auth } from '../firebase/config';
@@ -27,13 +27,55 @@ const Icons = {
   )
 };
 
+// Loading spinner animation
+const LoadingSpinner = () => (
+  <div style={{
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '60px 20px',
+    gap: '20px'
+  }}>
+    <div style={{
+      width: '50px',
+      height: '50px',
+      border: '3px solid #1a1a1a',
+      borderTop: '3px solid #00d4ff',
+      borderRadius: '50%',
+      animation: 'spin 1s linear infinite'
+    }}>
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
+    <p style={{
+      color: '#999',
+      fontSize: '16px',
+      textAlign: 'center'
+    }}>
+      Analyzing your picks<span style={{ animation: 'dots 1.5s steps(3, end) infinite' }}>...</span>
+      <style>{`
+        @keyframes dots {
+          0%, 20% { content: '.'; }
+          40% { content: '..'; }
+          60%, 100% { content: '...'; }
+        }
+      `}</style>
+    </p>
+  </div>
+);
+
 export default function SubmitPick() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [analysisResult, setAnalysisResult] = useState(null);
 
-  // Compress image before converting to base64
   const compressImage = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -44,8 +86,6 @@ export default function SubmitPick() {
           let width = img.width;
           let height = img.height;
 
-          // Reduce dimensions - keep aspect ratio but limit height to 2000px
-          // This significantly reduces file size for long screenshots
           if (height > 2000) {
             const ratio = width / height;
             height = 2000;
@@ -58,8 +98,6 @@ export default function SubmitPick() {
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
 
-          // Compress to JPEG with 0.8 quality
-          // This reduces size dramatically while maintaining readability
           const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
           resolve(compressedBase64);
         };
@@ -88,7 +126,6 @@ export default function SubmitPick() {
       setLoading(true);
       setError('');
       
-      // Compress the image before storing
       const compressedBase64 = await compressImage(file);
       
       setSelectedImage({
@@ -128,6 +165,7 @@ export default function SubmitPick() {
       setLoading(true);
       setError('');
       setSuccess('');
+      setAnalysisResult(null);
 
       const base64 = selectedImage.preview.split(',')[1];
 
@@ -147,6 +185,7 @@ export default function SubmitPick() {
         throw new Error(data.error || 'Failed to analyze bet slip');
       }
 
+      setAnalysisResult(data);
       setSuccess('Bet analyzed! Check History to see results.');
       setSelectedImage(null);
       
@@ -179,10 +218,193 @@ export default function SubmitPick() {
         </div>
       )}
 
+      {/* Loading Animation */}
+      {loading && (
+        <LoadingSpinner />
+      )}
+
+      {/* Analysis Results */}
+      {analysisResult && !loading && (
+        <div className="analysis-section">
+          {/* Grade Badge */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '20px',
+            marginBottom: '30px',
+            padding: '20px',
+            backgroundColor: '#0a0a0a',
+            borderRadius: '12px',
+            borderLeft: '4px solid #00d4ff'
+          }}>
+            <div style={{
+              fontSize: '48px',
+              fontWeight: 'bold',
+              color: '#00d4ff',
+              minWidth: '60px',
+              textAlign: 'center'
+            }}>
+              {analysisResult.grade}
+            </div>
+            <div>
+              <div style={{ color: '#00d4ff', fontSize: '14px', fontWeight: '600' }}>
+                Confidence: {analysisResult.confidence}
+              </div>
+              <div style={{ color: '#999', fontSize: '14px', marginTop: '4px' }}>
+                {analysisResult.reason}
+              </div>
+            </div>
+          </div>
+
+          {/* Pick Analysis */}
+          {analysisResult.analysis.pickAnalysis && (
+            <div style={{ marginBottom: '30px' }}>
+              <h3 style={{
+                color: '#00d4ff',
+                fontSize: '18px',
+                fontWeight: '600',
+                marginBottom: '12px',
+                paddingBottom: '8px',
+                borderBottom: '1px solid #1a1a1a'
+              }}>
+                Pick Analysis
+              </h3>
+              <p style={{
+                color: '#ccc',
+                lineHeight: '1.6',
+                fontSize: '14px'
+              }}>
+                {analysisResult.analysis.pickAnalysis}
+              </p>
+            </div>
+          )}
+
+          {/* Strengths */}
+          {analysisResult.analysis.strengths && analysisResult.analysis.strengths.length > 0 && (
+            <div style={{ marginBottom: '30px' }}>
+              <h3 style={{
+                color: '#00d4ff',
+                fontSize: '18px',
+                fontWeight: '600',
+                marginBottom: '12px',
+                paddingBottom: '8px',
+                borderBottom: '1px solid #1a1a1a'
+              }}>
+                Strengths
+              </h3>
+              <ul style={{
+                listStyle: 'none',
+                padding: 0,
+                margin: 0
+              }}>
+                {analysisResult.analysis.strengths.map((strength, idx) => (
+                  <li key={idx} style={{
+                    color: '#ccc',
+                    fontSize: '14px',
+                    marginBottom: '10px',
+                    paddingLeft: '20px',
+                    position: 'relative'
+                  }}>
+                    <span style={{
+                      position: 'absolute',
+                      left: 0,
+                      color: '#00d4ff'
+                    }}>✓</span>
+                    {strength}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Risks */}
+          {analysisResult.analysis.risks && analysisResult.analysis.risks.length > 0 && (
+            <div style={{ marginBottom: '30px' }}>
+              <h3 style={{
+                color: '#00d4ff',
+                fontSize: '18px',
+                fontWeight: '600',
+                marginBottom: '12px',
+                paddingBottom: '8px',
+                borderBottom: '1px solid #1a1a1a'
+              }}>
+                Potential Risks
+              </h3>
+              <ul style={{
+                listStyle: 'none',
+                padding: 0,
+                margin: 0
+              }}>
+                {analysisResult.analysis.risks.map((risk, idx) => (
+                  <li key={idx} style={{
+                    color: '#ccc',
+                    fontSize: '14px',
+                    marginBottom: '10px',
+                    paddingLeft: '20px',
+                    position: 'relative'
+                  }}>
+                    <span style={{
+                      position: 'absolute',
+                      left: 0,
+                      color: '#ff6b6b'
+                    }}>⚠</span>
+                    {risk}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Recommendations */}
+          {analysisResult.analysis.recommendedAdjustments && (
+            <div>
+              <h3 style={{
+                color: '#00d4ff',
+                fontSize: '18px',
+                fontWeight: '600',
+                marginBottom: '12px',
+                paddingBottom: '8px',
+                borderBottom: '1px solid #1a1a1a'
+              }}>
+                Recommendations
+              </h3>
+              <p style={{
+                color: '#ccc',
+                lineHeight: '1.6',
+                fontSize: '14px'
+              }}>
+                {analysisResult.analysis.recommendedAdjustments}
+              </p>
+            </div>
+          )}
+
+          {/* New Bet Button */}
+          <button
+            onClick={() => {
+              setAnalysisResult(null);
+              setSelectedImage(null);
+            }}
+            style={{
+              marginTop: '30px',
+              padding: '12px 24px',
+              backgroundColor: '#00d4ff',
+              color: '#000',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              width: '100%'
+            }}
+          >
+            Submit Another Bet
+          </button>
+        </div>
+      )}
+
       {/* Upload Section */}
-      {!selectedImage ? (
+      {!selectedImage && !analysisResult && (
         <>
-          {/* Upload Box */}
           <div className="upload-box">
             <div
               className="upload-zone"
@@ -247,8 +469,10 @@ export default function SubmitPick() {
             <p className="placeholder-hint">Upload your bet slip and we'll grade it with AI</p>
           </div>
         </>
-      ) : (
-        /* Preview & Submit */
+      )}
+
+      {/* Preview & Submit */}
+      {selectedImage && !analysisResult && (
         <div className="preview-section">
           <div className="preview-image">
             <img src={selectedImage.preview} alt="Bet slip preview" />
