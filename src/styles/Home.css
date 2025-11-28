@@ -38,19 +38,7 @@
   min-width: 0;
 }
 
-.logo-icon {
-  font-size: 1.75rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  background: linear-gradient(135deg, rgba(0, 212, 170, 0.2), rgba(0, 212, 170, 0.1));
-  border-radius: var(--radius-lg);
-  border: 1px solid rgba(0, 212, 170, 0.3);
-}
-
-.logo-text h1 {
+.header-logo h1 {
   font-size: 1.5rem;
   margin: 0;
   background: linear-gradient(135deg, #ffffff, #00d4aa);
@@ -59,10 +47,6 @@
   background-clip: text;
   font-weight: 700;
   letter-spacing: -0.5px;
-}
-
-.logo-text p {
-  display: none;
 }
 
 /* Desktop Navigation */
@@ -157,8 +141,8 @@
   display: none;
   background: var(--secondary-bg);
   border-bottom: 1px solid var(--border-color);
-  padding: var(--space-md);
-  gap: var(--space-sm);
+  padding: var(--space-sm);
+  gap: var(--space-xs);
   flex-direction: column;
 }
 
@@ -193,6 +177,7 @@
 .mobile-nav-item svg {
   width: 18px;
   height: 18px;
+  flex-shrink: 0;
 }
 
 /* Tab Content */
@@ -254,13 +239,7 @@
     gap: var(--space-md);
   }
 
-  .logo-icon {
-    width: 36px;
-    height: 36px;
-    font-size: 1.5rem;
-  }
-
-  .logo-text h1 {
+  .header-logo h1 {
     font-size: 1.25rem;
   }
 
@@ -301,14 +280,8 @@
     gap: var(--space-sm);
   }
 
-  .logo-text h1 {
+  .header-logo h1 {
     font-size: 1.1rem;
-  }
-
-  .logo-icon {
-    width: 32px;
-    height: 32px;
-    font-size: 1.25rem;
   }
 }
 
