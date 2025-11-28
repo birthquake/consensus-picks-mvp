@@ -1,5 +1,5 @@
 // FILE LOCATION: src/pages/Home.jsx
-// PaiGrade - AI-powered bet grading and analytics
+// PaiGrade - Premium bet analytics with SplitMates-inspired design
 
 import { useState } from 'react';
 import { auth } from '../firebase/config';
@@ -35,6 +35,12 @@ const Icons = {
       <polyline points="16 17 21 12 16 7" />
       <line x1="21" y1="12" x2="9" y2="12" />
     </svg>
+  ),
+  Settings: () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 1v6m0 6v6M4.22 4.22l4.24 4.24m5.08 5.08l4.24 4.24M1 12h6m6 0h6M4.22 19.78l4.24-4.24m5.08-5.08l4.24-4.24" />
+    </svg>
   )
 };
 
@@ -59,31 +65,37 @@ export default function Home() {
     <div className="home-container">
       {/* Header */}
       <header className="home-header">
-        <div className="header-wrapper">
-          <h1 className="header-title">PaiGrade</h1>
-
-          {/* Navigation */}
-          <nav className="header-nav">
-            {navItems.map(item => (
-              <button
-                key={item.id}
-                className={`nav-btn ${activeTab === item.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(item.id)}
-              >
-                <item.icon />
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </nav>
-
-          <button onClick={handleLogout} className="logout-btn">
-            <Icons.LogOut />
-          </button>
+        <div className="header-content">
+          <div className="header-left">
+            <h1 className="header-title">PaiGrade</h1>
+          </div>
+          <div className="header-right">
+            <button className="icon-btn">
+              <Icons.Settings />
+            </button>
+            <button onClick={handleLogout} className="logout-btn">
+              <Icons.LogOut />
+            </button>
+          </div>
         </div>
+
+        {/* Navigation Pills */}
+        <nav className="nav-pills">
+          {navItems.map(item => (
+            <button
+              key={item.id}
+              className={`nav-pill ${activeTab === item.id ? 'active' : ''}`}
+              onClick={() => setActiveTab(item.id)}
+            >
+              <item.icon />
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
       </header>
 
-      {/* Tab Content */}
-      <main className="tab-content">
+      {/* Main Content */}
+      <main className="main-content">
         {activeTab === 'submit' && <SubmitPick />}
         {activeTab === 'history' && <History />}
         {activeTab === 'dashboard' && <Dashboard />}
