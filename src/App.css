@@ -1,33 +1,68 @@
 /* FILE LOCATION: src/App.css */
 
+/* Dark Theme (default) */
+[data-theme="dark"],
+:root {
+  --bg-primary: #0f0f0f;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #242424;
+  --text-primary: #ffffff;
+  --text-secondary: #999;
+  --text-tertiary: #666;
+  --accent-primary: #00d9ff;
+  --accent-secondary: #0099cc;
+  --border-color: #333;
+  --success-color: #4ade80;
+  --error-color: #ff6b6b;
+  --warning-color: #fbbf24;
+}
+
+/* Light Theme */
+[data-theme="light"] {
+  --bg-primary: #f9fafb;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f3f4f6;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+  --accent-primary: #0099cc;
+  --accent-secondary: #00d9ff;
+  --border-color: #e5e7eb;
+  --success-color: #10b981;
+  --error-color: #ef4444;
+  --warning-color: #f59e0b;
+}
+
 .app {
-  background: #0f0f0f;
-  color: #ffffff;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 .app-header {
   padding: 2rem 1rem;
   text-align: center;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .app-header h1 {
   font-size: 2.5rem;
   margin-bottom: 0.5rem;
-  background: linear-gradient(90deg, #00d9ff, #0099cc);
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .app-header p {
-  color: #999;
+  color: var(--text-secondary);
   font-size: 0.875rem;
 }
 
 .filters {
   padding: 1.5rem;
-  background: #1a1a1a;
+  background: var(--bg-secondary);
   display: flex;
   gap: 1rem;
   flex-wrap: wrap;
@@ -42,30 +77,31 @@
 
 .filter-group label {
   font-size: 0.875rem;
-  color: #999;
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
 .filter-group select {
-  background: #242424;
-  border: 1px solid #333;
-  color: #fff;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
   padding: 0.5rem 0.75rem;
   border-radius: 0.375rem;
   font-size: 0.875rem;
   cursor: pointer;
+  transition: all 0.3s ease;
 }
 
 .filter-group select:hover,
 .filter-group select:focus {
-  border-color: #00d9ff;
+  border-color: var(--accent-primary);
   outline: none;
 }
 
 .refresh-btn {
-  background: linear-gradient(135deg, #00d9ff, #0099cc);
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
   border: none;
-  color: #000;
+  color: var(--bg-primary);
   padding: 0.5rem 1.25rem;
   border-radius: 0.375rem;
   font-weight: 600;
@@ -83,14 +119,14 @@
 .error {
   padding: 1rem;
   margin: 1rem;
-  background: #3a1a1a;
-  color: #ff6b6b;
-  border-left: 4px solid #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+  color: var(--error-color);
+  border-left: 4px solid var(--error-color);
   border-radius: 0.375rem;
 }
 
 .loading {
   padding: 2.5rem 1rem;
   text-align: center;
-  color: #999;
+  color: var(--text-secondary);
 }
