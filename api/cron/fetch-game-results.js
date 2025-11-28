@@ -93,7 +93,7 @@ async function processBet(bet, betId, userId) {
 
   // Process each pick in the bet
   for (const pick of picks) {
-    const searchQuery = buildSearchQuery(pick, bet.created_at);
+    const searchQuery = buildSearchQuery(pick, bet.game_date || bet.created_at);
     console.log(`🔍 Searching for: "${searchQuery}"`);
 
     try {
