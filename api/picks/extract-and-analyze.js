@@ -1,5 +1,5 @@
-// FILE LOCATION: api/extract-and-analyze.js
-// Extracts picks and game date from bet slip image using Claude Vision + generates personalized analysis
+// FILE LOCATION: api/picks/extract-and-analyze.js
+// Extracts picks, game date, and generates analysis + letter grade using Claude Vision
 
 import Anthropic from '@anthropic-ai/sdk';
 import { initializeApp, cert, getApp } from 'firebase-admin/app';
@@ -46,10 +46,11 @@ export default async function handler(req, res) {
     console.log(`✅ Extracted ${picks.length} picks from image`);
     console.log(`📅 Game date: ${game_date}`);
 
-    // Step 2: Generate personalized analysis using Claude
-    const analysis = await generateAnalysis(picks);
+    // Step 2: Generate personalized analysis and grade using Claude
+    const { analysis, grade, gradeReasoning } = await generateAnalysisAndGrade(picks);
 
     console.log(`📝 Generated personalized analysis`);
+    console.log(`⭐ Bet grade: ${grade}`);
 
     // Step 3: Store in Firestore
     const betData = {
@@ -57,8 +58,10 @@ export default async function handler(req, res) {
       sportsbook: sportsbook,
       wager_amount: wager_amount,
       potential_payout: potential_payout,
-      game_date: new Date(game_date), // Store as Date object
+      game_date: new Date(game_date),
       analysis: analysis,
+      bet_grade: grade,
+      grade_reasoning: gradeReasoning,
       status: 'pending_results',
       parlay_legs: picks.length,
       created_at: new Date(),
@@ -89,6 +92,7 @@ export default async function handler(req, res) {
       betId: betRef.id,
       picks: picks,
       analysis: analysis,
+      grade: grade,
       gameDate: game_date
     });
 
@@ -142,7 +146,7 @@ async function extractPicksFromImage(imageBase64) {
 IMPORTANT:
 - game_date MUST be the date of the actual game/event, NOT the date the bet was placed
 - If you see a specific date on the slip (like "Nov 27" or "11/27/25"), use that
-- If no explicit date, infer from context clues (e.g., "Tonight", "Tomorrow")
+- If no explicit date, infer from context clues (e.g., "Today", "Tomorrow")
 - Always format game_date as YYYY-MM-DD
 - For wager_amount and potential_payout, extract numbers only
 - For odds, include the +/- sign if present
@@ -196,7 +200,7 @@ IMPORTANT:
   }
 }
 
-async function generateAnalysis(picks) {
+async function generateAnalysisAndGrade(picks) {
   try {
     const picksSummary = picks
       .map(p => `${p.player} ${p.stat} ${p.bet_type} ${p.line}`)
@@ -204,30 +208,67 @@ async function generateAnalysis(picks) {
 
     const response = await client.messages.create({
       model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 3000,
+      max_tokens: 3500,
       messages: [
         {
           role: 'user',
-          content: `You are a professional sports betting analyst. Analyze this ${picks.length}-leg parlay and provide personalized insights:
+          content: `You are a professional sports betting analyst. Analyze this ${picks.length}-leg parlay and provide:
 
-${picksSummary}
+1. A LETTER GRADE (A+, A, A-, B+, B, B-, C+, C, C-, D, F) based on:
+   - Bet structure (fewer legs = higher grade potential)
+   - Correlation risk
+   - Line strength and value
+   - Fundamentals of each pick
+   
+2. A ONE-LINE REASON for the grade (max 50 words)
 
-Provide a detailed analysis in markdown format covering:
-1. Overall assessment and confidence level
-2. Key observations about each pick
-3. Risk factors and correlations
-4. Specific recommendations for this bettor
-5. Confidence rating
+3. A DETAILED ANALYSIS in markdown format covering:
+   - Overall assessment and confidence level
+   - Key observations about each pick
+   - Risk factors and correlations
+   - Specific recommendations
+   
+Format your response EXACTLY like this:
+GRADE: A-
+REASON: Strong fundamentals with good value, but 6 legs reduces win probability significantly.
 
-Be honest about the difficulty of hitting ${picks.length}-leg parlays while being constructive. Format with proper markdown headers and emphasis.`
+[Then provide the full markdown analysis below]
+
+Here are the picks:
+${picksSummary}`
         }
       ]
     });
 
-    return response.content[0].text;
+    const responseText = response.content[0].text;
+    
+    // Parse grade and reason
+    const gradeMatch = responseText.match(/GRADE:\s*([A-F][+-]?)/);
+    const reasonMatch = responseText.match(/REASON:\s*([^\n]+)/);
+    
+    if (!gradeMatch) {
+      throw new Error('Could not extract grade from response');
+    }
+
+    const grade = gradeMatch[1].trim();
+    const gradeReasoning = reasonMatch ? reasonMatch[1].trim() : 'See full analysis below';
+    
+    // Extract analysis (everything after the reason line)
+    const analysisStart = responseText.indexOf('\n\n');
+    const analysis = analysisStart > -1 ? responseText.substring(analysisStart).trim() : responseText;
+
+    return {
+      analysis,
+      grade,
+      gradeReasoning
+    };
 
   } catch (error) {
-    console.error('Error generating analysis:', error);
-    return 'Could not generate analysis at this time.';
+    console.error('Error generating analysis and grade:', error);
+    return {
+      analysis: 'Could not generate analysis at this time.',
+      grade: 'N/A',
+      gradeReasoning: 'Unable to grade'
+    };
   }
 }
