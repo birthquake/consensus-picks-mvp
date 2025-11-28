@@ -1,10 +1,11 @@
-/* BetReceipt.css - Styled bet receipt display (collapsible) */
+/* BetReceipt.css - Styled bet receipt with letter grade */
 
 :root {
   --primary-bg: #0f1419;
   --secondary-bg: #1a1f2e;
   --tertiary-bg: #252d3d;
   --accent-green: #00d4aa;
+  --accent-green-hover: #00e5b8;
   --text-primary: #ffffff;
   --text-secondary: #cbd5e0;
   --border-color: #2d3748;
@@ -25,6 +26,94 @@
 .bet-receipt:hover {
   border-color: var(--accent-green);
   box-shadow: 0 4px 20px rgba(0, 212, 170, 0.1);
+}
+
+/* Grade Card */
+.br-grade-card {
+  background: linear-gradient(135deg, rgba(0, 212, 170, 0.05), rgba(0, 212, 170, 0.02));
+  border-bottom: 2px solid rgba(0, 212, 170, 0.2);
+  padding: 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.grade-display {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.grade-icon {
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  font-size: 1.75rem;
+}
+
+.br-grade-card.grade-a .grade-icon {
+  background: linear-gradient(135deg, #9ae6b4, #68d391);
+  color: #1a202c;
+}
+
+.br-grade-card.grade-b .grade-icon {
+  background: linear-gradient(135deg, #9ae6b4, #68d391);
+  color: #1a202c;
+  opacity: 0.8;
+}
+
+.br-grade-card.grade-c .grade-icon {
+  background: linear-gradient(135deg, #fbd38d, #f6ad55);
+  color: #1a202c;
+}
+
+.br-grade-card.grade-d .grade-icon {
+  background: linear-gradient(135deg, #fc8181, #f56565);
+  color: white;
+}
+
+.br-grade-card.grade-f .grade-icon {
+  background: linear-gradient(135deg, #fc8181, #e53e3e);
+  color: white;
+}
+
+.br-grade-card.grade-na .grade-icon {
+  background: linear-gradient(135deg, #cbd5e0, #a0aec0);
+  color: #1a202c;
+}
+
+.grade-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.grade-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.grade-value {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+
+.grade-reasoning {
+  flex: 1;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  font-weight: 500;
+  text-align: right;
 }
 
 /* Collapsible Header Button */
@@ -425,6 +514,15 @@
 
   .br-content {
     padding: 0 1rem 1rem 1rem;
+  }
+
+  .br-grade-card {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .grade-reasoning {
+    text-align: left;
   }
 
   .br-pick {
