@@ -183,30 +183,82 @@ Try your best to extract what you can see, even if some fields are unclear.`
 
     console.log(`📈 User stats - Bets: ${analytics.total_bets}, Win Rate: ${analytics.win_rate}%`);
 
-    // Step 3: Analyze picks with user history context
-    const analysisMessage = await anthropic.messages.create({
+    // Step 3: Generate grade for the bet slip
+    const gradeMessage = await anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 1500,
+      max_tokens: 500,
       messages: [
         {
           role: 'user',
-          content: `You are an expert sports betting analyst. Analyze this user's new bet slip and provide personalized refinement analysis.
+          content: `Grade this sports parlay on a scale of A-F based on pick quality, variance, and user's historical performance.
+
+${userContext}
+
+PICKS TO GRADE:
+${formatPicksForAnalysis(extractedData.picks)}
+
+Respond with ONLY:
+GRADE: [A/B/C/D/F]
+CONFIDENCE: [High/Medium/Low]
+REASON: [One sentence explanation]`
+        }
+      ]
+    });
+
+    const gradeText = gradeMessage.content[0].text;
+    const gradeMatch = gradeText.match(/GRADE:\s*([A-F])/);
+    const confidenceMatch = gradeText.match(/CONFIDENCE:\s*(High|Medium|Low)/);
+    const reasonMatch = gradeText.match(/REASON:\s*(.+?)(?:\n|$)/);
+    
+    const grade = gradeMatch ? gradeMatch[1] : 'N/A';
+    const confidence = confidenceMatch ? confidenceMatch[1] : 'N/A';
+    const reason = reasonMatch ? reasonMatch[1].trim() : 'Unable to assess';
+
+    console.log(`⭐ Grade: ${grade} (${confidence}) - ${reason}`);
+
+    // Step 4: Analyze picks with user history context
+    const analysisMessage = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5-20250929',
+      max_tokens: 2000,
+      messages: [
+        {
+          role: 'user',
+          content: `You are an expert sports betting analyst. Analyze this user's new bet slip and provide personalized refinement analysis with formatting.
 
 ${userContext}
 
 NEW BETS TO ANALYZE:
 ${formatPicksForAnalysis(extractedData.picks)}
 
-Provide personalized analysis that:
+GRADE: ${grade} (${confidence})
 
-1. Acknowledges how these picks fit their historical style
-2. Highlights their strengths (e.g., "Your QB passing props hit 73%")
-3. Warns about weak areas (e.g., "You're 0-4 on rushing bets")
-4. Gives specific confidence level (High/Medium/Low)
-5. Suggests any adjustments based on their pattern
-6. Validates picks against their hit rate by category
+Provide detailed personalized analysis with this exact markdown structure:
 
-Be encouraging but honest. Reference their specific numbers when possible. Keep it concise (2-3 paragraphs).`
+## Pick Analysis
+
+[2-3 sentences analyzing fit with their style and historical performance]
+
+## Strengths
+
+- [Strength 1 with specific reference to their stats]
+- [Strength 2]
+- [Strength 3]
+
+## Potential Risks
+
+- [Risk 1 with reference to their weak areas]
+- [Risk 2]
+- [Risk 3]
+
+## Confidence Level
+
+**${confidence}** - [One sentence explaining the grade and confidence]
+
+## Recommendations
+
+[2-3 sentences with actionable suggestions or encouragement]
+
+Be encouraging but honest. Reference their specific numbers when possible.`
         }
       ]
     });
@@ -214,7 +266,7 @@ Be encouraging but honest. Reference their specific numbers when possible. Keep 
     const analysis = analysisMessage.content[0].text;
     console.log(`✅ Analysis generated`);
 
-    // Step 4: Store in Firestore
+    // Step 5: Store in Firestore
     const betDocRef = await db.collection('users').doc(userId).collection('bets').add({
       picks: extractedData.picks,
       sportsbook: extractedData.sportsbook || 'Unknown',
@@ -223,6 +275,8 @@ Be encouraging but honest. Reference their specific numbers when possible. Keep 
       potential_payout: extractedData.potential_payout || null,
       
       analysis: analysis,
+      grade: grade,
+      confidence: confidence,
       user_analytics_snapshot: analytics,
       
       status: 'pending_results',
@@ -244,6 +298,9 @@ Be encouraging but honest. Reference their specific numbers when possible. Keep 
       parlay_legs: extractedData.parlay_legs || extractedData.picks.length,
       wager_amount: extractedData.wager_amount,
       potential_payout: extractedData.potential_payout,
+      grade: grade,
+      confidence: confidence,
+      reason: reason,
       analysis: analysis,
       user_stats: {
         total_bets: analytics.total_bets,
