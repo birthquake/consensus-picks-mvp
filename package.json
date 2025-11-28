@@ -1,6 +1,7 @@
 {
-  "name": "consensus-picks-mvp",
+  "name": "paigrade",
   "version": "1.0.0",
+  "description": "PaiGrade - AI-powered bet grading and analytics for smarter sports betting decisions",
   "type": "module",
   "scripts": {
     "dev": "vite",
