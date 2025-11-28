@@ -1,321 +1,193 @@
 // FILE LOCATION: src/pages/SubmitPick.jsx
-// SIMPLIFIED: No image storage, base64 → Claude → store extracted data only
+// Professional bet upload component
 
-import { useState, useRef } from 'react';
-import { db, auth } from '../firebase/config';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { useState } from 'react';
+import { auth } from '../firebase/config';
 import '../styles/SubmitPick.css';
 
-// SVG Icons
+// Icons
 const Icons = {
   Upload: () => (
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="17 8 12 3 7 8" />
       <line x1="12" y1="3" x2="12" y2="15" />
     </svg>
   ),
   X: () => (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <line x1="18" y1="6" x2="6" y2="18" />
       <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   ),
   Check: () => (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <polyline points="20 6 9 17 4 12" />
-    </svg>
-  ),
-  AlertCircle: () => (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="10" />
-      <line x1="12" y1="8" x2="12" y2="12" />
-      <line x1="12" y1="16" x2="12.01" y2="16" />
     </svg>
   )
 };
 
 export default function SubmitPick() {
-  const [image, setImage] = useState(null);
-  const [preview, setPreview] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
-  const [analysisResult, setAnalysisResult] = useState(null);
-  const fileInputRef = useRef(null);
+  const [success, setSuccess] = useState('');
 
-  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
-  const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+  const handleImageSelect = (file) => {
+    if (!file) return;
 
-  const validateFile = (file) => {
-    if (!ACCEPTED_TYPES.includes(file.type)) {
-      setError('Please upload a JPEG, PNG, or WebP image');
-      return false;
-    }
-    if (file.size > MAX_FILE_SIZE) {
-      setError('Image must be smaller than 5MB');
-      return false;
-    }
-    return true;
-  };
-
-  const handleFileSelect = (file) => {
-    setError('');
-    
-    if (!validateFile(file)) {
+    if (file.size > 5 * 1024 * 1024) {
+      setError('File must be less than 5MB');
       return;
     }
 
-    setImage(file);
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setError('Only PNG, JPG, or WebP files allowed');
+      return;
+    }
 
-    // Create preview
     const reader = new FileReader();
     reader.onload = (e) => {
-      setPreview(e.target.result);
+      setSelectedImage({
+        file: file,
+        preview: e.target.result,
+        name: file.name
+      });
+      setError('');
     };
     reader.readAsDataURL(file);
   };
 
   const handleDragOver = (e) => {
     e.preventDefault();
-    e.currentTarget.classList.add('drag-over');
+    e.currentTarget.classList.add('active');
   };
 
   const handleDragLeave = (e) => {
-    e.currentTarget.classList.remove('drag-over');
+    e.currentTarget.classList.remove('active');
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
-    e.currentTarget.classList.remove('drag-over');
-    
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      handleFileSelect(file);
-    }
+    e.currentTarget.classList.remove('active');
+    handleImageSelect(e.dataTransfer.files[0]);
   };
 
-  const handleFileInputChange = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      handleFileSelect(file);
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
-    if (!image) {
+  const handleSubmit = async () => {
+    if (!selectedImage) {
       setError('Please select an image');
       return;
     }
 
-    if (!auth.currentUser) {
-      setError('You must be logged in');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-    setAnalysisResult(null);
-
     try {
-      // Convert image to base64 (wait for FileReader to complete)
-      const imageBase64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          resolve(e.target.result.split(',')[1]);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(image);
-      });
+      setLoading(true);
+      setError('');
+      setSuccess('');
 
-      // Determine media type (iOS sometimes returns empty, so fallback to jpeg)
-      let mediaType = image.type;
-      if (!mediaType || !mediaType.startsWith('image/')) {
-        mediaType = 'image/jpeg'; // Default fallback for iOS
-      }
+      const base64 = selectedImage.preview.split(',')[1];
 
-      console.log('DEBUG: Image info -', {
-        fileName: image.name,
-        fileSize: image.size,
-        fileType: image.type,
-        determinedMediaType: mediaType,
-        base64Length: imageBase64.length,
-        base64Start: imageBase64.substring(0, 50)
-      });
-
-      // Send base64 and media type directly to Claude for extraction + analysis
       const response = await fetch('/api/picks/extract-and-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: auth.currentUser.uid,
-          imageBase64,
-          imageMediaType: mediaType  // ← Pass actual media type with fallback
+          imageBase64: base64,
+          imageName: selectedImage.name
         })
       });
 
       const data = await response.json();
 
-      if (!data.success) {
-        setError(data.error || 'Failed to analyze bet slip');
-        setLoading(false);
-        return;
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to analyze bet slip');
       }
 
-      // Success!
-      setAnalysisResult(data);
-      setSuccess(true);
-      setSuccessMessage(`✓ Bet analyzed! ${data.picks.length} picks identified`);
-      setLoading(false);
+      setSuccess('✓ Bet slip analyzed successfully! Check your History.');
+      setSelectedImage(null);
+      
+      setTimeout(() => {
+        setSuccess('');
+      }, 5000);
 
     } catch (err) {
-      console.error('Error:', err);
-      setError(err.message || 'Something went wrong');
+      setError(err.message || 'Error uploading bet slip');
     } finally {
       setLoading(false);
     }
   };
 
-  const clearImage = () => {
-    setImage(null);
-    setPreview(null);
-    setError('');
-    setAnalysisResult(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
   return (
-    <div className="sp-upload-container">
+    <div className="submit-container">
       {/* Header */}
-      <div className="sp-upload-header">
-        <h1>Upload Your Bet Slip</h1>
-        <p>Take a screenshot of your bet and we'll analyze it for you</p>
+      <div className="submit-header">
+        <h2>Submit Bet Slip</h2>
+        <p>Upload a screenshot of your bet for AI analysis and grading</p>
       </div>
 
-      {/* Main Content */}
-      <div className="sp-upload-content">
-        {!preview ? (
-          // Upload Area
-          <form onSubmit={handleSubmit}>
-            <div
-              className="sp-upload-zone"
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileInputChange}
-                style={{ display: 'none' }}
-              />
+      {/* Error Message */}
+      {error && (
+        <div className="alert alert-error">
+          <Icons.X />
+          <span>{error}</span>
+        </div>
+      )}
 
-              <div className="sp-upload-icon">
-                <Icons.Upload />
-              </div>
+      {/* Success Message */}
+      {success && (
+        <div className="alert alert-success">
+          <Icons.Check />
+          <span>{success}</span>
+        </div>
+      )}
 
-              <h2>Drag image here</h2>
-              <p>or click to select</p>
-              <small>PNG, JPG, or WebP (max 5MB)</small>
+      {/* Upload Area */}
+      {!selectedImage ? (
+        <div
+          className="upload-area"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onClick={() => document.getElementById('file-input').click()}
+        >
+          <div className="upload-content">
+            <div className="upload-icon">
+              <Icons.Upload />
             </div>
-
-            {error && (
-              <div className="sp-error-message">
-                <Icons.AlertCircle />
-                <span>{error}</span>
-              </div>
-            )}
-
-            {success && (
-              <div className="sp-success-message">
-                <Icons.Check />
-                <span>{successMessage}</span>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading || !image}
-              className="sp-submit-btn"
-            >
-              {loading ? 'Analyzing...' : 'Submit for Analysis'}
-            </button>
-          </form>
-        ) : (
-          // Preview Area
-          <div className="sp-preview-section">
-            <div className="sp-preview-image">
-              <img src={preview} alt="Bet slip preview" />
-            </div>
-
-            <div className="sp-preview-info">
-              <h2>Ready to analyze?</h2>
-              <p>File: {image.name}</p>
-              <p>Size: {(image.size / 1024).toFixed(1)} KB</p>
-
-              {error && (
-                <div className="sp-error-message">
-                  <Icons.AlertCircle />
-                  <span>{error}</span>
-                </div>
-              )}
-
-              {success && (
-                <div className="sp-success-message">
-                  <Icons.Check />
-                  <span>{successMessage}</span>
-                </div>
-              )}
-
-              <div className="sp-preview-actions">
-                <button
-                  onClick={clearImage}
-                  disabled={loading}
-                  className="sp-cancel-btn"
-                >
-                  Choose Different
-                </button>
-
-                <button
-                  onClick={handleSubmit}
-                  disabled={loading}
-                  className="sp-analyze-btn"
-                >
-                  {loading ? 'Analyzing...' : 'Analyze This Bet'}
-                </button>
-              </div>
-            </div>
+            <h3>Choose or drag image here</h3>
+            <p>PNG, JPG, or WebP (max 5MB)</p>
           </div>
-        )}
-
-        {/* Analysis Result */}
-        {analysisResult && (
-          <div className="sp-analysis-result">
-            <h2>Analysis Complete</h2>
-            <p className="analysis-intro">Your personalized analysis:</p>
-            <div className="analysis-text">
-              {analysisResult.analysis}
-            </div>
-            <p className="analysis-note">
-              ✓ Your bet has been saved to your history and will be tracked when results come in.
-            </p>
+          <input
+            id="file-input"
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp"
+            onChange={(e) => handleImageSelect(e.target.files[0])}
+            style={{ display: 'none' }}
+          />
+        </div>
+      ) : (
+        /* Preview Section */
+        <div className="preview-section">
+          <div className="preview-image-wrapper">
+            <img src={selectedImage.preview} alt="Preview" className="preview-image" />
+          </div>
+          <div className="preview-actions">
             <button
-              onClick={clearImage}
-              className="sp-submit-btn"
-              style={{ marginTop: '1.5rem' }}
+              className="btn-secondary"
+              onClick={() => setSelectedImage(null)}
+              disabled={loading}
             >
-              Upload Another Bet
+              Change Image
+            </button>
+            <button
+              className="btn-primary"
+              onClick={handleSubmit}
+              disabled={loading}
+            >
+              {loading ? 'Analyzing...' : 'Analyze Bet'}
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
