@@ -1,24 +1,26 @@
-/* FILE LOCATION: src/styles/Home.css
-   PaiGrade Premium - SplitMates-inspired design */
+/* FILE LOCATION: src/styles/Home.css */
 
 .home-container {
   min-height: 100vh;
-  background: linear-gradient(135deg, #5b4f9f 0%, #3d3766 100%);
+  background: var(--bg-primary);
   display: flex;
   flex-direction: column;
-  padding-bottom: var(--space-xl);
+  transition: background-color 0.3s ease;
 }
 
 /* Header */
 .home-header {
-  padding: var(--space-xl) var(--space-xl) var(--space-lg);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  padding: 1.5rem;
+  transition: all 0.3s ease;
 }
 
 .header-content {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--space-lg);
+  margin-bottom: 1rem;
 }
 
 .header-left {
@@ -26,102 +28,95 @@
 }
 
 .header-title {
-  font-size: 2rem;
-  font-weight: 700;
+  font-size: 1.75rem;
   margin: 0;
-  color: white;
-  letter-spacing: -0.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .header-right {
   display: flex;
-  gap: var(--space-md);
+  gap: 0.75rem;
   align-items: center;
 }
 
-.icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-lg);
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: white;
-  cursor: pointer;
-  transition: all var(--transition-base);
-}
-
-.icon-btn:hover {
-  background: rgba(255, 255, 255, 0.25);
-  transform: translateY(-2px);
-}
-
-.icon-btn svg {
-  width: 20px;
-  height: 20px;
-}
-
+.icon-btn,
 .logout-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 40px;
   height: 40px;
-  border-radius: var(--radius-lg);
-  background: rgba(220, 38, 38, 0.2);
-  border: 1px solid rgba(220, 38, 38, 0.4);
-  color: #fca5a5;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   cursor: pointer;
-  transition: all var(--transition-base);
+  transition: all 0.3s ease;
+}
+
+.icon-btn:hover,
+.logout-btn:hover {
+  border-color: var(--accent-primary);
+  background: var(--bg-primary);
+}
+
+.theme-toggle {
+  color: var(--accent-primary);
+}
+
+.logout-btn {
+  color: var(--error-color);
 }
 
 .logout-btn:hover {
-  background: rgba(220, 38, 38, 0.35);
-  transform: translateY(-2px);
+  border-color: var(--error-color);
 }
 
+.icon-btn svg,
 .logout-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
 }
 
 /* Navigation Pills */
 .nav-pills {
   display: flex;
-  gap: var(--space-md);
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
 .nav-pill {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-md) var(--space-lg);
-  border-radius: var(--radius-full);
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.8);
-  font-weight: var(--font-weight-medium);
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 0.875rem;
   cursor: pointer;
-  transition: all var(--transition-base);
-  font-size: var(--font-size-sm);
+  transition: all 0.3s ease;
   white-space: nowrap;
 }
 
 .nav-pill:hover {
-  background: rgba(255, 255, 255, 0.25);
-  color: white;
-  transform: translateY(-2px);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: var(--bg-secondary);
 }
 
 .nav-pill.active {
-  background: white;
-  color: #5b4f9f;
-  border-color: white;
-  font-weight: var(--font-weight-bold);
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: var(--bg-primary);
+  border-color: var(--accent-primary);
+  font-weight: 600;
 }
 
 .nav-pill svg {
@@ -132,49 +127,14 @@
 /* Main Content */
 .main-content {
   flex: 1;
-  padding: 0 var(--space-xl);
-  display: flex;
-  flex-direction: column;
+  padding: 1.5rem;
+  overflow-y: auto;
 }
 
-/* Responsive - Tablet */
-@media (max-width: 1024px) {
-  .home-header {
-    padding: var(--space-lg) var(--space-lg) var(--space-md);
-  }
-
-  .header-title {
-    font-size: 1.75rem;
-  }
-
-  .nav-pills {
-    gap: var(--space-sm);
-  }
-
-  .nav-pill {
-    padding: var(--space-md) var(--space-md);
-    flex: 1;
-    justify-content: center;
-  }
-
-  .nav-pill span {
-    display: none;
-  }
-
-  .nav-pill svg {
-    width: 20px;
-    height: 20px;
-  }
-}
-
-/* Responsive - Mobile */
+/* Responsive */
 @media (max-width: 768px) {
-  .home-container {
-    padding-bottom: var(--space-lg);
-  }
-
   .home-header {
-    padding: var(--space-lg) var(--space-md) var(--space-md);
+    padding: 1rem;
   }
 
   .header-title {
@@ -182,27 +142,26 @@
   }
 
   .nav-pills {
-    gap: var(--space-sm);
+    gap: 0.5rem;
   }
 
   .nav-pill {
-    padding: var(--space-md) var(--space-lg);
     flex: 1;
     justify-content: center;
-    font-size: var(--font-size-xs);
+    padding: 0.75rem 0.5rem;
+    font-size: 0.75rem;
   }
 
   .nav-pill span {
+    display: none;
+  }
+
+  .nav-pill.active span {
     display: inline;
   }
 
-  .nav-pill svg {
-    width: 16px;
-    height: 16px;
-  }
-
   .main-content {
-    padding: 0 var(--space-md);
+    padding: 1rem;
   }
 
   .icon-btn,
@@ -212,10 +171,9 @@
   }
 }
 
-/* Responsive - Small Mobile */
 @media (max-width: 480px) {
   .home-header {
-    padding: var(--space-md);
+    padding: 0.75rem;
   }
 
   .header-title {
@@ -223,28 +181,24 @@
   }
 
   .header-right {
-    gap: var(--space-sm);
-  }
-
-  .nav-pills {
-    gap: var(--space-xs);
-  }
-
-  .nav-pill {
-    padding: var(--space-sm) var(--space-md);
-  }
-
-  .nav-pill span {
-    display: none;
-  }
-
-  .main-content {
-    padding: 0 var(--space-sm);
+    gap: 0.5rem;
   }
 
   .icon-btn,
   .logout-btn {
     width: 32px;
     height: 32px;
+  }
+
+  .nav-pills {
+    gap: 0.25rem;
+  }
+
+  .nav-pill {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .main-content {
+    padding: 0.75rem;
   }
 }
