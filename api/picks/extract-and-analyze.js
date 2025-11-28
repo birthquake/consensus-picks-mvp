@@ -223,7 +223,7 @@ REASON: [One sentence explanation]`
       messages: [
         {
           role: 'user',
-          content: `You are an expert sports betting analyst. Analyze this user's new bet slip and provide personalized refinement analysis with formatting.
+          content: `You are an expert sports betting analyst. Analyze this user's new bet slip and provide personalized refinement analysis.
 
 ${userContext}
 
@@ -232,38 +232,50 @@ ${formatPicksForAnalysis(extractedData.picks)}
 
 GRADE: ${grade} (${confidence})
 
-Provide detailed personalized analysis with this exact markdown structure:
-
-## Pick Analysis
-
-[2-3 sentences analyzing fit with their style and historical performance]
-
-## Strengths
-
-- [Strength 1 with specific reference to their stats]
-- [Strength 2]
-- [Strength 3]
-
-## Potential Risks
-
-- [Risk 1 with reference to their weak areas]
-- [Risk 2]
-- [Risk 3]
-
-## Confidence Level
-
-**${confidence}** - [One sentence explaining the grade and confidence]
-
-## Recommendations
-
-[2-3 sentences with actionable suggestions or encouragement]
+Return ONLY valid JSON (no markdown):
+{
+  "pickAnalysis": "[2-3 sentences analyzing fit with their style and historical performance]",
+  "strengths": [
+    "[Strength 1 with specific reference to their stats]",
+    "[Strength 2]",
+    "[Strength 3]"
+  ],
+  "risks": [
+    "[Risk 1 with reference to their weak areas]",
+    "[Risk 2]",
+    "[Risk 3]"
+  ],
+  "recommendedAdjustments": "[2-3 sentences with actionable suggestions or encouragement]"
+}
 
 Be encouraging but honest. Reference their specific numbers when possible.`
         }
       ]
     });
 
-    const analysis = analysisMessage.content[0].text;
+    let analysisData;
+    try {
+      let analysisText = analysisMessage.content[0].text;
+      let cleanedJson = analysisText
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+      
+      if (cleanedJson.includes('```')) {
+        cleanedJson = cleanedJson.replace(/^```[\s\S]*?\n/, '').replace(/\n```$/, '');
+      }
+      
+      analysisData = JSON.parse(cleanedJson);
+    } catch (parseError) {
+      console.error('❌ Failed to parse analysis JSON:', parseError.message);
+      analysisData = {
+        pickAnalysis: analysisMessage.content[0].text,
+        strengths: [],
+        risks: [],
+        recommendedAdjustments: 'Unable to parse detailed analysis'
+      };
+    }
+
     console.log(`✅ Analysis generated`);
 
     // Step 5: Store in Firestore
@@ -274,7 +286,7 @@ Be encouraging but honest. Reference their specific numbers when possible.`
       wager_amount: extractedData.wager_amount || null,
       potential_payout: extractedData.potential_payout || null,
       
-      analysis: analysis,
+      analysis: analysisData,
       grade: grade,
       confidence: confidence,
       user_analytics_snapshot: analytics,
@@ -301,7 +313,7 @@ Be encouraging but honest. Reference their specific numbers when possible.`
       grade: grade,
       confidence: confidence,
       reason: reason,
-      analysis: analysis,
+      analysis: analysisData,
       user_stats: {
         total_bets: analytics.total_bets,
         win_rate: analytics.win_rate,
