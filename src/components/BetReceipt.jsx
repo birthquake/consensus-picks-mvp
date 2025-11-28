@@ -1,5 +1,5 @@
 // FILE LOCATION: src/components/BetReceipt.jsx
-// Displays extracted bet slip in a receipt format (collapsible)
+// Displays extracted bet slip with letter grade and analysis
 
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -10,6 +10,11 @@ const Icons = {
   ChevronDown: () => (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <polyline points="6 9 12 15 18 9" />
+    </svg>
+  ),
+  Star: () => (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2">
+      <polygon points="12 2 15.09 10.26 24 10.26 17.55 16.74 19.64 24 12 18.52 4.36 24 6.45 16.74 0 10.26 8.91 10.26 12 2" />
     </svg>
   ),
   Calendar: () => (
@@ -54,7 +59,9 @@ export default function BetReceipt({
   analysis = '',
   status = 'pending_results',
   profit_loss = null,
-  created_at = new Date().toISOString()
+  created_at = new Date().toISOString(),
+  bet_grade = 'N/A',
+  grade_reasoning = ''
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   
@@ -76,6 +83,20 @@ export default function BetReceipt({
       minimumFractionDigits: 0,
       maximumFractionDigits: 2
     }).format(amount);
+  };
+
+  // Get grade color class
+  const getGradeClass = (grade) => {
+    if (!grade || grade === 'N/A') return 'grade-na';
+    const letterGrade = grade.charAt(0).toUpperCase();
+    
+    if (letterGrade === 'A') return 'grade-a';
+    if (letterGrade === 'B') return 'grade-b';
+    if (letterGrade === 'C') return 'grade-c';
+    if (letterGrade === 'D') return 'grade-d';
+    if (letterGrade === 'F') return 'grade-f';
+    
+    return 'grade-na';
   };
 
   // Get status badge
@@ -110,6 +131,22 @@ export default function BetReceipt({
   return (
     <div className={`bet-receipt status-${status === 'complete' ? (profit_loss >= 0 ? 'won' : 'lost') : 'pending'}`}>
       
+      {/* Grade Card */}
+      <div className={`br-grade-card ${getGradeClass(bet_grade)}`}>
+        <div className="grade-display">
+          <div className="grade-icon">
+            <Icons.Star />
+          </div>
+          <div className="grade-content">
+            <div className="grade-label">BET GRADE</div>
+            <div className="grade-value">{bet_grade}</div>
+          </div>
+        </div>
+        {grade_reasoning && (
+          <div className="grade-reasoning">{grade_reasoning}</div>
+        )}
+      </div>
+
       {/* Collapsible Header */}
       <button 
         className="br-header-button"
