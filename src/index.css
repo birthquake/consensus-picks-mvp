@@ -1,5 +1,38 @@
 /* FILE LOCATION: src/index.css */
 
+/* Theme CSS Variables */
+:root,
+[data-theme="dark"] {
+  --bg-primary: #0f0f0f;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #242424;
+  --text-primary: #ffffff;
+  --text-secondary: #999;
+  --text-tertiary: #666;
+  --accent-primary: #00d9ff;
+  --accent-secondary: #0099cc;
+  --border-color: #333;
+  --success-color: #4ade80;
+  --error-color: #ff6b6b;
+  --warning-color: #fbbf24;
+}
+
+[data-theme="light"] {
+  --bg-primary: #f9fafb;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f3f4f6;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+  --accent-primary: #0099cc;
+  --accent-secondary: #00d9ff;
+  --border-color: #e5e7eb;
+  --success-color: #10b981;
+  --error-color: #ef4444;
+  --warning-color: #f59e0b;
+}
+
+/* Base Styles */
 * {
   margin: 0;
   padding: 0;
@@ -12,8 +45,9 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #0f0f0f;
-  color: #ffffff;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 code {
@@ -26,4 +60,17 @@ body,
 #root {
   width: 100%;
   height: 100%;
+}
+
+/* Smooth transitions when theme changes */
+body,
+.app,
+[class*="container"],
+[class*="header"],
+[class*="section"],
+button,
+input,
+select,
+textarea {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
 }
