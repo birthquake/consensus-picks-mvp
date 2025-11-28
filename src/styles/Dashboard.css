@@ -1,4 +1,5 @@
-/* Dashboard.css - User Performance Dashboard Styling */
+/* FILE LOCATION: src/styles/Dashboard.css
+   Premium analytics dashboard styling for PaiGrade */
 
 :root {
   --primary-bg: #0f1419;
@@ -25,6 +26,7 @@
 .d-header {
   max-width: 1200px;
   margin: 0 auto 2rem;
+  animation: slideInUp 0.3s ease;
 }
 
 .d-header h1 {
@@ -108,11 +110,13 @@
   display: flex;
   gap: 1.5rem;
   transition: all 0.2s ease;
+  animation: slideInUp 0.3s ease;
 }
 
 .d-metric-card:hover {
   border-color: var(--accent-green);
   box-shadow: 0 4px 20px rgba(0, 212, 170, 0.1);
+  transform: translateY(-2px);
 }
 
 .d-metric-icon {
@@ -176,6 +180,7 @@
   border: 1px solid var(--border-color);
   border-radius: 0.75rem;
   padding: 2rem;
+  animation: slideInUp 0.4s ease;
 }
 
 .d-section h2 {
@@ -183,6 +188,17 @@
   font-weight: 600;
   margin: 0 0 1.5rem 0;
   color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.d-section h2::before {
+  content: '';
+  width: 4px;
+  height: 24px;
+  background: linear-gradient(180deg, var(--accent-green), transparent);
+  border-radius: 2px;
 }
 
 /* Category Performance */
@@ -201,6 +217,7 @@
   background: var(--tertiary-bg);
   border-radius: 0.5rem;
   transition: all 0.2s ease;
+  border-left: 3px solid transparent;
 }
 
 .d-category-item:hover {
@@ -208,11 +225,11 @@
 }
 
 .d-category-item.high {
-  border-left: 3px solid var(--success-color);
+  border-left-color: var(--success-color);
 }
 
 .d-category-item.low {
-  border-left: 3px solid var(--error-color);
+  border-left-color: var(--error-color);
 }
 
 .d-category-name {
@@ -274,6 +291,7 @@
 .d-league-card:hover {
   border-color: var(--accent-green);
   box-shadow: 0 4px 12px rgba(0, 212, 170, 0.1);
+  transform: translateY(-2px);
 }
 
 .d-league-name {
@@ -313,14 +331,23 @@
   text-align: center;
   position: relative;
   overflow: hidden;
+  transition: all 0.2s ease;
 }
 
 .d-best-card {
   border-left: 4px solid var(--success-color);
 }
 
+.d-best-card:hover {
+  box-shadow: 0 0 20px rgba(72, 187, 120, 0.2);
+}
+
 .d-worst-card {
   border-left: 4px solid var(--error-color);
+}
+
+.d-worst-card:hover {
+  box-shadow: 0 0 20px rgba(245, 101, 101, 0.2);
 }
 
 .d-bw-label {
@@ -376,6 +403,12 @@
   color: var(--text-secondary);
   font-size: 0.95rem;
   line-height: 1.5;
+  transition: all 0.2s ease;
+}
+
+.d-insight-list li:hover {
+  background: rgba(0, 212, 170, 0.05);
+  color: var(--text-primary);
 }
 
 /* Responsive */
@@ -427,28 +460,5 @@
   .d-metric-icon {
     width: 50px;
     height: 50px;
-  }
-}
-
-@media (max-width: 480px) {
-  .d-header h1 {
-    font-size: 1.25rem;
-  }
-
-  .d-metric-value {
-    font-size: 1.5rem;
-  }
-
-  .d-section {
-    padding: 1rem;
-  }
-
-  .d-category-item {
-    padding: 0.75rem;
-  }
-
-  .d-insight-list li {
-    padding: 0.6rem 0.75rem;
-    font-size: 0.9rem;
   }
 }
