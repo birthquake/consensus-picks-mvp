@@ -147,14 +147,14 @@
 }
 
 .slip-logo {
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-primary);
   font-size: 1rem;
 }
 
 .slip-time {
   font-size: 0.75rem;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }
 
 .slip-picks {
@@ -175,13 +175,13 @@
 }
 
 .pick-label {
-  color: var(--text-tertiary);
-  font-weight: 500;
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .pick-value {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .slip-divider {
@@ -205,11 +205,12 @@
 
 .slip-row span:first-child {
   color: var(--text-secondary);
+  font-weight: 500;
 }
 
 .slip-row span:last-child {
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .slip-row .accent {
