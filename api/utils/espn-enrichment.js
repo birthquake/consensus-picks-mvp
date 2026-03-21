@@ -291,7 +291,7 @@ async function fetchRecentForm(config, athleteId, statKey) {
 
 async function extractStatFromEventItem(config, item, athleteId, statKey) {
   try {
-    // Get event ID — it's either inline or in a $ref URL
+    // Get event ID from inline id or $ref URL
     let eventId = item.event?.id;
     if (!eventId && item.event?.$ref) {
       const match = item.event.$ref.match(/events\/(\d+)/);
@@ -304,15 +304,20 @@ async function extractStatFromEventItem(config, item, athleteId, statKey) {
     const summary = await fetchWithTimeout(summaryUrl, 5000);
     if (!summary?.boxscore?.players) return null;
 
-    // Find player in boxscore and extract stat
+    // Pull date from header
+    const date = summary?.header?.competitions?.[0]?.date
+      || summary?.gameInfo?.date
+      || null;
+
+    // Pull opponent — find the competitor whose team ID != the player's team
+    const playerTeamId = String(item.teamId || '');
+    const competitors = summary?.header?.competitions?.[0]?.competitors || [];
+    const opponentComp = competitors.find(c => String(c.team?.id) !== playerTeamId);
+    const opponent = opponentComp?.team?.abbreviation || opponentComp?.team?.shortDisplayName || null;
+
     const value = extractPlayerStatFromSummary(summary, athleteId, statKey);
 
-    return {
-      eventId,
-      date: item.event?.date || null,
-      opponent: null, // could be enriched later
-      value,
-    };
+    return { eventId, date, opponent, value };
   } catch {
     return null;
   }
@@ -383,21 +388,45 @@ async function fetchInjuryStatus(config, athleteId) {
 }
 
 async function fetchTonightsOpponent(config, athleteId, gameDate) {
-  // Check the scoreboard for the actual game date
   const today = gameDate ? gameDate.replace(/-/g, '') : formatDate(new Date());
   const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${today}`;
   const data = await fetchWithTimeout(url);
-  if (!data?.events) return null;
+  if (!data?.events?.length) return null;
 
-  // Find which event contains this athlete's team
-  // We don't have team ID so we'll just return the game names for Claude to use
-  if (data.events.length === 0) return null;
+  // Single game — easy
   if (data.events.length === 1) {
-    const e = data.events[0];
-    return e.name || e.shortName;
+    return describeGame(data.events[0]);
   }
 
-  return `${data.events.length} games today`;
+  // Multiple games — find the one containing this athlete.
+  // Use the athlete eventlog to get their current team ID.
+  const eventlogUrl = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${athleteId}/eventlog`;
+  const eventlog = await fetchWithTimeout(eventlogUrl, 4000);
+  const teamId = eventlog?.teams?.[0]?.id
+    || eventlog?.events?.items?.slice(-1)[0]?.teamId
+    || null;
+
+  if (!teamId) {
+    // Can't determine team — return all games as context
+    return data.events.map(e => e.shortName).join(' | ');
+  }
+
+  // Find the game where one of the competitors matches this team ID
+  const game = data.events.find(e =>
+    e.competitions?.[0]?.competitors?.some(c => String(c.team?.id) === String(teamId))
+  );
+
+  if (!game) return data.events.map(e => e.shortName).join(' | ');
+  return describeGame(game, teamId);
+}
+
+function describeGame(event, teamId) {
+  const comps = event.competitions?.[0]?.competitors || [];
+  if (!teamId || comps.length < 2) return event.shortName || event.name;
+  const opp = comps.find(c => String(c.team?.id) !== String(teamId));
+  const isHome = comps.find(c => String(c.team?.id) === String(teamId))?.homeAway === 'home';
+  const oppName = opp?.team?.abbreviation || opp?.team?.shortDisplayName || '?';
+  return isHome ? `vs ${oppName}` : `@ ${oppName}`;
 }
 
 // ─── Stat extraction from v3 statisticslog ────────────────────────────────────
