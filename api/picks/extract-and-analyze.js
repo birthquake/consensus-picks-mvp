@@ -1,363 +1,381 @@
-// FILE LOCATION: api/utils/espn-enrichment.js
-// Fetches real ESPN context for a set of picks BEFORE Claude analyzes them.
-// Called during bet slip submission so Claude has actual data, not guesses.
-//
-// Per pick, we fetch:
-//   - Player's last 5 game stats for the relevant stat (game log)
-//   - Current injury status
-//   - Tonight's opponent + their defensive rank for that stat (if available)
-//
-// All fetches run in parallel per pick, with a 5s timeout per call.
-// If any fetch fails we degrade gracefully — Claude still runs, just with
-// less context for that pick.
+// FILE LOCATION: api/picks/extract-and-analyze.js
+// Takes a base64 bet slip image, extracts picks, enriches them with real ESPN
+// context (recent form, injury status), then runs Claude analysis on real data.
 
-const SPORT_CONFIG = {
-  NFL:  { sport: 'football',   league: 'nfl' },
-  NBA:  { sport: 'basketball', league: 'nba' },
-  MLB:  { sport: 'baseball',   league: 'mlb' },
-  NHL:  { sport: 'hockey',     league: 'nhl' },
-  NCAAF:{ sport: 'football',   league: 'college-football' },
-  NCAAB:{ sport: 'basketball', league: 'mens-college-basketball' },
-};
+import Anthropic from '@anthropic-ai/sdk';
+import { initializeApp, cert, getApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import { enrichPicks, formatEnrichmentForPrompt } from '../utils/espn-enrichment.js';
 
-// Stat label → ESPN athlete gamelog stat key
-const GAMELOG_STAT_MAP = {
-  // NBA
-  'points':              'points',
-  'pts':                 'points',
-  'rebounds':            'rebounds',
-  'reb':                 'rebounds',
-  'assists':             'assists',
-  'ast':                 'assists',
-  'steals':              'steals',
-  'blocks':              'blocks',
-  'three pointers':      'threePointFieldGoalsMade',
-  'threes':              'threePointFieldGoalsMade',
-  'three pointers made': 'threePointFieldGoalsMade',
-  // NFL
-  'passing yards':       'passingYards',
-  'rushing yards':       'rushingYards',
-  'receiving yards':     'receivingYards',
-  'receptions':          'receptions',
-  'touchdowns':          'passingTouchdowns',
-  'passing touchdowns':  'passingTouchdowns',
-  // NHL
-  'shots on goal':       'shots',
-  'goals':               'goals',
-  // MLB
-  'strikeouts':          'strikeouts',
-  'hits':                'hits',
-};
+// ─── Init ─────────────────────────────────────────────────────────────────────
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{}');
 
-/**
- * Enrich a set of picks with real ESPN data.
- * Returns an array parallel to `picks`, each entry containing whatever
- * context we could fetch. Failures are caught and logged per pick.
- *
- * @param {Array} picks - Extracted picks from bet slip
- * @returns {Array<object>} enrichments, one per pick
- */
-export async function enrichPicks(picks) {
-  const results = await Promise.all(
-    picks.map(pick => enrichSinglePick(pick).catch(err => {
-      console.warn(`[espn-enrichment] Failed to enrich ${pick.player}:`, err.message);
-      return { player: pick.player, error: err.message };
-    }))
-  );
-  return results;
+let app;
+try {
+  app = getApp();
+} catch {
+  app = initializeApp({ credential: cert(serviceAccount) });
 }
 
-/**
- * Format enrichment data as a compact string block for Claude's prompt.
- */
-export function formatEnrichmentForPrompt(enrichments) {
-  if (!enrichments || enrichments.length === 0) return '';
+const db = getFirestore(app);
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  const lines = ['ESPN LIVE CONTEXT (use this data in your analysis):'];
+// ─── Handler ──────────────────────────────────────────────────────────────────
 
-  for (const e of enrichments) {
-    if (e.error || (!e.recentForm && !e.injuryStatus)) {
-      lines.push(`\n${e.player}: Context unavailable`);
-      continue;
-    }
-
-    lines.push(`\n${e.playerFullName || e.player}:`);
-
-    if (e.injuryStatus && e.injuryStatus !== 'Active') {
-      lines.push(`  ⚠️  INJURY STATUS: ${e.injuryStatus}`);
-    }
-
-    if (e.recentForm && e.recentForm.length > 0) {
-      const statLabel = e.statLabel || 'stat';
-      const values = e.recentForm.map(g => g.value ?? 'DNP');
-      const avg = average(e.recentForm.filter(g => g.value !== null).map(g => g.value));
-      lines.push(`  Last ${e.recentForm.length} games (${statLabel}): ${values.join(', ')} → avg ${avg}`);
-
-      // Trend signal
-      if (e.recentForm.length >= 3) {
-        const recent2 = average(e.recentForm.slice(0, 2).map(g => g.value ?? 0));
-        const older = average(e.recentForm.slice(2).map(g => g.value ?? 0));
-        if (recent2 > older * 1.15) lines.push(`  📈 Trending UP in last 2 games`);
-        if (recent2 < older * 0.85) lines.push(`  📉 Trending DOWN in last 2 games`);
-      }
-    }
-
-    if (e.opponent) {
-      lines.push(`  Tonight vs: ${e.opponent}`);
-    }
-
-    if (e.espnId) {
-      lines.push(`  ESPN ID: ${e.espnId}`);
-    }
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  return lines.join('\n');
-}
+  const { userId, imageBase64, imageMediaType, game_date } = req.body;
 
-// ─── Internal ─────────────────────────────────────────────────────────────────
-
-async function enrichSinglePick(pick) {
-  const sport = normalizeSport(pick.sport);
-  const config = SPORT_CONFIG[sport];
-  if (!config) return { player: pick.player, error: `Unsupported sport: ${sport}` };
-
-  // Step 1: Find the ESPN athlete ID by searching
-  const athleteInfo = await findAthlete(config, pick.player);
-  if (!athleteInfo) {
-    return { player: pick.player, error: 'Athlete not found on ESPN' };
-  }
-
-  const statKey = normalizeStatKey(pick.stat);
-
-  // Step 2: Fetch gamelog + injury in parallel
-  const [recentForm, injuryStatus, opponent] = await Promise.all([
-    fetchRecentForm(config, athleteInfo.id, statKey).catch(() => null),
-    fetchInjuryStatus(config, athleteInfo.id).catch(() => 'Unknown'),
-    fetchTonightsOpponent(config, athleteInfo.id).catch(() => null),
-  ]);
-
-  return {
-    player: pick.player,
-    playerFullName: athleteInfo.displayName,
-    espnId: athleteInfo.id,
-    statLabel: pick.stat,
-    statKey,
-    recentForm,
-    injuryStatus,
-    opponent,
-  };
-}
-
-async function findAthlete(config, playerName) {
-  // Use the site search API for fast name lookup
-  const query = encodeURIComponent(playerName);
-  const url = `https://site.web.api.espn.com/apis/search/v2?query=${query}&sport=${config.sport}&limit=5`;
-
-  const data = await fetchWithTimeout(url);
-  if (!data) return null;
-
-  // Search results come back in a "results" array of typed buckets
-  const athleteBucket = data.results?.find(r =>
-    r.type === 'athlete' || r.displayName?.toLowerCase().includes('athlete')
-  );
-
-  const candidates = athleteBucket?.contents || data.athletes || [];
-
-  if (candidates.length === 0) {
-    // Fallback: try the core athletes endpoint with a name filter
-    return findAthleteViaCore(config, playerName);
-  }
-
-  // Pick the best name match
-  const best = bestNameMatch(candidates, playerName);
-  if (!best) return null;
-
-  return {
-    id: best.id || best.athleteId,
-    displayName: best.displayName || best.name,
-  };
-}
-
-async function findAthleteViaCore(config, playerName) {
-  // Core athletes list — paginated, search first 200 active players
-  const url = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes?limit=200&active=true`;
-  const data = await fetchWithTimeout(url);
-  if (!data?.items) return null;
-
-  // Items are $ref links — we need to load a sample and name-match
-  // This is expensive so we limit to 50 refs and search in parallel batches
-  const refs = (data.items || []).slice(0, 50).map(i => i.$ref).filter(Boolean);
-  const athletes = await fetchAthleteRefs(refs);
-  const best = bestNameMatch(athletes, playerName);
-  return best ? { id: best.id, displayName: best.displayName } : null;
-}
-
-async function fetchAthleteRefs(refs) {
-  const batchSize = 10;
-  const results = [];
-  for (let i = 0; i < refs.length; i += batchSize) {
-    const batch = refs.slice(i, i + batchSize);
-    const fetched = await Promise.all(
-      batch.map(ref => fetchWithTimeout(ref).catch(() => null))
-    );
-    results.push(...fetched.filter(Boolean));
-  }
-  return results;
-}
-
-async function fetchRecentForm(config, athleteId, statKey) {
-  // Use the v3 statisticslog for enriched per-game data
-  const url = `https://sports.core.api.espn.com/v3/sports/${config.sport}/${config.league}/athletes/${athleteId}/statisticslog`;
-  const data = await fetchWithTimeout(url);
-  if (!data?.entries) return null;
-
-  // Each entry is a game — take the last 5, most recent first
-  const games = (data.entries || [])
-    .filter(e => e.statistics)
-    .slice(0, 5);
-
-  return games.map(entry => {
-    const stats = entry.statistics || {};
-    // The v3 statisticslog stores splits — find the "game" split
-    const gameSplit = Array.isArray(stats) ? stats : (stats.splits || []);
-    const value = extractStatFromSplit(gameSplit, statKey);
-    return {
-      date: entry.eventDate || entry.date,
-      opponent: entry.opponent?.displayName || null,
-      value,
-    };
-  }).filter(g => g.value !== undefined);
-}
-
-async function fetchInjuryStatus(config, athleteId) {
-  const url = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${athleteId}`;
-  const data = await fetchWithTimeout(url);
-  if (!data) return 'Unknown';
-
-  // Status can be in different places depending on the sport
-  const status = data.status?.type?.description
-    || data.injuryStatus
-    || data.status?.name
-    || 'Active';
-
-  return status;
-}
-
-async function fetchTonightsOpponent(config, athleteId) {
-  // Check today's scoreboard to see if this athlete's team is playing
-  const today = formatDate(new Date());
-  const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${today}`;
-  const data = await fetchWithTimeout(url);
-  if (!data?.events) return null;
-
-  // Find which event contains this athlete's team
-  // We don't have team ID so we'll just return the game names for Claude to use
-  if (data.events.length === 0) return null;
-  if (data.events.length === 1) {
-    const e = data.events[0];
-    return e.name || e.shortName;
-  }
-
-  return `${data.events.length} games today`;
-}
-
-// ─── Stat extraction from v3 statisticslog ────────────────────────────────────
-
-function extractStatFromSplit(splits, statKey) {
-  if (!splits || !statKey) return null;
-
-  // v3 statisticslog format varies — try multiple shapes
-  for (const split of (Array.isArray(splits) ? splits : [splits])) {
-    const categories = split.categories || split.stats || [];
-    for (const cat of categories) {
-      const stats = cat.stats || cat.values || [];
-      for (const stat of stats) {
-        if (
-          stat.name?.toLowerCase() === statKey.toLowerCase() ||
-          stat.abbreviation?.toLowerCase() === statKey.toLowerCase()
-        ) {
-          return stat.value ?? parseFloat(stat.displayValue) ?? null;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-// ─── Utilities ────────────────────────────────────────────────────────────────
-
-async function fetchWithTimeout(url, timeoutMs = 5000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    clearTimeout(timer);
-    return null;
-  }
-}
-
-function bestNameMatch(candidates, searchName) {
-  if (!candidates?.length || !searchName) return null;
-  const search = normalizeName(searchName);
-
-  let best = null;
-  let bestScore = 0;
-
-  for (const c of candidates) {
-    const name = normalizeName(c.displayName || c.name || c.fullName || '');
-    const score = nameScore(search, name);
-    if (score > bestScore) {
-      bestScore = score;
-      best = c;
+    if (!userId || !imageBase64) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: userId, imageBase64',
+      });
     }
+
+    console.log(`🔍 Extracting picks for user ${userId}`);
+
+    // ── Step 1: Extract picks from image ─────────────────────────────────────
+    const extractedData = await extractPicksFromImage(imageBase64, imageMediaType);
+    if (extractedData.error) {
+      return res.status(400).json({ success: false, error: extractedData.error });
+    }
+    if (!extractedData.picks?.length) {
+      return res.status(400).json({ success: false, error: 'No picks found in the image' });
+    }
+
+    console.log(`✅ Extracted ${extractedData.picks.length} picks`);
+
+    // ── Step 2: Fetch ESPN enrichment + user history in parallel ─────────────
+    const [enrichments, analytics] = await Promise.all([
+      // Resolve game_date: prefer client-provided date, fall back to today
+    const resolvedGameDate = game_date || new Date().toISOString().split('T')[0];
+    console.log(`Game date: ${resolvedGameDate} (source: ${game_date ? 'client' : 'fallback'})`);
+
+    enrichPicks(extractedData.picks, resolvedGameDate).catch(err => {
+        console.warn('⚠️ ESPN enrichment failed, continuing without it:', err.message);
+        return [];
+      }),
+      fetchUserAnalytics(userId),
+    ]);
+
+    const espnContext = formatEnrichmentForPrompt(enrichments);
+    const userContext = buildUserContext(analytics);
+
+    console.log(`📊 ESPN enrichment: ${enrichments.filter(e => !e.error).length}/${extractedData.picks.length} picks enriched`);
+    console.log(`📈 User stats: ${analytics.total_bets} bets, ${analytics.win_rate}% win rate`);
+
+    // ── Step 3: Grade the slip ────────────────────────────────────────────────
+    const { grade, confidence, reason } = await gradePicks(
+      extractedData.picks,
+      userContext,
+      espnContext,
+    );
+
+    console.log(`⭐ Grade: ${grade} (${confidence})`);
+
+    // ── Step 4: Full analysis with real ESPN data ─────────────────────────────
+    const analysisData = await analyzePicks(
+      extractedData.picks,
+      userContext,
+      espnContext,
+      grade,
+      confidence,
+      enrichments,
+    );
+
+    console.log(`✅ Analysis complete`);
+
+    // ── Step 5: Store in Firestore ────────────────────────────────────────────
+    const betDocRef = await db.collection('users').doc(userId).collection('bets').add({
+      picks: extractedData.picks,
+      sportsbook: extractedData.sportsbook || 'Unknown',
+      parlay_legs: extractedData.parlay_legs || extractedData.picks.length,
+      wager_amount: extractedData.wager_amount || null,
+      potential_payout: extractedData.potential_payout || null,
+
+      analysis: analysisData,
+      grade,
+      confidence,
+      espn_enrichment: enrichments,
+      user_analytics_snapshot: analytics,
+
+      game_date: resolvedGameDate,
+      status: 'pending_results',
+      created_at: new Date(),
+      analyzed_at: new Date(),
+
+      outcomes: null,
+      profit_loss: null,
+      completed_at: null,
+    });
+
+    console.log(`📝 Saved bet: ${betDocRef.id}`);
+
+    return res.status(200).json({
+      success: true,
+      betId: betDocRef.id,
+      sportsbook: extractedData.sportsbook,
+      picks: extractedData.picks,
+      parlay_legs: extractedData.parlay_legs || extractedData.picks.length,
+      wager_amount: extractedData.wager_amount,
+      potential_payout: extractedData.potential_payout,
+      grade,
+      confidence,
+      reason,
+      analysis: analysisData,
+      espn_enrichment: enrichments,
+      user_stats: {
+        total_bets: analytics.total_bets,
+        win_rate: analytics.win_rate,
+        roi: analytics.roi,
+      },
+    });
+
+  } catch (error) {
+    console.error('❌ Error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to process bet slip',
+    });
+  }
+}
+
+// ─── Step implementations ─────────────────────────────────────────────────────
+
+async function extractPicksFromImage(imageBase64, imageMediaType) {
+  const msg = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 3000,
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: imageMediaType || 'image/jpeg', data: imageBase64 },
+        },
+        {
+          type: 'text',
+          text: `Analyze this sports bet slip screenshot and extract all picks/bets visible.
+Return ONLY valid JSON with no markdown, no code fences, no extra text.
+
+For each pick extract:
+- player: Player or team name (exact as shown)
+- stat: Stat being bet on (e.g. "Passing Yards", "Points", "Rebounds", "Moneyline")
+- bet_type: "Over", "Under", "Moneyline", or "Spread"
+- line: The numeric line (null if not shown)
+- odds: Odds shown (e.g. -110, +150)
+- sport: "NFL", "NBA", "NHL", "MLB", "NCAAF", "NCAAB" — infer if not shown
+
+Also extract at the top level:
+- sportsbook: Platform name (DraftKings, FanDuel, BetMGM, etc.)
+- parlay_legs: Number of legs
+- potential_payout: Dollar amount shown as payout/to-win
+- wager_amount: Dollar amount wagered
+
+Return format:
+{"sportsbook":"DraftKings","parlay_legs":3,"wager_amount":25,"potential_payout":400,"picks":[{"player":"Shai Gilgeous-Alexander","stat":"Points","bet_type":"Over","line":28.5,"odds":-115,"sport":"NBA"}]}
+
+If no valid picks can be extracted return: {"error":"Could not extract picks from this image"}`,
+        },
+      ],
+    }],
+  });
+
+  try {
+    const raw = msg.content[0].text
+      .replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    return JSON.parse(raw);
+  } catch {
+    return { error: 'Could not parse picks from image. Please use a clear bet slip screenshot.' };
+  }
+}
+
+async function gradePicks(picks, userContext, espnContext) {
+  const msg = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 500,
+    messages: [{
+      role: 'user',
+      content: `Grade this sports parlay A-F based on pick quality, recent player form, and the user's historical performance.
+
+${userContext}
+
+${espnContext || '(No live ESPN data available)'}
+
+PICKS:
+${formatPicksForPrompt(picks)}
+
+Respond with ONLY these three lines:
+GRADE: [A/B/C/D/F]
+CONFIDENCE: [High/Medium/Low]
+REASON: [One sentence]`,
+    }],
+  });
+
+  const text = msg.content[0].text;
+  return {
+    grade: text.match(/GRADE:\s*([A-F])/)?.[1] || 'N/A',
+    confidence: text.match(/CONFIDENCE:\s*(High|Medium|Low)/)?.[1] || 'N/A',
+    reason: text.match(/REASON:\s*(.+?)(?:\n|$)/)?.[1]?.trim() || 'Unable to assess',
+  };
+}
+
+async function analyzePicks(picks, userContext, espnContext, grade, confidence, enrichments) {
+  // Build a per-pick summary of what ESPN told us, for Claude to reference directly
+  const pickSummaries = picks.map((pick, i) => {
+    const e = enrichments[i];
+    if (!e || e.error) return `${i + 1}. ${pick.player} — ${pick.stat} ${pick.bet_type} ${pick.line} (no ESPN data)`;
+    const formStr = e.recentForm?.map(g => g.value ?? 'DNP').join(', ') || 'unavailable';
+    const injStr = e.injuryStatus && e.injuryStatus !== 'Active' ? ` ⚠️ ${e.injuryStatus}` : '';
+    return `${i + 1}. ${e.playerFullName || pick.player}${injStr} — ${pick.stat} ${pick.bet_type} ${pick.line} | Last 5: ${formStr}`;
+  }).join('\n');
+
+  const msg = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 2000,
+    messages: [{
+      role: 'user',
+      content: `You are an expert sports betting analyst with access to real player data. Analyze this parlay using the actual ESPN stats provided.
+
+${userContext}
+
+${espnContext || '(No live ESPN data available)'}
+
+PICKS WITH RECENT FORM:
+${pickSummaries}
+
+GRADE: ${grade} (${confidence})
+
+Return ONLY valid JSON (no markdown, no code fences):
+{
+  "pickAnalysis": "2-3 sentences grounded in the actual ESPN form data shown above. Call out specific numbers.",
+  "strengths": [
+    "Strength backed by a specific stat from the ESPN data",
+    "Another data-grounded strength",
+    "Third strength"
+  ],
+  "risks": [
+    "Risk grounded in actual recent form or injury status",
+    "Another data-grounded risk",
+    "Third risk"
+  ],
+  "recommendedAdjustments": "2-3 sentences with specific suggestions. Reference actual averages vs lines. Mention any injury flags."
+}
+
+Be precise. If a player is averaging 31 pts and the line is 24.5, say so. If they are trending down, say so with numbers.`,
+    }],
+  });
+
+  try {
+    const raw = msg.content[0].text
+      .replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    return JSON.parse(raw);
+  } catch {
+    return {
+      pickAnalysis: msg.content[0].text,
+      strengths: [],
+      risks: [],
+      recommendedAdjustments: 'Unable to parse structured analysis.',
+    };
+  }
+}
+
+// ─── User analytics (unchanged from original) ─────────────────────────────────
+
+async function fetchUserAnalytics(userId) {
+  const betsSnapshot = await db
+    .collection('users')
+    .doc(userId)
+    .collection('bets')
+    .where('status', '==', 'complete')
+    .limit(50)
+    .get();
+
+  return calculateAnalytics(betsSnapshot.docs);
+}
+
+function calculateAnalytics(docs) {
+  const bets = docs.map(doc => doc.data());
+
+  if (bets.length === 0) {
+    return { total_bets: 0, wins: 0, losses: 0, win_rate: 0,
+             total_profit: 0, roi: 0, by_category: {}, by_league: {},
+             best_category: 'N/A', worst_category: 'N/A' };
   }
 
-  return bestScore >= 0.55 ? best : null;
+  const wins = bets.filter(b => b.profit_loss > 0).length;
+  const losses = bets.filter(b => b.profit_loss <= 0).length;
+  const win_rate = Math.round((wins / bets.length) * 100);
+  const total_profit = bets.reduce((s, b) => s + (b.profit_loss || 0), 0);
+  const total_wagered = bets.reduce((s, b) => s + (b.wager_amount || 0), 0);
+  const roi = total_wagered > 0 ? Math.round((total_profit / total_wagered) * 100) : 0;
+
+  const by_category = {};
+  const by_league = {};
+
+  bets.forEach(bet => {
+    (bet.picks || []).forEach(pick => {
+      const cat = `${pick.stat}_${pick.bet_type}`;
+      if (!by_category[cat]) by_category[cat] = { wins: 0, total: 0 };
+      by_category[cat].total++;
+      if (bet.profit_loss > 0) by_category[cat].wins++;
+
+      const league = pick.sport || 'Unknown';
+      if (!by_league[league]) by_league[league] = { wins: 0, total: 0 };
+      by_league[league].total++;
+      if (bet.profit_loss > 0) by_league[league].wins++;
+    });
+  });
+
+  let best = { category: 'N/A', rate: 0 };
+  let worst = { category: 'N/A', rate: 1 };
+  Object.entries(by_category).forEach(([cat, d]) => {
+    const rate = d.total >= 3 ? d.wins / d.total : 0;
+    if (rate > best.rate) best = { category: cat, rate: Math.round(rate * 100) };
+    if (d.total >= 3 && rate < worst.rate) worst = { category: cat, rate: Math.round(rate * 100) };
+  });
+
+  return { total_bets: bets.length, wins, losses, win_rate, total_profit,
+           roi, by_category, by_league,
+           best_category: best.category, best_rate: best.rate,
+           worst_category: worst.category, worst_rate: worst.rate };
 }
 
-function normalizeName(name) {
-  return (name || '').toLowerCase().replace(/[^a-z\s]/g, '').replace(/\s+/g, ' ').trim();
+function buildUserContext(analytics) {
+  if (analytics.total_bets === 0) {
+    return 'USER PROFILE: New user — no betting history yet. Provide general advice.';
+  }
+
+  let ctx = `USER PROFILE:
+- Total Bets: ${analytics.total_bets}
+- Win Rate: ${analytics.win_rate}%
+- P/L: $${analytics.total_profit >= 0 ? '+' : ''}${analytics.total_profit.toFixed(2)}
+- ROI: ${analytics.roi}%`;
+
+  if (analytics.best_category !== 'N/A') {
+    ctx += `\n- Best bet type: ${analytics.best_category} (${analytics.best_rate}% hit rate)`;
+  }
+  if (analytics.worst_category !== 'N/A') {
+    ctx += `\n- Worst bet type: ${analytics.worst_category} (${analytics.worst_rate}% hit rate)`;
+  }
+
+  const leagues = Object.entries(analytics.by_league)
+    .map(([l, d]) => `${l}: ${d.total > 0 ? Math.round((d.wins/d.total)*100) : 0}%`)
+    .join(', ');
+  if (leagues) ctx += `\n- By league: ${leagues}`;
+
+  ctx += '\n\nReference these numbers directly in your analysis.';
+  return ctx;
 }
 
-function nameScore(a, b) {
-  if (a === b) return 1;
-  if (b.includes(a) || a.includes(b)) return 0.9;
-  const aT = new Set(a.split(' '));
-  const bT = new Set(b.split(' '));
-  const inter = [...aT].filter(t => bT.has(t)).length;
-  return inter / new Set([...aT, ...bT]).size;
-}
-
-function normalizeStatKey(statLabel) {
-  if (!statLabel) return '';
-  return GAMELOG_STAT_MAP[statLabel.toLowerCase().trim()] || statLabel.toLowerCase();
-}
-
-function normalizeSport(sport) {
-  if (!sport) return 'NBA';
-  const s = sport.toUpperCase().trim();
-  if (s.includes('NFL') || s.includes('FOOTBALL')) return 'NFL';
-  if (s.includes('NBA') || s.includes('BASKETBALL')) return 'NBA';
-  if (s.includes('MLB') || s.includes('BASEBALL')) return 'MLB';
-  if (s.includes('NHL') || s.includes('HOCKEY')) return 'NHL';
-  return s;
-}
-
-function formatDate(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}${mm}${dd}`;
-}
-
-function average(arr) {
-  if (!arr?.length) return 'N/A';
-  const sum = arr.reduce((a, b) => a + (b || 0), 0);
-  return (sum / arr.length).toFixed(1);
+function formatPicksForPrompt(picks) {
+  return picks.map((p, i) =>
+    `${i + 1}. ${p.player} — ${p.stat} ${p.bet_type} ${p.line ?? '?'} (${p.odds ?? '?'}) [${p.sport}]`
+  ).join('\n');
 }
