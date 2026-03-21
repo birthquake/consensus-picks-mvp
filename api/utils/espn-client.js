@@ -71,15 +71,45 @@ const STAT_KEY_MAP = {
   'saves':               'saves',
   'plus minus':          'plusMinus',
   '+/-':                 'plusMinus',
+  'assists':             'assists',
+  'points':              'points',
+  'pts':                 'points',
+  'power play goals':    'powerPlayGoals',
+  'power play points':   'powerPlayPoints',
+  'time on ice':         'timeOnIce',
+  'toi':                 'timeOnIce',
+  'penalty minutes':     'penaltyMinutes',
+  'pim':                 'penaltyMinutes',
+  'blocked shots':       'blockedShots',
+  'hits':                'hits',
 
-  // MLB
+  // MLB - pitcher props
   'strikeouts':          'strikeouts',
+  'ks':                  'strikeouts',
+  'pitcher strikeouts':  'strikeouts',
+  'earned runs':         'earnedRuns',
+  'era':                 'earnedRunAverage',
+  'walks':               'walks',
+  'bb':                  'walks',
+  'innings pitched':     'inningsPitched',
+  'ip':                  'inningsPitched',
+  'hits allowed':        'hitsAllowed',
+  'pitching outs':       'outsPitched',
+  // MLB - batter props
   'hits':                'hits',
   'home runs':           'homeRuns',
+  'hr':                  'homeRuns',
   'rbis':                'RBI',
-  'earned runs':         'earnedRuns',
-  'walks':               'walks',
-  'innings pitched':     'inningsPitched',
+  'rbi':                 'RBI',
+  'runs':                'runs',
+  'runs scored':         'runs',
+  'stolen bases':        'stolenBases',
+  'sb':                  'stolenBases',
+  'total bases':         'totalBases',
+  'tb':                  'totalBases',
+  'singles':             'singles',
+  'doubles':             'doubles',
+  'triples':             'triples',
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -149,8 +179,19 @@ export async function getPlayerStatForGame(sport, playerName, statLabel, gameDat
  * Useful for pre-flight checks before grading bets.
  */
 export async function isGameComplete(sport, playerName, gameDate) {
-  const result = await getPlayerStatForGame(sport, playerName, 'points', gameDate);
+  // Use a sport-appropriate probe stat — 'points' doesn't exist in NHL/MLB box scores
+  const probeStat = getProbeStatForSport(sport);
+  const result = await getPlayerStatForGame(sport, playerName, probeStat, gameDate);
   return result.gameStatus === 'final';
+}
+
+// Returns a stat label that reliably exists in each sport's box score,
+// used only for game-existence/status checks (not actual bet grading).
+function getProbeStatForSport(sport) {
+  const s = (sport || '').toUpperCase();
+  if (s === 'NHL') return 'shots on goal';
+  if (s === 'MLB') return 'hits';
+  return 'points'; // NBA, NFL default
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -212,7 +253,9 @@ async function checkGameHasPlayer(config, gameId, playerName) {
   try {
     const summary = await fetchGameSummary(config, gameId);
     if (!summary?.boxscore?.players) return false;
-    const result = extractPlayerStat(summary, playerName, 'points');
+    // Use a sport-appropriate probe stat
+    const probeStat = getProbeStatForSport(config.league?.toUpperCase());
+    const result = extractPlayerStat(summary, playerName, probeStat);
     return result.found;
   } catch {
     return false;
