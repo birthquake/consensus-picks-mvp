@@ -1,11 +1,9 @@
 // FILE LOCATION: src/pages/SubmitPick.jsx
-// Clean bet upload with image compression + loading animation + styled analysis
 
 import { useState } from 'react';
 import { auth } from '../firebase/config';
 import '../styles/SubmitPick.css';
 
-// Icons
 const Icons = {
   Upload: () => (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -24,53 +22,44 @@ const Icons = {
       <line x1="18" y1="6" x2="6" y2="18" />
       <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
-  )
+  ),
+  Calendar: () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  ),
 };
 
-// Loading spinner animation
 const LoadingSpinner = () => (
   <div style={{
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '60px 20px',
-    gap: '20px'
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    justifyContent: 'center', padding: '60px 20px', gap: '20px'
   }}>
     <div style={{
-      width: '50px',
-      height: '50px',
-      border: '3px solid #1a1a1a',
-      borderTop: '3px solid #00d4ff',
-      borderRadius: '50%',
-      animation: 'spin 1s linear infinite'
+      width: '50px', height: '50px',
+      border: '3px solid #1a1a1a', borderTop: '3px solid #00d4ff',
+      borderRadius: '50%', animation: 'spin 1s linear infinite'
     }}>
-      <style>{`
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
+      <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
     </div>
-    <p style={{
-      color: '#999',
-      fontSize: '16px',
-      textAlign: 'center'
-    }}>
-      Analyzing your picks<span style={{ animation: 'dots 1.5s steps(3, end) infinite' }}>...</span>
-      <style>{`
-        @keyframes dots {
-          0%, 20% { content: '.'; }
-          40% { content: '..'; }
-          60%, 100% { content: '...'; }
-        }
-      `}</style>
+    <p style={{ color: '#999', fontSize: '16px', textAlign: 'center' }}>
+      Analyzing your picks...
     </p>
   </div>
 );
 
+// Today's date in YYYY-MM-DD for the date input default
+function todayISO() {
+  return new Date().toISOString().split('T')[0];
+}
+
 export default function SubmitPick() {
   const [selectedImage, setSelectedImage] = useState(null);
+  const [gameDate, setGameDate] = useState(todayISO());
+  const [gameDateSource, setGameDateSource] = useState('default'); // 'slip' | 'default' | 'user'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -83,23 +72,11 @@ export default function SubmitPick() {
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-
-          if (height > 2000) {
-            const ratio = width / height;
-            height = 2000;
-            width = height * ratio;
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, width, height);
-
-          const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
-          resolve(compressedBase64);
+          let { width, height } = img;
+          if (height > 2000) { const r = width / height; height = 2000; width = height * r; }
+          canvas.width = width; canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.8));
         };
         img.onerror = () => reject(new Error('Failed to load image'));
         img.src = e.target.result;
@@ -111,88 +88,79 @@ export default function SubmitPick() {
 
   const handleImageSelect = async (file) => {
     if (!file) return;
-
-    if (file.size > 5 * 1024 * 1024) {
-      setError('File must be less than 5MB');
-      return;
-    }
-
+    if (file.size > 5 * 1024 * 1024) { setError('File must be less than 5MB'); return; }
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-      setError('Only PNG, JPG, or WebP files allowed');
-      return;
+      setError('Only PNG, JPG, or WebP files allowed'); return;
     }
-
     try {
-      setLoading(true);
-      setError('');
-      
+      setLoading(true); setError('');
       const compressedBase64 = await compressImage(file);
-      
-      setSelectedImage({
-        file: file,
-        preview: compressedBase64,
-        name: file.name
-      });
-    } catch (err) {
+      setSelectedImage({ file, preview: compressedBase64, name: file.name });
+
+      // Quick date extraction — send a tiny Claude call to read the date off the slip
+      // This runs in the background while the user sees the preview
+      extractDateFromSlip(compressedBase64);
+    } catch {
       setError('Failed to process image. Please try another.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.currentTarget.classList.add('active');
+  // Fire-and-forget: ask the API to read the game date from the slip image.
+  // If it succeeds we pre-fill the date picker; user can always override.
+  const extractDateFromSlip = async (base64) => {
+    try {
+      const res = await fetch('/api/picks/extract-game-date', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64.split(',')[1] }),
+      });
+      if (!res.ok) return;
+      const { game_date } = await res.json();
+      if (game_date && /^\d{4}-\d{2}-\d{2}$/.test(game_date)) {
+        setGameDate(game_date);
+        setGameDateSource('slip');
+      }
+    } catch {
+      // Silent — user can set date manually
+    }
   };
 
-  const handleDragLeave = (e) => {
-    e.currentTarget.classList.remove('active');
-  };
-
+  const handleDragOver = (e) => { e.preventDefault(); e.currentTarget.classList.add('active'); };
+  const handleDragLeave = (e) => { e.currentTarget.classList.remove('active'); };
   const handleDrop = (e) => {
-    e.preventDefault();
-    e.currentTarget.classList.remove('active');
+    e.preventDefault(); e.currentTarget.classList.remove('active');
     handleImageSelect(e.dataTransfer.files[0]);
   };
 
   const handleSubmit = async () => {
-    if (!selectedImage) {
-      setError('Please select an image');
-      return;
-    }
+    if (!selectedImage) { setError('Please select an image'); return; }
+    if (!gameDate) { setError('Please set the game date'); return; }
 
     try {
-      setLoading(true);
-      setError('');
-      setSuccess('');
-      setAnalysisResult(null);
-
-      const base64 = selectedImage.preview.split(',')[1];
+      setLoading(true); setError(''); setSuccess(''); setAnalysisResult(null);
 
       const response = await fetch('/api/picks/extract-and-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: auth.currentUser.uid,
-          imageBase64: base64,
-          imageName: selectedImage.name
-        })
+          imageBase64: selectedImage.preview.split(',')[1],
+          imageName: selectedImage.name,
+          game_date: gameDate,        // ← now explicitly passed
+        }),
       });
 
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to analyze bet slip');
-      }
+      if (!response.ok) throw new Error(data.error || 'Failed to analyze bet slip');
 
       setAnalysisResult(data);
       setSuccess('Bet analyzed! Check History to see results.');
       setSelectedImage(null);
-      
-      setTimeout(() => {
-        setSuccess('');
-      }, 5000);
-
+      setGameDate(todayISO());
+      setGameDateSource('default');
+      setTimeout(() => setSuccess(''), 5000);
     } catch (err) {
       setError(err.message || 'Error uploading bet slip');
     } finally {
@@ -202,48 +170,24 @@ export default function SubmitPick() {
 
   return (
     <div className="submit-page">
-      {/* Error Alert */}
       {error && (
-        <div className="alert alert-error">
-          <Icons.X />
-          <span>{error}</span>
-        </div>
+        <div className="alert alert-error"><Icons.X /><span>{error}</span></div>
       )}
-
-      {/* Success Alert */}
       {success && (
-        <div className="alert alert-success">
-          <Icons.Check />
-          <span>{success}</span>
-        </div>
+        <div className="alert alert-success"><Icons.Check /><span>{success}</span></div>
       )}
+      {loading && <LoadingSpinner />}
 
-      {/* Loading Animation */}
-      {loading && (
-        <LoadingSpinner />
-      )}
-
-      {/* Analysis Results */}
+      {/* ── Analysis results ── */}
       {analysisResult && !loading && (
         <div className="analysis-section">
-          {/* Grade Badge */}
           <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '20px',
-            marginBottom: '30px',
-            padding: '20px',
-            backgroundColor: '#0a0a0a',
-            borderRadius: '12px',
+            display: 'flex', alignItems: 'center', gap: '20px',
+            marginBottom: '30px', padding: '20px',
+            backgroundColor: '#0a0a0a', borderRadius: '12px',
             borderLeft: '4px solid #00d4ff'
           }}>
-            <div style={{
-              fontSize: '48px',
-              fontWeight: 'bold',
-              color: '#00d4ff',
-              minWidth: '60px',
-              textAlign: 'center'
-            }}>
+            <div style={{ fontSize: '48px', fontWeight: 'bold', color: '#00d4ff', minWidth: '60px', textAlign: 'center' }}>
               {analysisResult.grade}
             </div>
             <div>
@@ -258,7 +202,7 @@ export default function SubmitPick() {
                 {analysisResult.grade === 'F' && '⚠ Poor Pick'}
               </div>
               <div style={{ color: '#ccc', fontSize: '13px', marginBottom: '8px' }}>
-                {analysisResult.confidence} confidence in this assessment
+                {analysisResult.confidence} confidence
               </div>
               <div style={{ color: '#999', fontSize: '13px', lineHeight: '1.5' }}>
                 {analysisResult.reason}
@@ -266,180 +210,86 @@ export default function SubmitPick() {
             </div>
           </div>
 
-          {/* Pick Analysis */}
           {analysisResult.analysis.pickAnalysis && (
             <div style={{ marginBottom: '30px' }}>
-              <h3 style={{
-                color: '#00d4ff',
-                fontSize: '18px',
-                fontWeight: '600',
-                marginBottom: '12px',
-                paddingBottom: '8px',
-                borderBottom: '1px solid #1a1a1a'
-              }}>
+              <h3 style={{ color: '#00d4ff', fontSize: '18px', fontWeight: '600', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #1a1a1a' }}>
                 Pick Analysis
               </h3>
-              <p style={{
-                color: '#ccc',
-                lineHeight: '1.6',
-                fontSize: '14px'
-              }}>
+              <p style={{ color: '#ccc', lineHeight: '1.6', fontSize: '14px' }}>
                 {analysisResult.analysis.pickAnalysis}
               </p>
             </div>
           )}
 
-          {/* Strengths */}
-          {analysisResult.analysis.strengths && analysisResult.analysis.strengths.length > 0 && (
+          {analysisResult.analysis.strengths?.length > 0 && (
             <div style={{ marginBottom: '30px' }}>
-              <h3 style={{
-                color: '#00d4ff',
-                fontSize: '18px',
-                fontWeight: '600',
-                marginBottom: '12px',
-                paddingBottom: '8px',
-                borderBottom: '1px solid #1a1a1a'
-              }}>
+              <h3 style={{ color: '#00d4ff', fontSize: '18px', fontWeight: '600', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #1a1a1a' }}>
                 Strengths
               </h3>
-              <ul style={{
-                listStyle: 'none',
-                padding: 0,
-                margin: 0
-              }}>
-                {analysisResult.analysis.strengths.map((strength, idx) => (
-                  <li key={idx} style={{
-                    color: '#ccc',
-                    fontSize: '14px',
-                    marginBottom: '10px',
-                    paddingLeft: '20px',
-                    position: 'relative'
-                  }}>
-                    <span style={{
-                      position: 'absolute',
-                      left: 0,
-                      color: '#00d4ff'
-                    }}>✓</span>
-                    {strength}
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {analysisResult.analysis.strengths.map((s, i) => (
+                  <li key={i} style={{ color: '#ccc', fontSize: '14px', marginBottom: '10px', paddingLeft: '20px', position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: 0, color: '#00d4ff' }}>✓</span>{s}
                   </li>
                 ))}
               </ul>
             </div>
           )}
 
-          {/* Risks */}
-          {analysisResult.analysis.risks && analysisResult.analysis.risks.length > 0 && (
+          {analysisResult.analysis.risks?.length > 0 && (
             <div style={{ marginBottom: '30px' }}>
-              <h3 style={{
-                color: '#00d4ff',
-                fontSize: '18px',
-                fontWeight: '600',
-                marginBottom: '12px',
-                paddingBottom: '8px',
-                borderBottom: '1px solid #1a1a1a'
-              }}>
+              <h3 style={{ color: '#00d4ff', fontSize: '18px', fontWeight: '600', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #1a1a1a' }}>
                 Potential Risks
               </h3>
-              <ul style={{
-                listStyle: 'none',
-                padding: 0,
-                margin: 0
-              }}>
-                {analysisResult.analysis.risks.map((risk, idx) => (
-                  <li key={idx} style={{
-                    color: '#ccc',
-                    fontSize: '14px',
-                    marginBottom: '10px',
-                    paddingLeft: '20px',
-                    position: 'relative'
-                  }}>
-                    <span style={{
-                      position: 'absolute',
-                      left: 0,
-                      color: '#ff6b6b'
-                    }}>⚠</span>
-                    {risk}
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {analysisResult.analysis.risks.map((r, i) => (
+                  <li key={i} style={{ color: '#ccc', fontSize: '14px', marginBottom: '10px', paddingLeft: '20px', position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: 0, color: '#ff6b6b' }}>⚠</span>{r}
                   </li>
                 ))}
               </ul>
             </div>
           )}
 
-          {/* Recommendations */}
           {analysisResult.analysis.recommendedAdjustments && (
             <div>
-              <h3 style={{
-                color: '#00d4ff',
-                fontSize: '18px',
-                fontWeight: '600',
-                marginBottom: '12px',
-                paddingBottom: '8px',
-                borderBottom: '1px solid #1a1a1a'
-              }}>
+              <h3 style={{ color: '#00d4ff', fontSize: '18px', fontWeight: '600', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #1a1a1a' }}>
                 Recommendations
               </h3>
-              <p style={{
-                color: '#ccc',
-                lineHeight: '1.6',
-                fontSize: '14px'
-              }}>
+              <p style={{ color: '#ccc', lineHeight: '1.6', fontSize: '14px' }}>
                 {analysisResult.analysis.recommendedAdjustments}
               </p>
             </div>
           )}
 
-          {/* New Bet Button */}
           <button
-            onClick={() => {
-              setAnalysisResult(null);
-              setSelectedImage(null);
-            }}
-            style={{
-              marginTop: '30px',
-              padding: '12px 24px',
-              backgroundColor: '#00d4ff',
-              color: '#000',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: '600',
-              cursor: 'pointer',
-              width: '100%'
-            }}
+            onClick={() => { setAnalysisResult(null); setSelectedImage(null); setGameDate(todayISO()); setGameDateSource('default'); }}
+            style={{ marginTop: '30px', padding: '12px 24px', backgroundColor: '#00d4ff', color: '#000', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', width: '100%' }}
           >
             Submit Another Bet
           </button>
         </div>
       )}
 
-      {/* Upload Section */}
+      {/* ── Upload section ── */}
       {!selectedImage && !analysisResult && (
         <>
           <div className="upload-box">
             <div
               className="upload-zone"
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
+              onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
               onClick={() => document.getElementById('file-input').click()}
             >
-              <div className="upload-icon">
-                <Icons.Upload />
-              </div>
+              <div className="upload-icon"><Icons.Upload /></div>
               <h2>Upload Bet Slip</h2>
               <p>Drag image here or click to browse</p>
               <p className="file-hint">PNG, JPG, or WebP (max 5MB)</p>
             </div>
-            <input
-              id="file-input"
-              type="file"
-              accept=".png,.jpg,.jpeg,.webp"
+            <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.webp"
               onChange={(e) => handleImageSelect(e.target.files[0])}
-              style={{ display: 'none' }}
-            />
+              style={{ display: 'none' }} />
           </div>
 
-          {/* Fake Bet Slip Placeholder */}
           <div className="placeholder-section">
             <h3>Example Bet Slip</h3>
             <div className="fake-bet-slip">
@@ -447,33 +297,15 @@ export default function SubmitPick() {
                 <div className="slip-logo">DraftKings</div>
                 <div className="slip-time">11:45 AM</div>
               </div>
-
               <div className="slip-picks">
-                <div className="pick-row">
-                  <span className="pick-label">Pick 1</span>
-                  <span className="pick-value">LeBron James O 24.5 Pts</span>
-                </div>
-                <div className="pick-row">
-                  <span className="pick-label">Pick 2</span>
-                  <span className="pick-value">Lakers vs Celtics ML</span>
-                </div>
-                <div className="pick-row">
-                  <span className="pick-label">Pick 3</span>
-                  <span className="pick-value">Jalen Brunson O 18.5 Ast</span>
-                </div>
+                <div className="pick-row"><span className="pick-label">Pick 1</span><span className="pick-value">LeBron James O 24.5 Pts</span></div>
+                <div className="pick-row"><span className="pick-label">Pick 2</span><span className="pick-value">Lakers vs Celtics ML</span></div>
+                <div className="pick-row"><span className="pick-label">Pick 3</span><span className="pick-value">Jalen Brunson O 18.5 Ast</span></div>
               </div>
-
               <div className="slip-divider"></div>
-
               <div className="slip-footer">
-                <div className="slip-row">
-                  <span>Wager</span>
-                  <span>$50.00</span>
-                </div>
-                <div className="slip-row">
-                  <span>Potential Win</span>
-                  <span className="accent">$1,247.50</span>
-                </div>
+                <div className="slip-row"><span>Wager</span><span>$50.00</span></div>
+                <div className="slip-row"><span>Potential Win</span><span className="accent">$1,247.50</span></div>
               </div>
             </div>
             <p className="placeholder-hint">Upload your bet slip and we'll grade it with AI</p>
@@ -481,26 +313,39 @@ export default function SubmitPick() {
         </>
       )}
 
-      {/* Preview & Submit */}
+      {/* ── Preview + date confirm + submit ── */}
       {selectedImage && !analysisResult && (
         <div className="preview-section">
           <div className="preview-image">
             <img src={selectedImage.preview} alt="Bet slip preview" />
           </div>
 
+          {/* Game date selector */}
+          <div className="game-date-row">
+            <div className="game-date-label">
+              <Icons.Calendar />
+              <span>Game Date</span>
+              {gameDateSource === 'slip' && (
+                <span className="date-source-badge">read from slip</span>
+              )}
+              {gameDateSource === 'default' && (
+                <span className="date-source-badge default">confirm before submitting</span>
+              )}
+            </div>
+            <input
+              type="date"
+              className="date-input"
+              value={gameDate}
+              onChange={(e) => { setGameDate(e.target.value); setGameDateSource('user'); }}
+              max={(() => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0]; })()}
+            />
+          </div>
+
           <div className="action-buttons">
-            <button
-              className="btn-secondary"
-              onClick={() => setSelectedImage(null)}
-              disabled={loading}
-            >
+            <button className="btn-secondary" onClick={() => { setSelectedImage(null); setGameDate(todayISO()); setGameDateSource('default'); }} disabled={loading}>
               Change
             </button>
-            <button
-              className="btn-primary"
-              onClick={handleSubmit}
-              disabled={loading}
-            >
+            <button className="btn-primary" onClick={handleSubmit} disabled={loading}>
               {loading ? 'Analyzing...' : 'Submit'}
             </button>
           </div>
