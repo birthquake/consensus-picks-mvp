@@ -171,84 +171,181 @@ async function enrichSinglePick(pick, gameDate) {
 }
 
 async function findAthlete(config, playerName) {
-  // Use the site search API for fast name lookup
-  const query = encodeURIComponent(playerName);
-  const url = `https://site.web.api.espn.com/apis/search/v2?query=${query}&sport=${config.sport}&limit=5`;
+  // Strategy 1: site API teams endpoint — fetches all teams then searches
+  // rosters. Each team roster call returns full player objects with IDs inline,
+  // no ref-following needed. We run team fetches in parallel batches.
+  const athlete = await findAthleteViaRosters(config, playerName);
+  if (athlete) return athlete;
 
+  // Strategy 2: scoreboard athletes — pull today's scoreboard and check
+  // the athlete IDs embedded in the boxscore (faster for active game days)
+  return findAthleteViaAthleteSearch(config, playerName);
+}
+
+async function findAthleteViaRosters(config, playerName) {
+  // Get all teams for this league
+  const teamsUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/teams?limit=50`;
+  const teamsData = await fetchWithTimeout(teamsUrl);
+  if (!teamsData) return null;
+
+  // Extract team list — shape differs slightly between sports
+  const sports = teamsData.sports?.[0]?.leagues?.[0]?.teams || teamsData.teams || [];
+  if (sports.length === 0) return null;
+
+  // Search rosters in parallel batches of 6 teams
+  const batchSize = 6;
+  for (let i = 0; i < sports.length; i += batchSize) {
+    const batch = sports.slice(i, i + batchSize);
+    const results = await Promise.all(
+      batch.map(t => searchTeamRoster(config, t.team?.id || t.id, playerName))
+    );
+    const found = results.find(r => r !== null);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function searchTeamRoster(config, teamId, playerName) {
+  if (!teamId) return null;
+  const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/teams/${teamId}/roster`;
   const data = await fetchWithTimeout(url);
   if (!data) return null;
 
-  // Search results come back in a "results" array of typed buckets
-  const athleteBucket = data.results?.find(r =>
-    r.type === 'athlete' || r.displayName?.toLowerCase().includes('athlete')
-  );
+  // Roster shape: data.athletes[] (array of position groups, each with items[])
+  // OR data.roster[] flat list depending on sport
+  const allPlayers = [];
 
-  const candidates = athleteBucket?.contents || data.athletes || [];
-
-  if (candidates.length === 0) {
-    // Fallback: try the core athletes endpoint with a name filter
-    return findAthleteViaCore(config, playerName);
+  if (Array.isArray(data.athletes)) {
+    for (const group of data.athletes) {
+      const items = group.items || group.athletes || [];
+      allPlayers.push(...items);
+    }
+  } else if (Array.isArray(data.roster)) {
+    allPlayers.push(...data.roster);
   }
 
-  // Pick the best name match
-  const best = bestNameMatch(candidates, playerName);
+  const best = bestNameMatch(allPlayers, playerName);
   if (!best) return null;
 
   return {
-    id: best.id || best.athleteId,
-    displayName: best.displayName || best.name,
+    id: best.id || best.uid?.split('~a:')?.[1],
+    displayName: best.displayName || best.fullName,
   };
 }
 
-async function findAthleteViaCore(config, playerName) {
-  // Core athletes list — paginated, search first 200 active players
-  const url = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes?limit=200&active=true`;
-  const data = await fetchWithTimeout(url);
+async function findAthleteViaAthleteSearch(config, playerName) {
+  // Last resort: use the athlete search endpoint with active=true
+  // Returns $ref items but we can extract IDs from the ref URL directly
+  const url = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes?limit=1000&active=true`;
+  const data = await fetchWithTimeout(url, 8000);
   if (!data?.items) return null;
 
-  // Items are $ref links — we need to load a sample and name-match
-  // This is expensive so we limit to 50 refs and search in parallel batches
-  const refs = (data.items || []).slice(0, 50).map(i => i.$ref).filter(Boolean);
-  const athletes = await fetchAthleteRefs(refs);
-  const best = bestNameMatch(athletes, playerName);
-  return best ? { id: best.id, displayName: best.displayName } : null;
-}
+  // Extract athlete IDs directly from $ref URLs — no extra fetches needed
+  // Ref format: .../athletes/4278073?lang=...
+  const candidates = (data.items || []).map(item => {
+    const ref = item.$ref || '';
+    const match = ref.match(/athletes\/(\d+)/);
+    return match ? { id: match[1], $ref: ref } : null;
+  }).filter(Boolean);
 
-async function fetchAthleteRefs(refs) {
-  const batchSize = 10;
-  const results = [];
-  for (let i = 0; i < refs.length; i += batchSize) {
-    const batch = refs.slice(i, i + batchSize);
-    const fetched = await Promise.all(
-      batch.map(ref => fetchWithTimeout(ref).catch(() => null))
+  // We still need names — fetch in small batches until we find a match
+  const batchSize = 20;
+  for (let i = 0; i < Math.min(candidates.length, 200); i += batchSize) {
+    const batch = candidates.slice(i, i + batchSize);
+    const athletes = await Promise.all(
+      batch.map(c => fetchWithTimeout(c.$ref).catch(() => null))
     );
-    results.push(...fetched.filter(Boolean));
+    const valid = athletes.filter(Boolean);
+    const best = bestNameMatch(valid, playerName);
+    if (best) return { id: best.id, displayName: best.displayName };
   }
-  return results;
+
+  return null;
 }
 
 async function fetchRecentForm(config, athleteId, statKey) {
-  // Use the v3 statisticslog for enriched per-game data
-  const url = `https://sports.core.api.espn.com/v3/sports/${config.sport}/${config.league}/athletes/${athleteId}/statisticslog`;
-  const data = await fetchWithTimeout(url);
-  if (!data?.entries) return null;
+  // Use the site API gamelog — clean flat format, same data ESPN player pages use
+  const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/athletes/${athleteId}/gamelog`;
+  const data = await fetchWithTimeout(url, 6000);
+  if (!data) return null;
 
-  // Each entry is a game — take the last 5, most recent first
-  const games = (data.entries || [])
-    .filter(e => e.statistics)
-    .slice(0, 5);
+  // Gamelog shape: data.categories[] with labels/names arrays + data.events{}
+  // Each event key maps to a stats array positionally aligned to categories
+  const categories = data.categories || [];
+  if (categories.length === 0) return null;
 
-  return games.map(entry => {
-    const stats = entry.statistics || {};
-    // The v3 statisticslog stores splits — find the "game" split
-    const gameSplit = Array.isArray(stats) ? stats : (stats.splits || []);
-    const value = extractStatFromSplit(gameSplit, statKey);
+  // Find which category contains our stat and which index within it
+  let statCategoryIdx = -1;
+  let statIdx = -1;
+
+  for (let ci = 0; ci < categories.length; ci++) {
+    const cat = categories[ci];
+    const names = cat.names || cat.labels || [];
+    const keys  = cat.keys  || names;
+    for (let si = 0; si < keys.length; si++) {
+      const key = (keys[si] || '').toLowerCase();
+      const label = (names[si] || '').toLowerCase();
+      if (key === statKey.toLowerCase() || label === statKey.toLowerCase() ||
+          key.startsWith(statKey.toLowerCase()) || label.startsWith(statKey.toLowerCase())) {
+        statCategoryIdx = ci;
+        statIdx = si;
+        break;
+      }
+    }
+    if (statIdx !== -1) break;
+  }
+
+  if (statIdx === -1) {
+    // stat not in gamelog categories — try abbreviation match
+    for (let ci = 0; ci < categories.length; ci++) {
+      const cat = categories[ci];
+      const abbrevs = cat.abbreviations || cat.labels || [];
+      for (let si = 0; si < abbrevs.length; si++) {
+        if ((abbrevs[si] || '').toLowerCase() === statKey.toLowerCase()) {
+          statCategoryIdx = ci;
+          statIdx = si;
+          break;
+        }
+      }
+      if (statIdx !== -1) break;
+    }
+  }
+
+  if (statIdx === -1) return null;
+
+  // Events are keyed by event ID — get last 5, most recent first
+  const events = data.events || {};
+  const eventIds = Object.keys(events);
+  if (eventIds.length === 0) return null;
+
+  // Each event has a stats array per category — pull ours
+  const recentGames = eventIds.slice(-5).reverse();
+
+  return recentGames.map(eventId => {
+    const event = events[eventId];
+    const catStats = event?.stats?.[statCategoryIdx];
+    const raw = Array.isArray(catStats) ? catStats[statIdx] : null;
+    const value = raw != null ? parseStatValue(String(raw)) : null;
     return {
-      date: entry.eventDate || entry.date,
-      opponent: entry.opponent?.displayName || null,
+      date: event?.gameDate || event?.date || null,
+      opponent: event?.opponent?.displayName || event?.atVs || null,
       value,
     };
-  }).filter(g => g.value !== undefined);
+  }).filter(g => g.value !== null);
+}
+
+// Parse a raw gamelog stat value — handles "8-14" fractions, "+5", plain numbers
+function parseStatValue(raw) {
+  if (!raw || raw === '--' || raw === '-') return null;
+  const s = String(raw).trim();
+  if (s.includes('-') && !s.startsWith('-')) {
+    // "made-attempted" fraction — return made count
+    const made = parseInt(s.split('-')[0], 10);
+    return isNaN(made) ? null : made;
+  }
+  if (s.startsWith('+')) return parseFloat(s.slice(1)) || null;
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
 }
 
 async function fetchInjuryStatus(config, athleteId) {
