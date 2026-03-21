@@ -102,32 +102,17 @@ export default async function handler(req, res) {
 
   // ── Step 4: Gamelog raw check (if we got an athlete ID) ───────────────────
   if (e.espnId) {
-    const gamelogUrl = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${e.espnId}/statisticslog`;
+    const gamelogUrl = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${e.espnId}/eventlog`;
     const gamelogData = await fetchWithTimeout(gamelogUrl);
-    const entries = gamelogData?.entries || [];
-    const sampleEntry = entries[0] || null;
+    const items = gamelogData?.events?.items || gamelogData?.items || [];
+    const sampleItem = items[items.length - 1] || null; // most recent
     steps.gamelog = {
       url: gamelogUrl,
-      entry_count: entries.length,
+      item_count: items.length,
       error: gamelogData?._error || null,
-      // Show full shape of first entry so we know exactly how to parse it
-      first_entry_keys: sampleEntry ? Object.keys(sampleEntry) : [],
-      first_entry_has_statistics: !!sampleEntry?.statistics,
-      first_entry_statistics_type: sampleEntry?.statistics ? (Array.isArray(sampleEntry.statistics) ? 'array' : typeof sampleEntry.statistics) : null,
-      // If statistics is an object, show its keys
-      first_entry_statistics_keys: sampleEntry?.statistics && !Array.isArray(sampleEntry.statistics)
-        ? Object.keys(sampleEntry.statistics)
-        : null,
-      // If statistics is an array, show first item shape
-      first_entry_statistics_sample: Array.isArray(sampleEntry?.statistics)
-        ? { keys: Object.keys(sampleEntry.statistics[0] || {}), first: sampleEntry.statistics[0] }
-        : sampleEntry?.statistics,
-      // Show splits shape if present
-      splits_sample: sampleEntry?.statistics?.splits?.[0]
-        ? { keys: Object.keys(sampleEntry.statistics.splits[0]), categories_count: sampleEntry.statistics.splits[0].categories?.length }
-        : null,
-      // Raw first entry for full inspection
-      raw_first_entry: sampleEntry,
+      top_level_keys: gamelogData ? Object.keys(gamelogData) : [],
+      sample_item_keys: sampleItem ? Object.keys(sampleItem) : [],
+      sample_item: sampleItem,
     };
   }
 
