@@ -59,9 +59,9 @@ const GAMELOG_STAT_MAP = {
  * @param {Array} picks - Extracted picks from bet slip
  * @returns {Array<object>} enrichments, one per pick
  */
-export async function enrichPicks(picks) {
+export async function enrichPicks(picks, gameDate) {
   const results = await Promise.all(
-    picks.map(pick => enrichSinglePick(pick).catch(err => {
+    picks.map(pick => enrichSinglePick(pick, gameDate).catch(err => {
       console.warn(`[espn-enrichment] Failed to enrich ${pick.player}:`, err.message);
       return { player: pick.player, error: err.message };
     }))
@@ -118,7 +118,7 @@ export function formatEnrichmentForPrompt(enrichments) {
 
 // ─── Internal ─────────────────────────────────────────────────────────────────
 
-async function enrichSinglePick(pick) {
+async function enrichSinglePick(pick, gameDate) {
   const sport = normalizeSport(pick.sport);
   const config = SPORT_CONFIG[sport];
   if (!config) return { player: pick.player, error: `Unsupported sport: ${sport}` };
@@ -135,7 +135,7 @@ async function enrichSinglePick(pick) {
   const [recentForm, injuryStatus, opponent] = await Promise.all([
     fetchRecentForm(config, athleteInfo.id, statKey).catch(() => null),
     fetchInjuryStatus(config, athleteInfo.id).catch(() => 'Unknown'),
-    fetchTonightsOpponent(config, athleteInfo.id).catch(() => null),
+    fetchTonightsOpponent(config, athleteInfo.id, gameDate).catch(() => null),
   ]);
 
   return {
@@ -245,9 +245,9 @@ async function fetchInjuryStatus(config, athleteId) {
   return status;
 }
 
-async function fetchTonightsOpponent(config, athleteId) {
-  // Check today's scoreboard to see if this athlete's team is playing
-  const today = formatDate(new Date());
+async function fetchTonightsOpponent(config, athleteId, gameDate) {
+  // Check the scoreboard for the actual game date
+  const today = gameDate ? gameDate.replace(/-/g, '') : formatDate(new Date());
   const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${today}`;
   const data = await fetchWithTimeout(url);
   if (!data?.events) return null;
