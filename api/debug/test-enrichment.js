@@ -102,17 +102,32 @@ export default async function handler(req, res) {
 
   // ── Step 4: Gamelog raw check (if we got an athlete ID) ───────────────────
   if (e.espnId) {
-    const gamelogUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/athletes/${e.espnId}/gamelog`;
+    const gamelogUrl = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${e.espnId}/statisticslog`;
     const gamelogData = await fetchWithTimeout(gamelogUrl);
-    const categories = gamelogData?.categories || [];
-    const eventCount = Object.keys(gamelogData?.events || {}).length;
+    const entries = gamelogData?.entries || [];
+    const sampleEntry = entries[0] || null;
     steps.gamelog = {
       url: gamelogUrl,
-      category_count: categories.length,
-      category_names: categories.map(c => c.displayName || c.name || '?'),
-      stat_labels_in_first_category: categories[0]?.labels || categories[0]?.names || [],
-      event_count: eventCount,
+      entry_count: entries.length,
       error: gamelogData?._error || null,
+      // Show full shape of first entry so we know exactly how to parse it
+      first_entry_keys: sampleEntry ? Object.keys(sampleEntry) : [],
+      first_entry_has_statistics: !!sampleEntry?.statistics,
+      first_entry_statistics_type: sampleEntry?.statistics ? (Array.isArray(sampleEntry.statistics) ? 'array' : typeof sampleEntry.statistics) : null,
+      // If statistics is an object, show its keys
+      first_entry_statistics_keys: sampleEntry?.statistics && !Array.isArray(sampleEntry.statistics)
+        ? Object.keys(sampleEntry.statistics)
+        : null,
+      // If statistics is an array, show first item shape
+      first_entry_statistics_sample: Array.isArray(sampleEntry?.statistics)
+        ? { keys: Object.keys(sampleEntry.statistics[0] || {}), first: sampleEntry.statistics[0] }
+        : sampleEntry?.statistics,
+      // Show splits shape if present
+      splits_sample: sampleEntry?.statistics?.splits?.[0]
+        ? { keys: Object.keys(sampleEntry.statistics.splits[0]), categories_count: sampleEntry.statistics.splits[0].categories?.length }
+        : null,
+      // Raw first entry for full inspection
+      raw_first_entry: sampleEntry,
     };
   }
 
