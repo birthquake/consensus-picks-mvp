@@ -769,3 +769,199 @@
     width: calc(100% + 1rem);
   }
 }
+
+/* ── ESPN enrichment section ───────────────────────────────────────────────── */
+
+.expanded-section {
+  margin-bottom: 1rem;
+}
+
+.expanded-section h4 {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 0 0 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.espn-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 20px;
+  background: rgba(0, 212, 255, 0.12);
+  color: var(--accent-primary, #00d4ff);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.enrich-picks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.enrich-pick-row {
+  background: var(--bg-tertiary, #111);
+  border: 1px solid var(--border-color, #222);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.enrich-pick-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.enrich-pick-num {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--accent-primary, #00d4ff);
+  background: rgba(0, 212, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.enrich-pick-name {
+  font-weight: 700;
+  color: var(--text-primary, #fff);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.injury-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #ffaa00;
+  background: rgba(255, 170, 0, 0.12);
+  padding: 2px 7px;
+  border-radius: 20px;
+}
+
+.enrich-pick-bet {
+  color: var(--text-secondary, #999);
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.trend-up {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #4ade80;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.trend-down {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #f87171;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.outcome-dot {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  flex-shrink: 0;
+}
+
+.outcome-dot.won  { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+.outcome-dot.lost { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+.outcome-dot.void { background: rgba(156, 163, 175, 0.15); color: #9ca3af; }
+
+/* Form spark bars */
+.form-bar-wrap {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.form-bar-label {
+  font-size: 0.65rem;
+  color: var(--text-tertiary, #555);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  align-self: center;
+  white-space: nowrap;
+}
+
+.form-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 56px;
+}
+
+.form-bar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+  height: 56px;
+}
+
+.form-bar-fill {
+  width: 22px;
+  border-radius: 3px 3px 0 0;
+  min-height: 4px;
+  transition: height 0.3s ease;
+}
+
+.form-bar-fill.hit  { background: rgba(74, 222, 128, 0.7); }
+.form-bar-fill.miss { background: rgba(248, 113, 113, 0.5); }
+.form-bar-fill.dnp  { background: rgba(156, 163, 175, 0.25); }
+
+.form-bar-val {
+  font-size: 0.6rem;
+  color: var(--text-tertiary, #555);
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+.form-line-label {
+  font-size: 0.65rem;
+  color: var(--accent-primary, #00d4ff);
+  align-self: center;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+
+.form-unavailable {
+  font-size: 0.75rem;
+  color: var(--text-tertiary, #555);
+  padding: 0.25rem 0;
+}
+
+/* Game date in card meta */
+.game-date-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.game-date-meta svg {
+  opacity: 0.6;
+}
