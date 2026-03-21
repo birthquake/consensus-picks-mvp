@@ -1,127 +1,108 @@
 // FILE LOCATION: api/utils/results-processor.js
+// Thin wrapper used by other parts of the app to check pick results.
+// Now delegates to espn-client instead of using mock data.
 
+import { getPlayerStatForGame, isGameComplete } from './espn-client.js';
+
+/**
+ * Process all legs of a submitted pick and return win/loss per leg.
+ * Used by the dashboard and history pages to display results.
+ *
+ * @param {object} pick - The pick document from Firestore
+ * @param {string|Date} gameDate - Date of the game
+ * @returns {object} result summary
+ */
 export async function processPickResults(pick, gameDate) {
   try {
-    const pickLegs = pick.originalLegs || [];
-    const game = pick.game;
-    const sport = pick.sport;
+    const pickLegs = pick.legs || pick.picks || [];
+    const sport = pick.sport || 'NBA';
 
-    // Check if game is complete
-    const gameStatus = await checkGameStatus(sport, game, gameDate);
-    
-    if (gameStatus !== 'COMPLETE') {
-      return {
-        status: 'pending',
-        reason: 'Game not yet complete'
-      };
+    if (pickLegs.length === 0) {
+      return { status: 'error', reason: 'No pick legs found' };
     }
 
-    // Get actual player stats from ESPN
-    const actualStats = await getActualPlayerStats(sport, game);
-
-    // Check each leg
     let legsWon = 0;
-    let legResults = [];
+    const legResults = [];
 
     for (let i = 0; i < pickLegs.length; i++) {
       const leg = pickLegs[i];
-      const playerStat = actualStats[leg.player];
 
-      if (!playerStat) {
+      const result = await getPlayerStatForGame(
+        sport,
+        leg.player,
+        leg.stat,
+        gameDate,
+      );
+
+      if (result.gameStatus === 'pre_game' || result.gameStatus === 'in_progress') {
+        return { status: 'pending', reason: 'Game not yet complete' };
+      }
+
+      if (!result.found || result.value === null) {
         legResults.push({
           legNumber: i + 1,
           player: leg.player,
           stat: leg.stat,
-          threshold: leg.threshold,
+          threshold: leg.threshold || leg.line,
           actualValue: null,
           result: 'UNKNOWN',
-          reason: 'Player stat not found'
+          reason: result.error || 'Could not retrieve stat',
         });
         continue;
       }
 
-      const thresholdNum = parseInt(leg.threshold);
-      const actualValue = playerStat[leg.stat];
-      const won = actualValue >= thresholdNum;
+      // Support both "threshold" (old schema: "230+") and "line" + "bet_type" (new schema)
+      let won;
+      if (leg.threshold) {
+        const thresholdNum = parseFloat(String(leg.threshold).replace(/[^0-9.]/g, ''));
+        const isOver = !String(leg.threshold).includes('-');
+        won = isOver ? result.value >= thresholdNum : result.value <= thresholdNum;
+      } else {
+        const type = (leg.bet_type || 'over').toLowerCase();
+        const lineNum = parseFloat(leg.line);
+        won = type === 'under' ? result.value < lineNum : result.value > lineNum;
+      }
 
       if (won) legsWon++;
 
       legResults.push({
         legNumber: i + 1,
         player: leg.player,
+        playerFullName: result.playerFullName,
         stat: leg.stat,
-        threshold: leg.threshold,
-        actualValue: actualValue,
+        threshold: leg.threshold || `${leg.bet_type} ${leg.line}`,
+        actualValue: result.value,
         result: won ? 'WON' : 'LOST',
-        buffer: actualValue - thresholdNum
+        buffer: result.value - parseFloat(String(leg.threshold || leg.line).replace(/[^0-9.]/g, '')),
+        gameId: result.gameId,
       });
     }
 
-    // All legs must win for parlay to win
-    const parlalyWon = legsWon === pickLegs.length;
-
-    // Calculate payout
-    const odds = 900; // Default, should be from pick data
-    const wager = pick.wager || 2;
-    const actualPayout = parlalyWon ? wager * ((odds + 100) / 100) : 0;
-    const actualROI = ((actualPayout - wager) / wager) * 100;
+    const parlayWon = legsWon === pickLegs.length;
+    const wager = pick.wager || pick.wager_amount || 0;
+    const odds = pick.originalOdds ? parseOdds(pick.originalOdds) : 900;
+    const actualPayout = parlayWon ? wager * ((Math.abs(odds) + 100) / 100) : 0;
+    const actualROI = wager > 0 ? ((actualPayout - wager) / wager) * 100 : 0;
 
     return {
-      status: parlalyWon ? 'won' : 'lost',
+      status: parlayWon ? 'won' : 'lost',
       legResults,
       legsWon,
       totalLegs: pickLegs.length,
       actualPayout,
       actualROI,
-      processedAt: new Date().toISOString()
+      processedAt: new Date().toISOString(),
+      source: 'espn_api',
     };
 
   } catch (error) {
-    console.error('Error processing pick results:', error);
-    return {
-      status: 'error',
-      reason: error.message
-    };
+    console.error('[results-processor] Error:', error);
+    return { status: 'error', reason: error.message };
   }
 }
 
-async function checkGameStatus(sport, game, gameDate) {
-  try {
-    // Mock implementation - would call ESPN API in production
-    const now = new Date();
-    const gameDateObj = new Date(gameDate);
-    
-    // Games typically last 3-4 hours
-    const gameEndTime = new Date(gameDateObj.getTime() + 4 * 60 * 60 * 1000);
-    
-    if (now >= gameEndTime) {
-      return 'COMPLETE';
-    }
-    return 'IN_PROGRESS';
-  } catch (error) {
-    return 'UNKNOWN';
-  }
-}
-
-async function getActualPlayerStats(sport, game) {
-  // Mock player stats - in production this would fetch from ESPN
-  const mockStats = {
-    NFL: {
-      'Patrick Mahomes': { 'Passing Yards': 285, 'Touchdowns': 2 },
-      'Travis Kelce': { 'Receiving Yards': 95, 'Receptions': 9 },
-      'Rashee Rice': { 'Receiving Yards': 72, 'Receptions': 8 },
-      'Isiah Pacheco': { 'Rushing Yards': 58 },
-      'James Robinson': { 'Rushing Yards': 88 }
-    },
-    NBA: {
-      'LeBron James': { 'Points': 28, 'Rebounds': 9, 'Assists': 7 },
-      'Jayson Tatum': { 'Points': 32, 'Rebounds': 11, 'Assists': 5 },
-      'Nikola Jokic': { 'Points': 29, 'Rebounds': 14, 'Assists': 10 }
-    },
-    NHL: {
-      'Connor McDavid': { 'Shots on Goal': 5, 'Goals': 1, 'Assists': 2 }
-    }
-  };
-
-  return mockStats[sport] || {};
+function parseOdds(oddsStr) {
+  if (!oddsStr) return 900;
+  const num = parseInt(String(oddsStr).replace(/[^0-9-+]/g, ''), 10);
+  return isNaN(num) ? 900 : num;
 }
