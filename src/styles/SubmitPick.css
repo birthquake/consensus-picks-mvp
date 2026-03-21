@@ -368,3 +368,72 @@
     font-size: 0.8rem;
   }
 }
+
+/* Game date row */
+.game-date-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+}
+
+.game-date-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.game-date-label svg {
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.date-source-badge {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: rgba(0, 212, 255, 0.12);
+  color: var(--accent-primary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.date-source-badge.default {
+  background: rgba(255, 170, 0, 0.12);
+  color: #ffaa00;
+}
+
+.date-input {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+  cursor: pointer;
+}
+
+.date-input:focus {
+  border-color: var(--accent-primary);
+}
+
+/* webkit date input dark mode */
+.date-input::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: 0.5;
+  cursor: pointer;
+}
