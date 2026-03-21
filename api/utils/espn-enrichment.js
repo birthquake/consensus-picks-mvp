@@ -264,74 +264,94 @@ async function findAthleteViaAthleteSearch(config, playerName) {
 }
 
 async function fetchRecentForm(config, athleteId, statKey) {
-  // Use the core v2 statisticslog — confirmed working endpoint
-  const url = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${athleteId}/statisticslog`;
-  const data = await fetchWithTimeout(url, 6000);
-  if (!data) return null;
+  // Strategy: fetch the athlete's recent event log to get game IDs,
+  // then pull each game summary (which we know returns inline box scores).
 
-  // Gamelog shape: data.categories[] with labels/names arrays + data.events{}
-  // Each event key maps to a stats array positionally aligned to categories
-  const categories = data.categories || [];
-  if (categories.length === 0) return null;
+  // Step 1: Get recent event IDs from the athlete eventlog
+  const eventlogUrl = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${athleteId}/eventlog`;
+  const eventlogData = await fetchWithTimeout(eventlogUrl, 6000);
+  if (!eventlogData) return null;
 
-  // Find which category contains our stat and which index within it
-  let statCategoryIdx = -1;
-  let statIdx = -1;
+  // eventlog shape: { events: { $ref: "..." } } OR { items: [...] }
+  // Try to get event $refs — each item has an event.$ref and a statistics.$ref
+  const items = eventlogData?.events?.items || eventlogData?.items || [];
+  if (items.length === 0) return null;
 
-  for (let ci = 0; ci < categories.length; ci++) {
-    const cat = categories[ci];
-    const names = cat.names || cat.labels || [];
-    const keys  = cat.keys  || names;
-    for (let si = 0; si < keys.length; si++) {
-      const key = (keys[si] || '').toLowerCase();
-      const label = (names[si] || '').toLowerCase();
-      if (key === statKey.toLowerCase() || label === statKey.toLowerCase() ||
-          key.startsWith(statKey.toLowerCase()) || label.startsWith(statKey.toLowerCase())) {
-        statCategoryIdx = ci;
-        statIdx = si;
-        break;
-      }
+  // Take last 5 completed events, most recent first
+  const recentItems = items.slice(-5).reverse();
+
+  // Step 2: For each event, fetch the game summary and extract the player's stat
+  const results = await Promise.all(
+    recentItems.map(item => extractStatFromEventItem(config, item, athleteId, statKey))
+  );
+
+  const valid = results.filter(r => r !== null);
+  return valid.length > 0 ? valid : null;
+}
+
+async function extractStatFromEventItem(config, item, athleteId, statKey) {
+  try {
+    // Get event ID — it's either inline or in a $ref URL
+    let eventId = item.event?.id;
+    if (!eventId && item.event?.$ref) {
+      const match = item.event.$ref.match(/events\/(\d+)/);
+      eventId = match?.[1];
     }
-    if (statIdx !== -1) break;
-  }
+    if (!eventId) return null;
 
-  if (statIdx === -1) {
-    // stat not in gamelog categories — try abbreviation match
-    for (let ci = 0; ci < categories.length; ci++) {
-      const cat = categories[ci];
-      const abbrevs = cat.abbreviations || cat.labels || [];
-      for (let si = 0; si < abbrevs.length; si++) {
-        if ((abbrevs[si] || '').toLowerCase() === statKey.toLowerCase()) {
-          statCategoryIdx = ci;
-          statIdx = si;
-          break;
-        }
-      }
-      if (statIdx !== -1) break;
-    }
-  }
+    // Fetch game summary — same endpoint used for result grading
+    const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/summary?event=${eventId}`;
+    const summary = await fetchWithTimeout(summaryUrl, 5000);
+    if (!summary?.boxscore?.players) return null;
 
-  if (statIdx === -1) return null;
+    // Find player in boxscore and extract stat
+    const value = extractPlayerStatFromSummary(summary, athleteId, statKey);
 
-  // Events are keyed by event ID — get last 5, most recent first
-  const events = data.events || {};
-  const eventIds = Object.keys(events);
-  if (eventIds.length === 0) return null;
-
-  // Each event has a stats array per category — pull ours
-  const recentGames = eventIds.slice(-5).reverse();
-
-  return recentGames.map(eventId => {
-    const event = events[eventId];
-    const catStats = event?.stats?.[statCategoryIdx];
-    const raw = Array.isArray(catStats) ? catStats[statIdx] : null;
-    const value = raw != null ? parseStatValue(String(raw)) : null;
     return {
-      date: event?.gameDate || event?.date || null,
-      opponent: event?.opponent?.displayName || event?.atVs || null,
+      eventId,
+      date: item.event?.date || null,
+      opponent: null, // could be enriched later
       value,
     };
-  }).filter(g => g.value !== null);
+  } catch {
+    return null;
+  }
+}
+
+function extractPlayerStatFromSummary(summary, athleteId, statKey) {
+  const playerGroups = summary?.boxscore?.players || [];
+
+  for (const group of playerGroups) {
+    const statsBlock = group.statistics?.[0];
+    if (!statsBlock) continue;
+
+    const keys = statsBlock.keys || [];
+
+    // Find stat index — try direct match, then partial
+    let statIdx = keys.findIndex(k => k.toLowerCase() === statKey.toLowerCase());
+    if (statIdx === -1) {
+      statIdx = keys.findIndex(k => k.toLowerCase().includes(statKey.toLowerCase()));
+    }
+    if (statIdx === -1) continue;
+
+    // Find the athlete by ID
+    const athletes = statsBlock.athletes || [];
+    const athlete = athletes.find(a => String(a.athlete?.id) === String(athleteId));
+    if (!athlete || !athlete.stats?.length) continue;
+
+    const raw = athlete.stats[statIdx];
+    if (raw == null || raw === '') return null;
+
+    // Handle fraction format "8-14" → return made count
+    const s = String(raw).trim();
+    if (s.includes('-') && !s.startsWith('-')) {
+      return parseInt(s.split('-')[0], 10) || null;
+    }
+    if (s.startsWith('+')) return parseFloat(s.slice(1)) || null;
+    const n = parseFloat(s);
+    return isNaN(n) ? null : n;
+  }
+  return null;
 }
 
 // Parse a raw gamelog stat value — handles "8-14" fractions, "+5", plain numbers
