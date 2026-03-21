@@ -1,42 +1,49 @@
 // FILE LOCATION: api/cron/fetch-game-results.js
-// Daily cron job: Fetch game results via SerpAPI and update bet status
+// Daily cron job: Grade pending bets using ESPN public API box scores.
+// Replaces the previous SerpAPI + regex approach entirely.
+//
+// Flow:
+//   1. Pull all users with bets in status "pending_results"
+//   2. For each pick leg, call espn-client.getPlayerStatForGame()
+//   3. Compare final stat vs the line + bet_type (Over/Under/Moneyline)
+//   4. When ALL legs are resolved, mark the bet complete in Firestore
 
 import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getPlayerStatForGame } from '../utils/espn-client.js';
 
-// Initialize Firebase Admin
+// ─── Firebase init ────────────────────────────────────────────────────────────
+
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{}');
 
 let app;
 try {
   app = getApp();
-} catch (err) {
-  app = initializeApp({
-    credential: cert(serviceAccount)
-  });
+} catch {
+  app = initializeApp({ credential: cert(serviceAccount) });
 }
 
 const db = getFirestore(app);
-const SERPAPI_KEY = process.env.SERPAPI_API_KEY;
+
+// ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
-  // Only allow GET from Vercel cron scheduler
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    console.log('🏀 Starting game result fetch at', new Date().toISOString());
+    console.log('🏟️  ESPN result fetch started at', new Date().toISOString());
 
-    // Get all pending bets across all users
     const usersSnapshot = await db.collection('users').get();
-    let totalBetsProcessed = 0;
-    let totalBetsUpdated = 0;
+    let totalProcessed = 0;
+    let totalUpdated = 0;
+    let totalSkipped = 0;
+    const errors = [];
 
     for (const userDoc of usersSnapshot.docs) {
       const userId = userDoc.id;
-      
-      // Get pending bets for this user
+
       const betsSnapshot = await db
         .collection('users')
         .doc(userId)
@@ -44,94 +51,133 @@ export default async function handler(req, res) {
         .where('status', '==', 'pending_results')
         .get();
 
-      console.log(`📊 Processing ${betsSnapshot.docs.length} pending bets for user ${userId}`);
-
       for (const betDoc of betsSnapshot.docs) {
         const bet = betDoc.data();
         const betId = betDoc.id;
+        totalProcessed++;
 
         try {
-          // Process each bet
-          const result = await processBet(bet, betId, userId);
-          
+          const result = await gradeBet(bet, betId, userId);
+
           if (result.updated) {
-            totalBetsUpdated++;
-            console.log(`✅ Updated bet ${betId}:`, result.summary);
-          } else {
-            console.log(`⏳ Bet ${betId} still pending - no clear results found`);
+            totalUpdated++;
+            console.log(`✅ Graded bet ${betId}: ${result.summary}`);
+          } else if (result.skipped) {
+            totalSkipped++;
+            console.log(`⏳ Skipped bet ${betId}: ${result.reason}`);
           }
-        } catch (error) {
-          console.error(`❌ Error processing bet ${betId}:`, error.message);
+        } catch (err) {
+          errors.push({ betId, error: err.message });
+          console.error(`❌ Error on bet ${betId}:`, err.message);
         }
       }
-
-      totalBetsProcessed += betsSnapshot.docs.length;
     }
 
-    console.log(`✅ Cron job complete. Processed: ${totalBetsProcessed}, Updated: ${totalBetsUpdated}`);
+    console.log(`✅ Done. Processed: ${totalProcessed}, Updated: ${totalUpdated}, Skipped: ${totalSkipped}`);
 
     return res.status(200).json({
       success: true,
-      message: 'Game results fetch completed',
-      processed: totalBetsProcessed,
-      updated: totalBetsUpdated
+      processed: totalProcessed,
+      updated: totalUpdated,
+      skipped: totalSkipped,
+      errors,
     });
 
-  } catch (error) {
-    console.error('❌ Cron job error:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
+  } catch (err) {
+    console.error('❌ Cron job fatal error:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 }
 
-async function processBet(bet, betId, userId) {
+// ─── Core grading logic ───────────────────────────────────────────────────────
+
+async function gradeBet(bet, betId, userId) {
   const picks = bet.picks || [];
+  if (picks.length === 0) {
+    return { updated: false, skipped: true, reason: 'No picks on bet' };
+  }
+
+  const gameDate = bet.game_date || bet.created_at?.toDate?.() || bet.created_at || new Date();
+
   const outcomes = [];
-  let allPicksResolved = true;
+  let allResolved = true;
+  let anyGameStillLive = false;
 
-  // Process each pick in the bet
   for (const pick of picks) {
-    const searchQuery = buildSearchQuery(pick, bet.game_date || bet.created_at);
-    console.log(`🔍 Searching for: "${searchQuery}"`);
+    const sport = normalizeSport(pick.sport);
+    const result = await getPlayerStatForGame(
+      sport,
+      pick.player,
+      pick.stat,
+      gameDate,
+    );
 
-    try {
-      const result = await searchGameResult(searchQuery, pick);
-      
-      if (result.resolved) {
+    console.log(
+      `  🔍 ${pick.player} | ${pick.stat} | game: ${result.gameId} | ` +
+      `status: ${result.gameStatus} | value: ${result.value} | found: ${result.found}`
+    );
+
+    if (result.gameStatus === 'in_progress' || result.gameStatus === 'pre_game') {
+      anyGameStillLive = true;
+      allResolved = false;
+      break;
+    }
+
+    if (!result.found || result.value === null) {
+      const hoursOld = (Date.now() - new Date(gameDate).getTime()) / 3600000;
+      if (hoursOld > 72) {
         outcomes.push({
           player: pick.player,
           stat: pick.stat,
           bet_type: pick.bet_type,
           line: pick.line,
-          final_value: result.finalValue,
-          result: result.won ? 'Won' : 'Lost',
-          search_source: result.source
+          final_value: null,
+          result: 'VOID',
+          reason: result.error || 'Player stat not found',
+          source: 'espn',
         });
       } else {
-        allPicksResolved = false;
-        console.log(`⏳ Could not resolve: ${pick.player} - ${pick.stat}`);
+        allResolved = false;
       }
-    } catch (error) {
-      allPicksResolved = false;
-      console.error(`❌ Search error for ${pick.player}:`, error.message);
+      continue;
     }
+
+    const won = evaluatePick(result.value, pick.line, pick.bet_type);
+
+    outcomes.push({
+      player: pick.player,
+      stat: pick.stat,
+      bet_type: pick.bet_type,
+      line: pick.line,
+      final_value: result.value,
+      result: won ? 'Won' : 'Lost',
+      player_full_name: result.playerFullName,
+      game_id: result.gameId,
+      source: 'espn',
+    });
   }
 
-  // Only update if all picks were resolved
-  if (!allPicksResolved || outcomes.length !== picks.length) {
-    return { updated: false };
+  if (!allResolved) {
+    return {
+      updated: false,
+      skipped: true,
+      reason: anyGameStillLive ? 'Game still in progress' : 'Some picks unresolvable',
+    };
   }
 
-  // Determine overall bet result (all picks must hit for parlay)
-  const allWon = outcomes.every(o => o.result === 'Won');
-  const anyLost = outcomes.some(o => o.result === 'Lost');
-  
-  const betResult = allWon ? 'Won' : 'Lost';
+  if (outcomes.length !== picks.length) {
+    return {
+      updated: false,
+      skipped: true,
+      reason: `Only resolved ${outcomes.length}/${picks.length} picks`,
+    };
+  }
+
+  const betWon = outcomes.every(o => o.result === 'Won');
+  const anyVoid = outcomes.some(o => o.result === 'VOID');
+  const betResult = anyVoid ? 'VOID' : betWon ? 'Won' : 'Lost';
   const profitLoss = calculateProfitLoss(bet, betResult);
 
-  // Update Firestore
   await db
     .collection('users')
     .doc(userId)
@@ -139,140 +185,52 @@ async function processBet(bet, betId, userId) {
     .doc(betId)
     .update({
       status: 'complete',
-      outcomes: outcomes,
+      outcomes,
       profit_loss: profitLoss,
+      bet_result: betResult,
       completed_at: new Date(),
-      bet_result: betResult
+      result_source: 'espn_api',
     });
 
   return {
     updated: true,
-    summary: `${betResult} ${profitLoss >= 0 ? '+' : ''}$${profitLoss}`
+    summary: `${betResult} | P/L: ${profitLoss >= 0 ? '+' : ''}$${profitLoss.toFixed(2)}`,
   };
 }
 
-function buildSearchQuery(pick, createdAt) {
-  // Format date from created_at
-  const date = new Date(createdAt);
-  const monthName = date.toLocaleString('en-US', { month: 'long' });
-  const day = date.getDate();
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  // Build search: "Player Stat Sport Month Day"
-  return `${pick.player} ${pick.stat} ${pick.sport} ${monthName} ${day}`;
-}
+function evaluatePick(finalValue, line, betType) {
+  if (finalValue === null || finalValue === undefined) return false;
+  const type = (betType || '').toLowerCase();
+  const lineNum = parseFloat(line);
 
-async function searchGameResult(query, pick) {
-  const params = {
-    q: query,
-    api_key: SERPAPI_KEY,
-    gl: 'us',
-    hl: 'en'
-  };
-
-  const queryString = new URLSearchParams(params).toString();
-  const response = await fetch(`https://serpapi.com/search?${queryString}`);
-  const data = await response.json();
-
-  // Extract relevant information from SerpAPI results
-  const result = parseSearchResults(data, pick);
-  
-  return result;
-}
-
-function parseSearchResults(serpResults, pick) {
-  // Look through organic results for stat values
-  const organicResults = serpResults.organic_results || [];
-  
-  for (const result of organicResults) {
-    const text = (result.snippet || '') + ' ' + (result.title || '');
-    const lowerText = text.toLowerCase();
-    
-    // Try to extract the stat value
-    const value = extractStatValue(text, pick.stat);
-    
-    if (value !== null) {
-      const won = determineWin(value, pick.line, pick.bet_type);
-      
-      return {
-        resolved: true,
-        finalValue: value,
-        won: won,
-        source: result.source || 'sports_site'
-      };
-    }
-  }
-
-  // If no clear result found
-  return {
-    resolved: false,
-    finalValue: null,
-    won: false,
-    source: 'unknown'
-  };
-}
-
-function extractStatValue(text, stat) {
-  // Common patterns for different stats
-  const patterns = {
-    'passing yards': /(\d+)\s*(?:passing yards?|pass yards?)/i,
-    'receiving yards': /(\d+)\s*(?:receiving yards?|rec yards?)/i,
-    'rushing yards': /(\d+)\s*(?:rushing yards?|rush yards?)/i,
-    'points': /(\d+)\s*(?:points?|pts?)\b/i,
-    'rebounds': /(\d+)\s*(?:rebounds?|rebs?|boards?)/i,
-    'assists': /(\d+)\s*(?:assists?|asst?)/i,
-    'passing touchdowns': /(\d+)\s*(?:passing touchdowns?|pass tds?)/i,
-    'touchdowns': /(\d+)\s*(?:touchdowns?|tds?)/i,
-    'interceptions': /(\d+)\s*(?:interceptions?|ints?)/i,
-    'three pointers': /(\d+)\s*(?:three pointers?|three-pointers?|3ps?)/i
-  };
-
-  const statLower = stat.toLowerCase();
-  const pattern = patterns[statLower];
-
-  if (pattern) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      return parseInt(match[1], 10);
-    }
-  }
-
-  return null;
-}
-
-function determineWin(finalValue, line, betType) {
-  if (betType === 'Over' || betType === 'over') {
-    return finalValue > line;
-  } else if (betType === 'Under' || betType === 'under') {
-    return finalValue < line;
-  } else if (betType === 'Moneyline' || betType === 'moneyline') {
-    // For moneyline, we'd need game result
-    // Assume if value exists and > 0, it's a win
-    return finalValue > 0;
-  }
-
-  return false;
+  if (type === 'over' || type === 'more' || type === '+') return finalValue > lineNum;
+  if (type === 'under' || type === 'less' || type === '-') return finalValue < lineNum;
+  if (type === 'moneyline') return finalValue > 0;
+  return finalValue > lineNum; // default: over
 }
 
 function calculateProfitLoss(bet, betResult) {
+  const wager = bet.wager_amount || 0;
+  if (betResult === 'VOID') return 0;
   if (betResult === 'Won') {
-    // For simplicity: if it's a parlay with multiple legs, use potential_payout
-    // Otherwise, calculate based on odds
-    if (bet.parlay_legs && bet.parlay_legs > 1) {
-      // Parlay: profit is potential_payout - wager
-      return (bet.potential_payout || 0) - (bet.wager_amount || 0);
-    } else {
-      // Single bet: calculate from odds
-      const odds = bet.picks[0]?.odds || -110;
-      const wager = bet.wager_amount || 0;
-      
-      if (odds > 0) {
-        return (wager / 100) * odds;
-      } else {
-        return wager / (Math.abs(odds) / 100);
-      }
-    }
-  } else {
-    // Lost: loss is the wager amount
-    return -(bet.wager_amount || 0);
+    if (bet.potential_payout) return bet.potential_payout - wager;
+    const odds = bet.picks?.[0]?.odds || -110;
+    if (odds > 0) return (wager / 100) * odds;
+    return wager / (Math.abs(odds) / 100);
   }
+  return -wager;
+}
+
+function normalizeSport(sport) {
+  if (!sport) return 'NBA';
+  const s = sport.toUpperCase().trim();
+  if (s.includes('NFL') || s.includes('FOOTBALL')) return 'NFL';
+  if (s.includes('NBA') || s.includes('BASKETBALL')) return 'NBA';
+  if (s.includes('MLB') || s.includes('BASEBALL')) return 'MLB';
+  if (s.includes('NHL') || s.includes('HOCKEY')) return 'NHL';
+  if (s.includes('NCAAF') || s.includes('COLLEGE FOOTBALL')) return 'NCAAF';
+  if (s.includes('NCAAB') || s.includes('COLLEGE BASKETBALL')) return 'NCAAB';
+  return s;
 }
