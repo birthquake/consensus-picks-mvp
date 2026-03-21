@@ -264,8 +264,8 @@ async function findAthleteViaAthleteSearch(config, playerName) {
 }
 
 async function fetchRecentForm(config, athleteId, statKey) {
-  // Use the site API gamelog — clean flat format, same data ESPN player pages use
-  const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/athletes/${athleteId}/gamelog`;
+  // Use the core v2 statisticslog — confirmed working endpoint
+  const url = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${athleteId}/statisticslog`;
   const data = await fetchWithTimeout(url, 6000);
   if (!data) return null;
 
