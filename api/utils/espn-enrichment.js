@@ -43,10 +43,30 @@ const GAMELOG_STAT_MAP = {
   'passing touchdowns':  'passingTouchdowns',
   // NHL
   'shots on goal':       'shots',
+  'shots':               'shots',
   'goals':               'goals',
-  // MLB
-  'strikeouts':          'strikeouts',
+  'saves':               'saves',
+  'assists':             'assists',
+  'points':              'points',
   'hits':                'hits',
+  'blocked shots':       'blockedShots',
+  'time on ice':         'timeOnIce',
+  'penalty minutes':     'penaltyMinutes',
+  'power play goals':    'powerPlayGoals',
+  // MLB - pitchers
+  'strikeouts':          'strikeouts',
+  'earned runs':         'earnedRuns',
+  'walks':               'walks',
+  'innings pitched':     'inningsPitched',
+  'hits allowed':        'hitsAllowed',
+  // MLB - batters
+  'hits':                'hits',
+  'home runs':           'homeRuns',
+  'rbis':                'RBI',
+  'rbi':                 'RBI',
+  'runs':                'runs',
+  'total bases':         'totalBases',
+  'stolen bases':        'stolenBases',
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -345,7 +365,7 @@ function normalizeSport(sport) {
   if (s.includes('NFL') || s.includes('FOOTBALL')) return 'NFL';
   if (s.includes('NBA') || s.includes('BASKETBALL')) return 'NBA';
   if (s.includes('MLB') || s.includes('BASEBALL')) return 'MLB';
-  if (s.includes('NHL') || s.includes('HOCKEY')) return 'NHL';
+  if (s.includes('NHL') || s.includes('HOCKEY') || s.includes('ICE')) return 'NHL';
   return s;
 }
 
