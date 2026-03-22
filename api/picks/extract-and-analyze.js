@@ -7,6 +7,16 @@ import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { enrichPicks, formatEnrichmentForPrompt } from '../utils/espn-enrichment.js';
 
+// Increase Vercel body size limit for base64 image uploads
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
+};
+
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{}');
