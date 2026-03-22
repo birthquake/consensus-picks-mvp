@@ -336,31 +336,50 @@ async function fetchRecentForm(config, athleteId, statKey, gameDate, sharedGameI
   }
   if (recentGameIds.length === 0) return null;
 
-  // Search each game's box score for this athlete, collect up to 5 results
+  // Search game summaries in parallel batches of 8.
+  // Stop once we have 5 results — process batches oldest-to-newest (recentGameIds is newest-first)
+  // so results array ends up in reverse chron; we reverse at the end.
   const results = [];
-  for (const gameId of recentGameIds) {
-    if (results.length >= 5) break;
-    const result = await extractStatFromGame(config, gameId, athleteId, statKey);
-    if (result !== null) results.push(result);
+  const BATCH = 8;
+
+  for (let i = 0; i < recentGameIds.length && results.length < 5; i += BATCH) {
+    const batch = recentGameIds.slice(i, i + BATCH);
+    const batchResults = await Promise.all(
+      batch.map(gameId => extractStatFromGame(config, gameId, athleteId, statKey))
+    );
+    for (const r of batchResults) {
+      if (r !== null && results.length < 5) results.push(r);
+    }
   }
 
   return results.length > 0 ? results : null;
 }
 
-// Returns all game IDs from the past 21 days, most recent first.
-// We scan all days regardless of how many games we find — a player
-// like Grimes plays ~every 2 days so we need all league games to search.
+// Fetch all recent game IDs in parallel — much faster than sequential.
+// Fetches 21 days of scoreboards simultaneously, then sorts by date desc.
 async function getRecentGameIds(config, beforeDate) {
-  const gameIds = [];
-  const date = new Date(beforeDate);
+  const base = new Date(beforeDate);
 
+  // Build all date strings upfront
+  const dates = [];
   for (let daysBack = 1; daysBack <= 21; daysBack++) {
-    date.setDate(date.getDate() - 1);
-    const dateStr = formatDate(date);
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${dateStr}`;
-    const data = await fetchWithTimeout(url, 3000);
-    if (!data?.events) continue;
+    const d = new Date(base);
+    d.setDate(d.getDate() - daysBack);
+    dates.push({ dateStr: formatDate(d), daysBack });
+  }
 
+  // Fetch all scoreboards in parallel
+  const responses = await Promise.all(
+    dates.map(({ dateStr }) => {
+      const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${dateStr}`;
+      return fetchWithTimeout(url, 3000).catch(() => null);
+    })
+  );
+
+  // Collect completed game IDs, preserving date order (most recent first)
+  const gameIds = [];
+  for (const data of responses) {
+    if (!data?.events) continue;
     for (const event of data.events) {
       if (event.status?.type?.completed) {
         gameIds.push(event.id);
