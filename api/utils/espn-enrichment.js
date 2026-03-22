@@ -80,22 +80,42 @@ const GAMELOG_STAT_MAP = {
  * @returns {Array<object>} enrichments, one per pick
  */
 export async function enrichPicks(picks, gameDate) {
-  // Pre-fetch team rosters once per sport — cache them so each player
-  // lookup doesn't re-fetch all 30 team rosters independently.
-  const rosterCache = {};
+  // Cap at 5 picks to stay within Vercel's timeout budget.
+  // For large parlays we enrich the first 5 and mark the rest as skipped.
+  const MAX_PICKS = 5;
+  const TOTAL_TIMEOUT_MS = 18000; // 18s hard cap — leaves buffer for Claude calls
 
-  // Process picks sequentially to avoid ESPN rate limiting on large parlays.
+  const picksToEnrich = picks.slice(0, MAX_PICKS);
+  const skippedPicks = picks.slice(MAX_PICKS).map(p => ({
+    player: p.player, error: 'Skipped — parlay too large to enrich all picks'
+  }));
+
+  const rosterCache = {};
   const results = [];
-  for (const pick of picks) {
-    try {
-      const result = await enrichSinglePick(pick, gameDate, rosterCache);
-      results.push(result);
-    } catch (err) {
-      console.warn(`[espn-enrichment] Failed to enrich ${pick.player}:`, err.message);
-      results.push({ player: pick.player, error: err.message });
+
+  // Race the entire enrichment loop against a hard timeout
+  const enrichAll = async () => {
+    for (const pick of picksToEnrich) {
+      try {
+        const result = await enrichSinglePick(pick, gameDate, rosterCache);
+        results.push(result);
+      } catch (err) {
+        console.warn(`[espn-enrichment] Failed to enrich ${pick.player}:`, err.message);
+        results.push({ player: pick.player, error: err.message });
+      }
     }
+  };
+
+  const timeout = new Promise(resolve => setTimeout(resolve, TOTAL_TIMEOUT_MS));
+  await Promise.race([enrichAll(), timeout]);
+
+  // Fill any picks that didn't complete due to timeout
+  while (results.length < picksToEnrich.length) {
+    const pick = picksToEnrich[results.length];
+    results.push({ player: pick.player, error: 'Enrichment timed out' });
   }
-  return results;
+
+  return [...results, ...skippedPicks];
 }
 
 /**
@@ -207,7 +227,7 @@ async function findAthleteViaRosters(config, playerName, rosterCache = {}) {
       const teamId = t.team?.id || t.id;
       if (!teamId) continue;
       const rosterUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/teams/${teamId}/roster`;
-      const rosterData = await fetchWithTimeout(rosterUrl, 4000);
+      const rosterData = await fetchWithTimeout(rosterUrl, 3000);
       if (!rosterData) continue;
 
       const groups = rosterData.athletes || [];
@@ -294,26 +314,24 @@ async function findAthleteViaAthleteSearch(config, playerName) {
 }
 
 async function fetchRecentForm(config, athleteId, statKey) {
-  // Strategy: fetch the athlete's recent event log to get game IDs,
-  // then pull each game summary (which we know returns inline box scores).
-
-  // Step 1: Get recent event IDs from the athlete eventlog
-  const eventlogUrl = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${athleteId}/eventlog`;
-  const eventlogData = await fetchWithTimeout(eventlogUrl, 6000);
+  // Fetch eventlog sorted newest-first so slice(0,5) always gives most recent games.
+  // The default eventlog returns chronological order from season start —
+  // adding sort=date:desc and limit=10 ensures we get the latest games.
+  const eventlogUrl = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${athleteId}/eventlog?limit=10&sort=date%3Adesc`;
+  const eventlogData = await fetchWithTimeout(eventlogUrl, 4000);
   if (!eventlogData) return null;
 
-  // eventlog shape: { events: { $ref: "..." } } OR { items: [...] }
-  // Try to get event $refs — each item has an event.$ref and a statistics.$ref
   const items = eventlogData?.events?.items || eventlogData?.items || [];
   if (items.length === 0) return null;
 
-  // Filter to only played games (played: true), take last 5, most recent first
-  const playedItems = items.filter(item => item.played === true || item.played === undefined);
-  const recentItems = playedItems.slice(-5).reverse();
+  // Already sorted newest-first — filter to played games, take first 5
+  const recentItems = items
+    .filter(item => item.played === true || item.played === undefined)
+    .slice(0, 5);
 
   if (recentItems.length === 0) return null;
 
-  // Step 2: Fetch summaries sequentially to avoid rate limiting
+  // Fetch game summaries sequentially
   const results = [];
   for (const item of recentItems) {
     const result = await extractStatFromEventItem(config, item, athleteId, statKey);
@@ -335,7 +353,7 @@ async function extractStatFromEventItem(config, item, athleteId, statKey) {
 
     // Fetch game summary — same endpoint used for result grading
     const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/summary?event=${eventId}`;
-    const summary = await fetchWithTimeout(summaryUrl, 5000);
+    const summary = await fetchWithTimeout(summaryUrl, 4000);
     if (!summary?.boxscore?.players) return null;
 
     // Pull date from header
