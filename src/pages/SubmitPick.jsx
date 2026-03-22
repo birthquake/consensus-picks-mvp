@@ -73,10 +73,30 @@ export default function SubmitPick() {
         img.onload = () => {
           const canvas = document.createElement('canvas');
           let { width, height } = img;
-          if (height > 2000) { const r = width / height; height = 2000; width = height * r; }
-          canvas.width = width; canvas.height = height;
+
+          // Cap longest side at 1200px — bet slips don't need more resolution
+          const MAX = 1200;
+          if (width > height && width > MAX) {
+            height = Math.round(height * MAX / width);
+            width = MAX;
+          } else if (height > width && height > MAX) {
+            width = Math.round(width * MAX / height);
+            height = MAX;
+          } else if (width > MAX) {
+            height = Math.round(height * MAX / width);
+            width = MAX;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
           canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.8));
+
+          // Try quality 0.7 first, drop to 0.5 if still over 3MB base64
+          let result = canvas.toDataURL('image/jpeg', 0.7);
+          if (result.length > 3 * 1024 * 1024) {
+            result = canvas.toDataURL('image/jpeg', 0.5);
+          }
+          resolve(result);
         };
         img.onerror = () => reject(new Error('Failed to load image'));
         img.src = e.target.result;
@@ -88,7 +108,7 @@ export default function SubmitPick() {
 
   const handleImageSelect = async (file) => {
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { setError('File must be less than 5MB'); return; }
+    if (file.size > 10 * 1024 * 1024) { setError('File must be less than 10MB'); return; }
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
       setError('Only PNG, JPG, or WebP files allowed'); return;
     }
@@ -283,7 +303,7 @@ export default function SubmitPick() {
               <div className="upload-icon"><Icons.Upload /></div>
               <h2>Upload Bet Slip</h2>
               <p>Drag image here or click to browse</p>
-              <p className="file-hint">PNG, JPG, or WebP (max 5MB)</p>
+              <p className="file-hint">PNG, JPG, or WebP (max 10MB)</p>
             </div>
             <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.webp"
               onChange={(e) => handleImageSelect(e.target.files[0])}
