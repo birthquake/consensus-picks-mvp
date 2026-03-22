@@ -32,6 +32,17 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // Validate cron secret — set CRON_SECRET in both Vercel env vars and
+  // GitHub Actions secrets to lock this endpoint down.
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const provided = req.headers['x-cron-secret'];
+    if (!provided || provided !== cronSecret) {
+      console.warn('❌ Unauthorized cron attempt — invalid or missing secret');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+  }
+
   try {
     console.log('🏟️  ESPN result fetch started at', new Date().toISOString());
 
