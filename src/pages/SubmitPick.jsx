@@ -161,19 +161,31 @@ export default function SubmitPick() {
     try {
       setLoading(true); setError(''); setSuccess(''); setAnalysisResult(null);
 
+      const base64Data = selectedImage.preview.split(',')[1];
+      if (!base64Data) throw new Error('Image could not be processed — please try again');
+
       const response = await fetch('/api/picks/extract-and-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: auth.currentUser.uid,
-          imageBase64: selectedImage.preview.split(',')[1],
+          imageBase64: base64Data,
           imageName: selectedImage.name,
-          game_date: gameDate,        // ← now explicitly passed
+          game_date: gameDate,
         }),
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to analyze bet slip');
+      // Try to parse response — if body is empty or not JSON, surface a clear error
+      let data;
+      const responseText = await response.text();
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        console.error('Non-JSON response:', responseText.substring(0, 500));
+        throw new Error(`Server error (${response.status}) — please try again`);
+      }
+
+      if (!response.ok) throw new Error(data.error || data.message || `Error ${response.status}`);
 
       setAnalysisResult(data);
       setSuccess('Bet analyzed! Check History to see results.');
