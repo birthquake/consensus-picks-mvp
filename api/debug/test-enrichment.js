@@ -102,19 +102,24 @@ export default async function handler(req, res) {
 
   // ── Step 4: Gamelog raw check (if we got an athlete ID) ───────────────────
   if (e.espnId) {
-    const gamelogUrl = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${e.espnId}/eventlog?limit=10&sort=date%3Adesc`;
-    const gamelogData = await fetchWithTimeout(gamelogUrl);
-    const items = gamelogData?.events?.items || gamelogData?.items || [];
+    // Test the scoreboard lookback approach directly
+    const recentGameIds = [];
+    const lookbackDate = new Date(gameDate);
+    for (let daysBack = 1; daysBack <= 7 && recentGameIds.length < 8; daysBack++) {
+      lookbackDate.setDate(lookbackDate.getDate() - 1);
+      const dateStr = lookbackDate.toISOString().slice(0,10).replace(/-/g,'');
+      const sbUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${dateStr}`;
+      const sbData = await fetchWithTimeout(sbUrl);
+      if (sbData?.events) {
+        for (const ev of sbData.events) {
+          if (ev.status?.type?.completed) recentGameIds.push({ id: ev.id, date: dateStr, name: ev.shortName });
+        }
+      }
+    }
     steps.gamelog = {
-      url: gamelogUrl,
-      item_count: items.length,
-      error: gamelogData?._error || null,
-      // Show first 5 items to verify sort order (should be newest first)
-      first_5_items: items.slice(0, 5).map(item => ({
-        played: item.played,
-        eventId: item.event?.$ref?.match(/events\/(\d+)/)?.[1],
-        teamId: item.teamId,
-      })),
+      approach: 'scoreboard_lookback',
+      recent_game_ids: recentGameIds,
+      recentForm_from_enrichment: e.recentForm,
     };
   }
 
