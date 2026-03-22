@@ -80,12 +80,21 @@ const GAMELOG_STAT_MAP = {
  * @returns {Array<object>} enrichments, one per pick
  */
 export async function enrichPicks(picks, gameDate) {
-  const results = await Promise.all(
-    picks.map(pick => enrichSinglePick(pick, gameDate).catch(err => {
+  // Pre-fetch team rosters once per sport — cache them so each player
+  // lookup doesn't re-fetch all 30 team rosters independently.
+  const rosterCache = {};
+
+  // Process picks sequentially to avoid ESPN rate limiting on large parlays.
+  const results = [];
+  for (const pick of picks) {
+    try {
+      const result = await enrichSinglePick(pick, gameDate, rosterCache);
+      results.push(result);
+    } catch (err) {
       console.warn(`[espn-enrichment] Failed to enrich ${pick.player}:`, err.message);
-      return { player: pick.player, error: err.message };
-    }))
-  );
+      results.push({ player: pick.player, error: err.message });
+    }
+  }
   return results;
 }
 
@@ -138,13 +147,13 @@ export function formatEnrichmentForPrompt(enrichments) {
 
 // ─── Internal ─────────────────────────────────────────────────────────────────
 
-async function enrichSinglePick(pick, gameDate) {
+async function enrichSinglePick(pick, gameDate, rosterCache = {}) {
   const sport = normalizeSport(pick.sport);
   const config = SPORT_CONFIG[sport];
   if (!config) return { player: pick.player, error: `Unsupported sport: ${sport}` };
 
   // Step 1: Find the ESPN athlete ID by searching
-  const athleteInfo = await findAthlete(config, pick.player);
+  const athleteInfo = await findAthlete(config, pick.player, rosterCache);
   if (!athleteInfo) {
     return { player: pick.player, error: 'Athlete not found on ESPN' };
   }
@@ -170,39 +179,60 @@ async function enrichSinglePick(pick, gameDate) {
   };
 }
 
-async function findAthlete(config, playerName) {
-  // Strategy 1: site API teams endpoint — fetches all teams then searches
-  // rosters. Each team roster call returns full player objects with IDs inline,
-  // no ref-following needed. We run team fetches in parallel batches.
-  const athlete = await findAthleteViaRosters(config, playerName);
+async function findAthlete(config, playerName, rosterCache = {}) {
+  // Strategy 1: roster-based lookup with caching
+  // Cache key per sport so we only fetch rosters once per enrichPicks() call
+  const athlete = await findAthleteViaRosters(config, playerName, rosterCache);
   if (athlete) return athlete;
 
-  // Strategy 2: scoreboard athletes — pull today's scoreboard and check
-  // the athlete IDs embedded in the boxscore (faster for active game days)
+  // Strategy 2: core athletes list fallback
   return findAthleteViaAthleteSearch(config, playerName);
 }
 
-async function findAthleteViaRosters(config, playerName) {
-  // Get all teams for this league
-  const teamsUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/teams?limit=50`;
-  const teamsData = await fetchWithTimeout(teamsUrl);
-  if (!teamsData) return null;
+async function findAthleteViaRosters(config, playerName, rosterCache = {}) {
+  const cacheKey = `${config.sport}:${config.league}`;
 
-  // Extract team list — shape differs slightly between sports
-  const sports = teamsData.sports?.[0]?.leagues?.[0]?.teams || teamsData.teams || [];
-  if (sports.length === 0) return null;
+  // Fetch and cache all rosters for this sport once per enrichPicks call
+  if (!rosterCache[cacheKey]) {
+    const teamsUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/teams?limit=50`;
+    const teamsData = await fetchWithTimeout(teamsUrl);
+    if (!teamsData) return null;
 
-  // Search rosters in parallel batches of 6 teams
-  const batchSize = 6;
-  for (let i = 0; i < sports.length; i += batchSize) {
-    const batch = sports.slice(i, i + batchSize);
-    const results = await Promise.all(
-      batch.map(t => searchTeamRoster(config, t.team?.id || t.id, playerName))
-    );
-    const found = results.find(r => r !== null);
-    if (found) return found;
+    const teamList = teamsData.sports?.[0]?.leagues?.[0]?.teams || teamsData.teams || [];
+    if (teamList.length === 0) return null;
+
+    // Fetch all rosters sequentially and flatten into one player list
+    const allPlayers = [];
+    for (const t of teamList) {
+      const teamId = t.team?.id || t.id;
+      if (!teamId) continue;
+      const rosterUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/teams/${teamId}/roster`;
+      const rosterData = await fetchWithTimeout(rosterUrl, 4000);
+      if (!rosterData) continue;
+
+      const groups = rosterData.athletes || [];
+      for (const group of groups) {
+        const items = group.items || group.athletes || [];
+        allPlayers.push(...items.map(p => ({
+          id: p.id,
+          displayName: p.displayName,
+          fullName: p.fullName,
+          uid: p.uid,
+        })));
+      }
+    }
+    rosterCache[cacheKey] = allPlayers;
+    console.log(`[espn-enrichment] Cached ${allPlayers.length} players for ${cacheKey}`);
   }
-  return null;
+
+  const allPlayers = rosterCache[cacheKey];
+  const best = bestNameMatch(allPlayers, playerName);
+  if (!best) return null;
+
+  return {
+    id: best.id || best.uid?.split('~a:')?.[1],
+    displayName: best.displayName || best.fullName,
+  };
 }
 
 async function searchTeamRoster(config, teamId, playerName) {
@@ -277,16 +307,20 @@ async function fetchRecentForm(config, athleteId, statKey) {
   const items = eventlogData?.events?.items || eventlogData?.items || [];
   if (items.length === 0) return null;
 
-  // Take last 5 completed events, most recent first
-  const recentItems = items.slice(-5).reverse();
+  // Filter to only played games (played: true), take last 5, most recent first
+  const playedItems = items.filter(item => item.played === true || item.played === undefined);
+  const recentItems = playedItems.slice(-5).reverse();
 
-  // Step 2: For each event, fetch the game summary and extract the player's stat
-  const results = await Promise.all(
-    recentItems.map(item => extractStatFromEventItem(config, item, athleteId, statKey))
-  );
+  if (recentItems.length === 0) return null;
 
-  const valid = results.filter(r => r !== null);
-  return valid.length > 0 ? valid : null;
+  // Step 2: Fetch summaries sequentially to avoid rate limiting
+  const results = [];
+  for (const item of recentItems) {
+    const result = await extractStatFromEventItem(config, item, athleteId, statKey);
+    if (result !== null) results.push(result);
+  }
+
+  return results.length > 0 ? results : null;
 }
 
 async function extractStatFromEventItem(config, item, athleteId, statKey) {
