@@ -7,15 +7,6 @@ import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { enrichPicks, formatEnrichmentForPrompt } from '../utils/espn-enrichment.js';
 
-// Increase Vercel body size limit for base64 image uploads
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '10mb',
-    },
-  },
-};
-
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
@@ -61,13 +52,13 @@ export default async function handler(req, res) {
 
     console.log(`✅ Extracted ${extractedData.picks.length} picks`);
 
-    // ── Step 2: Fetch ESPN enrichment + user history in parallel ─────────────
-    const [enrichments, analytics] = await Promise.all([
-      // Resolve game_date: prefer client-provided date, fall back to today
+    // Resolve game_date: prefer client-provided date, fall back to today
     const resolvedGameDate = game_date || new Date().toISOString().split('T')[0];
     console.log(`Game date: ${resolvedGameDate} (source: ${game_date ? 'client' : 'fallback'})`);
 
-    enrichPicks(extractedData.picks, resolvedGameDate).catch(err => {
+    // ── Step 2: Fetch ESPN enrichment + user history in parallel ─────────────
+    const [enrichments, analytics] = await Promise.all([
+      enrichPicks(extractedData.picks, resolvedGameDate).catch(err => {
         console.warn('⚠️ ESPN enrichment failed, continuing without it:', err.message);
         return [];
       }),
