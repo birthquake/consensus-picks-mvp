@@ -80,24 +80,38 @@ const GAMELOG_STAT_MAP = {
  * @returns {Array<object>} enrichments, one per pick
  */
 export async function enrichPicks(picks, gameDate) {
-  // Cap at 5 picks to stay within Vercel's timeout budget.
-  // For large parlays we enrich the first 5 and mark the rest as skipped.
   const MAX_PICKS = 5;
-  const TOTAL_TIMEOUT_MS = 18000; // 18s hard cap — leaves buffer for Claude calls
+  const TOTAL_TIMEOUT_MS = 22000; // 22s hard cap
 
   const picksToEnrich = picks.slice(0, MAX_PICKS);
   const skippedPicks = picks.slice(MAX_PICKS).map(p => ({
     player: p.player, error: 'Skipped — parlay too large to enrich all picks'
   }));
 
+  // Determine the dominant sport for this batch of picks
+  const sport = normalizeSport(picksToEnrich[0]?.sport || 'NBA');
+  const config = SPORT_CONFIG[sport];
+
+  // Pre-fetch two shared resources once for all players:
+  //   1. All team rosters (for name → ID lookup)
+  //   2. All recent game IDs (for form lookup)
+  // Both are expensive if done per-player — sharing them is the key optimization.
   const rosterCache = {};
+  let sharedGameIds = [];
+
+  if (config) {
+    const gameDateObj = gameDate ? new Date(gameDate) : new Date();
+    console.log(`[espn-enrichment] Pre-fetching game IDs for ${sport}...`);
+    sharedGameIds = await getRecentGameIds(config, gameDateObj);
+    console.log(`[espn-enrichment] Found ${sharedGameIds.length} recent games`);
+  }
+
   const results = [];
 
-  // Race the entire enrichment loop against a hard timeout
   const enrichAll = async () => {
     for (const pick of picksToEnrich) {
       try {
-        const result = await enrichSinglePick(pick, gameDate, rosterCache);
+        const result = await enrichSinglePick(pick, gameDate, rosterCache, sharedGameIds);
         results.push(result);
       } catch (err) {
         console.warn(`[espn-enrichment] Failed to enrich ${pick.player}:`, err.message);
@@ -109,7 +123,6 @@ export async function enrichPicks(picks, gameDate) {
   const timeout = new Promise(resolve => setTimeout(resolve, TOTAL_TIMEOUT_MS));
   await Promise.race([enrichAll(), timeout]);
 
-  // Fill any picks that didn't complete due to timeout
   while (results.length < picksToEnrich.length) {
     const pick = picksToEnrich[results.length];
     results.push({ player: pick.player, error: 'Enrichment timed out' });
@@ -167,7 +180,7 @@ export function formatEnrichmentForPrompt(enrichments) {
 
 // ─── Internal ─────────────────────────────────────────────────────────────────
 
-async function enrichSinglePick(pick, gameDate, rosterCache = {}) {
+async function enrichSinglePick(pick, gameDate, rosterCache = {}, sharedGameIds = []) {
   const sport = normalizeSport(pick.sport);
   const config = SPORT_CONFIG[sport];
   if (!config) return { player: pick.player, error: `Unsupported sport: ${sport}` };
@@ -182,7 +195,7 @@ async function enrichSinglePick(pick, gameDate, rosterCache = {}) {
 
   // Step 2: Fetch gamelog + injury in parallel
   const [recentForm, injuryStatus, opponent] = await Promise.all([
-    fetchRecentForm(config, athleteInfo.id, statKey, gameDate).catch(() => null),
+    fetchRecentForm(config, athleteInfo.id, statKey, gameDate, sharedGameIds).catch(() => null),
     fetchInjuryStatus(config, athleteInfo.id).catch(() => 'Unknown'),
     fetchTonightsOpponent(config, athleteInfo.id, gameDate).catch(() => null),
   ]);
@@ -313,13 +326,14 @@ async function findAthleteViaAthleteSearch(config, playerName) {
   return null;
 }
 
-async function fetchRecentForm(config, athleteId, statKey, gameDate) {
-  // ESPN's eventlog ignores sort params and always returns oldest-first.
-  // Instead, work backwards from the game date using daily scoreboards —
-  // this guarantees we get the most recent completed games.
-
-  const gameDateObj = gameDate ? new Date(gameDate) : new Date();
-  const recentGameIds = await getRecentGameIds(config, gameDateObj);
+async function fetchRecentForm(config, athleteId, statKey, gameDate, sharedGameIds = []) {
+  // Use pre-fetched game IDs if available (shared across all players in a parlay).
+  // Fall back to fetching independently if not provided.
+  let recentGameIds = sharedGameIds;
+  if (recentGameIds.length === 0) {
+    const gameDateObj = gameDate ? new Date(gameDate) : new Date();
+    recentGameIds = await getRecentGameIds(config, gameDateObj);
+  }
   if (recentGameIds.length === 0) return null;
 
   // Search each game's box score for this athlete, collect up to 5 results
@@ -333,13 +347,14 @@ async function fetchRecentForm(config, athleteId, statKey, gameDate) {
   return results.length > 0 ? results : null;
 }
 
-// Returns game IDs from the past 14 days, most recent first
+// Returns all game IDs from the past 21 days, most recent first.
+// We scan all days regardless of how many games we find — a player
+// like Grimes plays ~every 2 days so we need all league games to search.
 async function getRecentGameIds(config, beforeDate) {
   const gameIds = [];
   const date = new Date(beforeDate);
 
-  // Go back up to 14 days to find 5+ completed games
-  for (let daysBack = 1; daysBack <= 14 && gameIds.length < 10; daysBack++) {
+  for (let daysBack = 1; daysBack <= 21; daysBack++) {
     date.setDate(date.getDate() - 1);
     const dateStr = formatDate(date);
     const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${dateStr}`;
