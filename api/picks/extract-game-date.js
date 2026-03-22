@@ -6,6 +6,16 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 
+// Increase Vercel body size limit for base64 image uploads
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
+};
+
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export default async function handler(req, res) {
