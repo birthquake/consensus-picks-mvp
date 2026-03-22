@@ -8,5 +8,11 @@
       "path": "/api/cron/update-user-analytics",
       "schedule": "15 12 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 30
+    }
+  },
+  "framework": "vite"
 }
