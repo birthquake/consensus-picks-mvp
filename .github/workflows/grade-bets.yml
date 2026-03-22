@@ -1,0 +1,87 @@
+# FILE LOCATION: .github/workflows/grade-bets.yml
+#
+# Triggers the ESPN result grading cron on a schedule.
+# Runs every 2 hours during typical game windows (noon–2am ET = 16:00–06:00 UTC).
+# Also fires once at 9am ET daily to catch any overnight completions.
+# Manual trigger available for on-demand runs.
+#
+# Setup required (one time):
+#   1. Go to your repo → Settings → Secrets and variables → Actions
+#   2. Add a new secret: CRON_SECRET  (any long random string you choose)
+#   3. Add that same value as CRON_SECRET in your Vercel environment variables
+#   4. Update fetch-game-results.js to validate the secret (see below)
+
+name: Grade Pending Bets
+
+on:
+  schedule:
+    # Every 2 hours from 16:00–06:00 UTC (noon–2am ET), year-round
+    - cron: '0 16 * * *'   # 12:00 PM ET
+    - cron: '0 18 * * *'   # 2:00 PM ET
+    - cron: '0 20 * * *'   # 4:00 PM ET
+    - cron: '0 22 * * *'   # 6:00 PM ET
+    - cron: '0 0 * * *'    # 8:00 PM ET
+    - cron: '0 2 * * *'    # 10:00 PM ET
+    - cron: '0 4 * * *'    # 12:00 AM ET
+    - cron: '0 6 * * *'    # 2:00 AM ET (catches late west coast games)
+    - cron: '0 13 * * *'   # 9:00 AM ET (overnight cleanup pass)
+
+  # Manual trigger from GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual run (optional)'
+        required: false
+        default: 'Manual trigger'
+
+jobs:
+  grade-bets:
+    name: Grade Pending Bets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger grading cron
+        id: cron
+        run: |
+          echo "Triggering grade-bets at $(date -u '+%Y-%m-%d %H:%M UTC')"
+          echo "Reason: ${{ github.event.inputs.reason || 'Scheduled run' }}"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            --max-time 120 \
+            -X GET \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            "https://consensus-picks-mvp.vercel.app/api/cron/fetch-game-results")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+
+          echo "HTTP status: $HTTP_CODE"
+          echo "Response: $BODY"
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "response=$BODY" >> $GITHUB_OUTPUT
+
+      - name: Check result
+        run: |
+          HTTP_CODE="${{ steps.cron.outputs.http_code }}"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Cron job failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+          echo "✅ Cron job completed successfully"
+          echo "${{ steps.cron.outputs.response }}" | python3 -c "
+          import json, sys
+          try:
+              d = json.load(sys.stdin)
+              print(f'Processed: {d.get(\"processed\", \"?\")} bets')
+              print(f'Updated:   {d.get(\"updated\", \"?\")} bets graded')
+              print(f'Skipped:   {d.get(\"skipped\", \"?\")} bets pending')
+              errors = d.get('errors', [])
+              if errors:
+                  print(f'Errors:    {len(errors)}')
+                  for e in errors:
+                      print(f'  - {e}')
+          except:
+              print('Could not parse response as JSON')
+          " || true
