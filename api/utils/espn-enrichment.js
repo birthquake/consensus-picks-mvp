@@ -182,7 +182,7 @@ async function enrichSinglePick(pick, gameDate, rosterCache = {}) {
 
   // Step 2: Fetch gamelog + injury in parallel
   const [recentForm, injuryStatus, opponent] = await Promise.all([
-    fetchRecentForm(config, athleteInfo.id, statKey).catch(() => null),
+    fetchRecentForm(config, athleteInfo.id, statKey, gameDate).catch(() => null),
     fetchInjuryStatus(config, athleteInfo.id).catch(() => 'Unknown'),
     fetchTonightsOpponent(config, athleteInfo.id, gameDate).catch(() => null),
   ]);
@@ -313,32 +313,71 @@ async function findAthleteViaAthleteSearch(config, playerName) {
   return null;
 }
 
-async function fetchRecentForm(config, athleteId, statKey) {
-  // Fetch eventlog sorted newest-first so slice(0,5) always gives most recent games.
-  // The default eventlog returns chronological order from season start —
-  // adding sort=date:desc and limit=10 ensures we get the latest games.
-  const eventlogUrl = `https://sports.core.api.espn.com/v2/sports/${config.sport}/leagues/${config.league}/athletes/${athleteId}/eventlog?limit=10&sort=date%3Adesc`;
-  const eventlogData = await fetchWithTimeout(eventlogUrl, 4000);
-  if (!eventlogData) return null;
+async function fetchRecentForm(config, athleteId, statKey, gameDate) {
+  // ESPN's eventlog ignores sort params and always returns oldest-first.
+  // Instead, work backwards from the game date using daily scoreboards —
+  // this guarantees we get the most recent completed games.
 
-  const items = eventlogData?.events?.items || eventlogData?.items || [];
-  if (items.length === 0) return null;
+  const gameDateObj = gameDate ? new Date(gameDate) : new Date();
+  const recentGameIds = await getRecentGameIds(config, gameDateObj);
+  if (recentGameIds.length === 0) return null;
 
-  // Already sorted newest-first — filter to played games, take first 5
-  const recentItems = items
-    .filter(item => item.played === true || item.played === undefined)
-    .slice(0, 5);
-
-  if (recentItems.length === 0) return null;
-
-  // Fetch game summaries sequentially
+  // Search each game's box score for this athlete, collect up to 5 results
   const results = [];
-  for (const item of recentItems) {
-    const result = await extractStatFromEventItem(config, item, athleteId, statKey);
+  for (const gameId of recentGameIds) {
+    if (results.length >= 5) break;
+    const result = await extractStatFromGame(config, gameId, athleteId, statKey);
     if (result !== null) results.push(result);
   }
 
   return results.length > 0 ? results : null;
+}
+
+// Returns game IDs from the past 14 days, most recent first
+async function getRecentGameIds(config, beforeDate) {
+  const gameIds = [];
+  const date = new Date(beforeDate);
+
+  // Go back up to 14 days to find 5+ completed games
+  for (let daysBack = 1; daysBack <= 14 && gameIds.length < 10; daysBack++) {
+    date.setDate(date.getDate() - 1);
+    const dateStr = formatDate(date);
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${dateStr}`;
+    const data = await fetchWithTimeout(url, 3000);
+    if (!data?.events) continue;
+
+    for (const event of data.events) {
+      if (event.status?.type?.completed) {
+        gameIds.push(event.id);
+      }
+    }
+  }
+
+  return gameIds;
+}
+
+async function extractStatFromGame(config, gameId, athleteId, statKey) {
+  try {
+    const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/summary?event=${gameId}`;
+    const summary = await fetchWithTimeout(summaryUrl, 4000);
+    if (!summary?.boxscore?.players) return null;
+
+    const value = extractPlayerStatFromSummary(summary, athleteId, statKey);
+    if (value === null) return null;
+
+    const date = summary?.header?.competitions?.[0]?.date || null;
+    const competitors = summary?.header?.competitions?.[0]?.competitors || [];
+    const playerTeam = competitors.find(c =>
+      c.roster?.some?.(r => String(r.athlete?.id) === String(athleteId))
+    );
+    const opponent = competitors
+      .find(c => c.team?.id !== playerTeam?.team?.id)
+      ?.team?.abbreviation || null;
+
+    return { gameId, date, opponent, value };
+  } catch {
+    return null;
+  }
 }
 
 async function extractStatFromEventItem(config, item, athleteId, statKey) {
