@@ -86,12 +86,16 @@ export default async function handler(req, res) {
 
     console.log(`✅ Done. Processed: ${totalProcessed}, Updated: ${totalUpdated}, Skipped: ${totalSkipped}`);
 
+    // Grade pending halftime picks
+    const halftimeResults = await gradeHalftimePicks();
+
     return res.status(200).json({
       success: true,
       processed: totalProcessed,
       updated: totalUpdated,
       skipped: totalSkipped,
       errors,
+      halftime: halftimeResults,
     });
 
   } catch (err) {
