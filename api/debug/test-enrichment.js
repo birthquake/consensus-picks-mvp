@@ -6,7 +6,7 @@
 //   GET /api/debug/test-enrichment?player=Connor+McDavid&stat=Goals&sport=NHL&date=2026-03-21
 //   GET /api/debug/test-enrichment?player=Aaron+Judge&stat=Home+Runs&sport=MLB&date=2026-04-05
 
-import { enrichPicks, formatEnrichmentForPrompt } from '../utils/espn-enrichment.js';
+import { enrichPicks, formatEnrichmentForPrompt } from '../../lib/espn-enrichment.js';
 
 // Also import internals directly so we can test each step individually
 const SPORT_CONFIG = {
