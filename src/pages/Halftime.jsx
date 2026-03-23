@@ -205,11 +205,40 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount }) {
       if (!res.ok || !data.success) throw new Error(data.error || 'Analysis failed');
       setAnalysis(data);
       setState('done');
+      // Auto-save all picks for outcome tracking (fire and forget)
+      if (data.picks?.length > 0) {
+        savePicks(data).catch(err => console.warn('[save-picks] failed silently:', err.message));
+      }
     } catch (err) {
       setErrorMsg(err.message);
       setState('error');
     }
   }, [game]);
+
+  const savePicks = async (analysisData) => {
+    // Build projection map keyed by player name for storage
+    const projections = {};
+    analysisData.picks?.forEach(pick => {
+      // We don't have the raw projection object here — store what Claude used
+      projections[pick.player] = {
+        blended:    null, // projection math is in analyze.js, not returned to UI
+        rationale:  pick.rationale,
+      };
+    });
+    await fetch('/api/halftime/save-picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gameId:   game.id,
+        sport:    game.sport,
+        league:   game.league,
+        gameName: game.shortName || game.name,
+        gameDate: new Date().toISOString().split('T')[0],
+        picks:    analysisData.picks,
+        projections,
+      }),
+    });
+  };
 
   const gameLegs = selectedLegs.filter(l => l.gameId === game.id);
 
