@@ -240,7 +240,7 @@ async function extractPlayerGameLine(sport, league, gameId, athleteId) {
 
 // ─── Claude analysis ──────────────────────────────────────────────────────────
 
-async function generatePicks(gameData, existingLegs = []) {
+async function generatePicks(gameData, existingLegs = [], legCount = 4) {
   const { game, boxScore, historicalForms } = gameData;
 
   const isBlowout = boxScore.gameContext.scoreDiff >= 25;
@@ -341,7 +341,7 @@ Return ONLY valid JSON, no markdown:
   ]
 }
 
-Recommend between 3 and 6 picks. Only recommend legs you'd genuinely bet. Do not pad with weak picks just to hit a number. Rate honestly — a 2-star pick means real uncertainty.`;
+Recommend exactly ${legCount} picks if ${legCount} strong options exist. If fewer than ${legCount} genuinely strong picks are available, recommend only those — never pad with weak picks just to hit the number. Rate honestly — a 2-star pick means real uncertainty. The user asked for ${legCount} legs, but quality beats quantity.`;
 
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-4-5-20250514',
@@ -360,7 +360,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { gameId, sport, league, homeTeam, awayTeam, existingLegs } = req.body;
+  const { gameId, sport, league, homeTeam, awayTeam, existingLegs, legCount = 4 } = req.body;
 
   if (!gameId || !sport || !league) {
     return res.status(400).json({ error: 'Missing required fields: gameId, sport, league' });
@@ -409,7 +409,7 @@ export default async function handler(req, res) {
       historicalForms,
     };
 
-    const picks = await generatePicks(gameData, existingLegs || []);
+    const picks = await generatePicks(gameData, existingLegs || [], legCount);
 
     return res.status(200).json({
       success: true,
