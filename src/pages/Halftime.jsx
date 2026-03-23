@@ -179,7 +179,7 @@ function PickCard({ pick, isSelected, onToggle, index }) {
 }
 
 // ── Game Card ─────────────────────────────────────────────────────────────────
-function GameCard({ game, selectedLegs, onToggleLeg, onRequestMoreLegs }) {
+function GameCard({ game, selectedLegs, onToggleLeg, legCount }) {
   const [state, setState] = useState('idle'); // idle | loading | done | error
   const [analysis, setAnalysis] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
@@ -198,6 +198,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, onRequestMoreLegs }) {
           homeTeam: game.homeTeam,
           awayTeam: game.awayTeam,
           existingLegs,
+          legCount,
         }),
       });
       const data = await res.json();
@@ -437,6 +438,7 @@ export default function Halftime() {
   const [lastScanned, setLastScanned] = useState(null);
   const [selectedLegs, setSelectedLegs] = useState([]);
   const [errorMsg, setErrorMsg] = useState('');
+  const [legCount, setLegCount] = useState(4);
 
   const scan = useCallback(async () => {
     setScanState('scanning');
@@ -500,6 +502,37 @@ export default function Halftime() {
             Last scanned {lastScanned.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </div>
         )}
+
+        {/* Leg count selector */}
+        <div style={{
+          marginTop: '14px', display: 'flex', alignItems: 'center', gap: '10px',
+          padding: '10px 14px',
+          background: 'var(--bg-secondary, #111)',
+          border: '1px solid var(--border-color, #222)',
+          borderRadius: '10px',
+        }}>
+          <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary, #888)', whiteSpace: 'nowrap' }}>
+            Legs per game
+          </span>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {[2, 3, 4, 5, 6, 7, 8].map(n => (
+              <button
+                key={n}
+                onClick={() => setLegCount(n)}
+                style={{
+                  width: '34px', height: '34px', borderRadius: '8px',
+                  border: `1px solid ${legCount === n ? '#6366f1' : 'var(--border-color, #333)'}`,
+                  background: legCount === n ? '#6366f1' : 'transparent',
+                  color: legCount === n ? '#fff' : 'var(--text-secondary, #888)',
+                  fontWeight: '700', fontSize: '13px', cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Idle state */}
@@ -598,6 +631,7 @@ export default function Halftime() {
               game={game}
               selectedLegs={selectedLegs}
               onToggleLeg={toggleLeg}
+              legCount={legCount}
             />
           ))}
         </div>
