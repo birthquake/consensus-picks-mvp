@@ -57,11 +57,17 @@ export default async function handler(req, res) {
     console.log(`Game date: ${resolvedGameDate} (source: ${game_date ? 'client' : 'fallback'})`);
 
     // ── Step 2: Fetch ESPN enrichment + user history in parallel ─────────────
-    const [enrichments, analytics] = await Promise.all([
-      enrichPicks(extractedData.picks, resolvedGameDate).catch(err => {
-        console.warn('⚠️ ESPN enrichment failed, continuing without it:', err.message);
-        return [];
-      }),
+    let enrichments = [];
+    let analytics;
+
+    // Run enrichment and analytics in parallel, with enrichment fully isolated.
+    // An enrichment crash or timeout must never prevent the analysis from running.
+    [enrichments, analytics] = await Promise.all([
+      enrichPicks(extractedData.picks, resolvedGameDate)
+        .catch(err => {
+          console.warn('⚠️ ESPN enrichment failed:', err.message);
+          return extractedData.picks.map(p => ({ player: p.player, error: err.message }));
+        }),
       fetchUserAnalytics(userId),
     ]);
 
@@ -229,13 +235,18 @@ REASON: [One sentence]`,
 
 async function analyzePicks(picks, userContext, espnContext, grade, confidence, enrichments) {
   // Build a per-pick summary of what ESPN told us, for Claude to reference directly
+  const enrichedCount = enrichments.filter(e => e && !e.error && e.recentForm?.length > 0).length;
   const pickSummaries = picks.map((pick, i) => {
     const e = enrichments[i];
-    if (!e || e.error) return `${i + 1}. ${pick.player} — ${pick.stat} ${pick.bet_type} ${pick.line} (no ESPN data)`;
+    if (!e || e.error) return `${i + 1}. ${pick.player} — ${pick.stat} ${pick.bet_type} ${pick.line} (no ESPN data available)`;
     const formStr = e.recentForm?.map(g => g.value ?? 'DNP').join(', ') || 'unavailable';
     const injStr = e.injuryStatus && e.injuryStatus !== 'Active' ? ` ⚠️ ${e.injuryStatus}` : '';
     return `${i + 1}. ${e.playerFullName || pick.player}${injStr} — ${pick.stat} ${pick.bet_type} ${pick.line} | Last 5: ${formStr}`;
   }).join('\n');
+
+  const dataNote = enrichedCount < picks.length
+    ? `\nNote: ESPN data available for ${enrichedCount}/${picks.length} players. Analyze available data thoroughly; for players without data, use your general knowledge.`
+    : '';
 
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-4-5-20250929',
@@ -249,7 +260,7 @@ ${userContext}
 ${espnContext || '(No live ESPN data available)'}
 
 PICKS WITH RECENT FORM:
-${pickSummaries}
+${pickSummaries}${dataNote}
 
 GRADE: ${grade} (${confidence})
 
