@@ -7,6 +7,7 @@ import { useTheme } from '../context/ThemeContext';
 import SubmitPick from './SubmitPick';
 import History from './History';
 import Dashboard from './Dashboard';
+import Halftime from './Halftime';
 import '../styles/Home.css';
 
 // Icons
@@ -58,7 +59,7 @@ const Icons = {
 };
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState('submit');
+  const [activeTab, setActiveTab] = useState('halftime');
   const { isDark, toggleTheme } = useTheme();
 
   const handleLogout = async () => {
@@ -70,9 +71,10 @@ export default function Home() {
   };
 
   const navItems = [
-    { id: 'submit', label: 'Submit Bet', icon: Icons.Upload },
-    { id: 'history', label: 'History', icon: Icons.Clock },
-    { id: 'dashboard', label: 'Analytics', icon: Icons.TrendingUp }
+    { id: 'halftime', label: 'Halftime Picks', icon: Icons.TrendingUp },
+    // { id: 'submit', label: 'Submit Bet', icon: Icons.Upload },    // muted for testing
+    // { id: 'history', label: 'History', icon: Icons.Clock },       // muted for testing
+    // { id: 'dashboard', label: 'Analytics', icon: Icons.TrendingUp } // muted for testing
   ];
 
   return (
@@ -114,6 +116,7 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="main-content">
+        {activeTab === 'halftime' && <Halftime />}
         {activeTab === 'submit' && <SubmitPick />}
         {activeTab === 'history' && <History />}
         {activeTab === 'dashboard' && <Dashboard />}
