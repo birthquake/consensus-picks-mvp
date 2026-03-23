@@ -10,7 +10,7 @@
 
 import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { getPlayerStatForGame } from '../utils/espn-client.js';
+import { getPlayerStatForGame } from '../../lib/espn-client.js';
 
 // ─── Firebase init ────────────────────────────────────────────────────────────
 
