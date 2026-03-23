@@ -5,7 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { enrichPicks, formatEnrichmentForPrompt } from '../utils/espn-enrichment.js';
+import { enrichPicks, formatEnrichmentForPrompt } from '../../lib/espn-enrichment.js';
 
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
