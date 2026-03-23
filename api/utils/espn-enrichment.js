@@ -153,16 +153,25 @@ export function formatEnrichmentForPrompt(enrichments) {
 
     if (e.recentForm && e.recentForm.length > 0) {
       const statLabel = e.statLabel || 'stat';
-      const values = e.recentForm.map(g => g.value ?? 'DNP');
+      // Label each game explicitly so Claude can't misread the order.
+      // Format: "most recent: 27, then: 12, 31, 28, 14 (oldest)"
+      const labeled = e.recentForm.map((g, i) => {
+        const val = g.value ?? 'DNP';
+        const opp = g.opponent ? ` vs ${g.opponent}` : '';
+        if (i === 0) return `${val} [MOST RECENT${opp}]`;
+        if (i === e.recentForm.length - 1) return `${val} [OLDEST${opp}]`;
+        return `${val}${opp}`;
+      });
       const avg = average(e.recentForm.filter(g => g.value !== null).map(g => g.value));
-      lines.push(`  Last ${e.recentForm.length} games (${statLabel}): ${values.join(', ')} → avg ${avg}`);
+      lines.push(`  Last ${e.recentForm.length} games (${statLabel}, newest→oldest): ${labeled.join(', ')} → avg ${avg}`);
 
-      // Trend signal
+      // Trend signal using first 2 (most recent) vs rest
       if (e.recentForm.length >= 3) {
         const recent2 = average(e.recentForm.slice(0, 2).map(g => g.value ?? 0));
         const older = average(e.recentForm.slice(2).map(g => g.value ?? 0));
-        if (recent2 > older * 1.15) lines.push(`  📈 Trending UP in last 2 games`);
-        if (recent2 < older * 0.85) lines.push(`  📉 Trending DOWN in last 2 games`);
+        const r2vals = e.recentForm.slice(0, 2).map(g => g.value ?? 'DNP').join(', ');
+        if (recent2 > older * 1.15) lines.push(`  📈 Trending UP — last 2 games (${r2vals}) above prior avg`);
+        if (recent2 < older * 0.85) lines.push(`  📉 Trending DOWN — last 2 games (${r2vals}) below prior avg`);
       }
     }
 
