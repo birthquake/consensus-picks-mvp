@@ -495,9 +495,15 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
     if (trend === 'up') cushion -= 0.5;      // trending hot → tighter cushion OK
     if (trend === 'down') cushion += 0.5;    // trending cold → more buffer
 
-    // Suggested threshold (round to nearest 0.5)
+    // Minimum sportsbook thresholds — no book offers below these
+    const SPORTSBOOK_MINIMUMS = {
+      points: 10.5, rebounds: 3.5, assists: 2.5, steals: 0.5, blocks: 0.5,
+    };
+
+    // Suggested threshold (round to nearest 0.5, enforce minimum)
     const rawThreshold = blended - cushion;
-    const threshold = Math.round(rawThreshold * 2) / 2;
+    const rounded = Math.round(rawThreshold * 2) / 2;
+    const threshold = Math.max(rounded, SPORTSBOOK_MINIMUMS[stat] || 0.5);
 
     // Edge: how far above threshold the projection sits
     const edge = Math.round((blended - threshold) * 10) / 10;
@@ -579,6 +585,16 @@ THRESHOLD LOGIC:
 - A larger cushion means higher variance player — threshold is conservative on purpose
 - "BELOW 10-GAME FLOOR" = extremely strong pick — player hasn't gone this low in 10 games
 - "Edge" = how many units of cushion between projection and threshold
+
+MINIMUM SPORTSBOOK THRESHOLDS (never recommend below these — no sportsbook offers lower):
+- Points: minimum 10.5
+- Rebounds: minimum 3.5
+- Assists: minimum 2.5
+- Steals: minimum 0.5 (but prefer 1.5+)
+- Blocks: minimum 0.5 (but prefer 1.5+)
+
+If the suggested threshold from the data falls below these minimums, round UP to the minimum.
+If even at the minimum the projection doesn't offer meaningful edge, skip that pick entirely.
 
 RATING FRAMEWORK (1-5 stars):
 5 stars: projection well above threshold + trending up + good rest + below floor flag
