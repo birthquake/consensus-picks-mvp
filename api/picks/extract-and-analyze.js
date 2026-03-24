@@ -157,7 +157,7 @@ export default async function handler(req, res) {
 
 async function extractPicksFromImage(imageBase64, imageMediaType) {
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5-20250929',
+    model: 'claude-sonnet-4-6',
     max_tokens: 3000,
     messages: [{
       role: 'user',
@@ -205,7 +205,7 @@ If no valid picks can be extracted return: {"error":"Could not extract picks fro
 
 async function gradePicks(picks, userContext, espnContext) {
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5-20250929',
+    model: 'claude-sonnet-4-6',
     max_tokens: 500,
     messages: [{
       role: 'user',
@@ -249,7 +249,7 @@ async function analyzePicks(picks, userContext, espnContext, grade, confidence, 
     : '';
 
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5-20250929',
+    model: 'claude-sonnet-4-6',
     max_tokens: 2000,
     messages: [{
       role: 'user',
