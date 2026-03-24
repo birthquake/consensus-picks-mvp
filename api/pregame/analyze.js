@@ -175,7 +175,7 @@ function getHistoricalFormFromMap(athleteId, playerStatsMap) {
 async function buildPlayerStatsMap(sport, league, gameDate) {
   // Step 1: Get recent game IDs (parallel scoreboard fetches)
   const base = new Date(gameDate);
-  const dates = Array.from({ length: 14 }, (_, i) => {
+  const dates = Array.from({ length: 21 }, (_, i) => {
     const d = new Date(base);
     d.setDate(d.getDate() - (i + 1));
     return formatDate(d);
@@ -202,20 +202,23 @@ async function buildPlayerStatsMap(sport, league, gameDate) {
   // A player appears in roughly every other game, so 25 games = ~12 appearances per player
   // Each NBA team plays every 2-3 days. To get 5 games per player we need
   // ~5 × 15 league games/day = 75 total games. Use 60 as a balance.
-  const gameIdsToFetch = gameIds.slice(0, 80);
+  const gameIdsToFetch = gameIds.slice(0, 100);
   console.log(`[pregame/analyze] Fetching ${gameIdsToFetch.length} summaries in parallel...`);
 
   // Fetch in two parallel batches of 30 to avoid overwhelming ESPN
-  const [batch1, batch2] = [gameIdsToFetch.slice(0, 40), gameIdsToFetch.slice(40)];
-  const [results1, results2] = await Promise.all([
+  const [batch1, batch2, batch3] = [gameIdsToFetch.slice(0, 34), gameIdsToFetch.slice(34, 67), gameIdsToFetch.slice(67)];
+  const [results1, results2, results3] = await Promise.all([
     Promise.all(batch1.map(id =>
       fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${id}`, 5000).catch(() => null)
     )),
     Promise.all(batch2.map(id =>
       fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${id}`, 5000).catch(() => null)
     )),
+    Promise.all(batch3.map(id =>
+      fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${id}`, 5000).catch(() => null)
+    )),
   ]);
-  const summaries = [...results1, ...results2];
+  const summaries = [...results1, ...results2, ...results3];
 
   // Extract all player stats from all summaries into a single map
   const playerStatsMap = {};
@@ -241,7 +244,7 @@ async function buildPlayerStatsMap(sport, league, gameDate) {
           }
         }
         if (!playerStatsMap[athleteId]) playerStatsMap[athleteId] = [];
-        if (playerStatsMap[athleteId].length < 5) {
+        if (playerStatsMap[athleteId].length < 8) {
           playerStatsMap[athleteId].push({ stats, minutes, isHome: null, date: null });
         }
       }
@@ -527,6 +530,10 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
     // Floor check: is suggested threshold below their worst game in last 10?
     const belowFloor = floor != null && threshold <= floor;
 
+    // Sample size — how many games this projection is based on
+    const sampleSize = historicalForm?.byGame?.length || 0;
+    const lowSample  = sampleSize < 3; // flag if fewer than 3 games
+
     projections[stat] = {
       last5, last10, season,
       blended,
@@ -542,8 +549,10 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
       locationAdj: Math.round(locationAdj * 10) / 10,
       restAdj:     Math.round(restAdj * 10) / 10,
       trendAdj:    Math.round(trendAdj * 10) / 10,
-      belowFloor,  // true = extremely strong pick
+      belowFloor,
       isHome,
+      sampleSize,
+      lowSample,
     };
   }
 
@@ -580,6 +589,8 @@ async function generatePRARanking(game, playerData) {
       ? Math.round(stdDevs.reduce((a, b) => a + b, 0) / stdDevs.length * 10) / 10
       : null;
 
+    const sampleSize = proj?.points?.sampleSize ?? proj?.rebounds?.sampleSize ?? proj?.assists?.sampleSize ?? 0;
+
     return {
       name:            p.name,
       team:            p.team,
@@ -590,6 +601,8 @@ async function generatePRARanking(game, playerData) {
       pra,
       belowFloorCount,
       avgStdDev,
+      sampleSize,
+      lowSample:       sampleSize < 3,
       isBackToBack:    proj?.points?.isBackToBack || false,
       ptsTrend:        proj?.points?.trend  || 'neutral',
       rebTrend:        proj?.rebounds?.trend || 'neutral',
@@ -600,7 +613,17 @@ async function generatePRARanking(game, playerData) {
     };
   }).filter(Boolean);
 
-  praPlayers.sort((a, b) => b.pra - a.pra);
+  // Filter out players with no data at all
+  const validPlayers = praPlayers.filter(p => p.pra > 0 && (p.pts || p.reb || p.ast));
+  const invalidPlayers = praPlayers.filter(p => !p.pra || (!p.pts && !p.reb && !p.ast));
+  
+  validPlayers.sort((a, b) => b.pra - a.pra);
+  
+  console.log(`[pregame/analyze] PRA ranking: ${validPlayers.length} valid, ${invalidPlayers.length} excluded (no data)`);
+  
+  // Replace praPlayers with filtered + sorted list
+  praPlayers.length = 0;
+  praPlayers.push(...validPlayers);
 
   // Build prompt
   const playerLines = praPlayers.map((p, i) => {
@@ -616,7 +639,8 @@ async function generatePRARanking(game, playerData) {
       p.avgStdDev == null ? 'no variance data' : null,
     ].filter(Boolean).join(' | ') || 'none';
 
-    return `${i + 1}. ${p.name} (${p.team}${p.isHome ? ' HOME' : ' AWAY'})
+    const sampleNote = p.lowSample ? ` ⚠️ LOW SAMPLE (${p.sampleSize} games)` : ` (${p.sampleSize} games)`;
+    return `${i + 1}. ${p.name} (${p.team}${p.isHome ? ' HOME' : ' AWAY'})${sampleNote}
    PRA projection: ${p.pra} (pts=${p.pts ?? '?'} reb=${p.reb ?? '?'} ast=${p.ast ?? '?'})
    Floor: pts≥${p.ptsFloor ?? '?'} reb≥${p.rebFloor ?? '?'} ast≥${p.astFloor ?? '?'}
    Trends: ${trends} | Avg std dev: ${p.avgStdDev ?? 'unknown'}
@@ -629,6 +653,8 @@ GAME: ${game.awayTeam?.name ?? 'Away'} @ ${game.homeTeam?.name ?? 'Home'}
 
 PLAYERS RANKED BY PRA PROJECTION (highest to lowest):
 ${playerLines}
+
+IMPORTANT: Players marked ⚠️ LOW SAMPLE have fewer than 3 games of data — treat their projections as estimates only. If the top candidate has low sample, weight the secondary candidate more heavily or flag confidence as medium/low.
 
 Provide a thorough analysis covering:
 1. Your top PRA candidate and why
@@ -668,6 +694,7 @@ Return ONLY valid JSON, no markdown:
     player: p.name, team: p.team, isHome: p.isHome,
     pra: p.pra, pts: p.pts, reb: p.reb, ast: p.ast,
     belowFloorCount: p.belowFloorCount, isBackToBack: p.isBackToBack,
+    sampleSize: p.sampleSize, lowSample: p.lowSample,
   }));
 
   return result;
@@ -828,12 +855,13 @@ export default async function handler(req, res) {
 
     // Tag players with home/away and limit to likely rotation players
     // Cap at 8 per team (16 total) to stay within time budget
-    // Cap to 5 per team (10 total) — starters only to stay within timeout budget
-    const homePlayers = homeRoster.slice(0, 5).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
-    const awayPlayers = awayRoster.slice(0, 5).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation || 'AWY' }));
+    // Take full roster (up to 13 per team = full NBA rotation)
+    // Roster comes back alphabetical from ESPN so we need all of them to get stars like Jokic (J)
+    const homePlayers = homeRoster.slice(0, 13).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
+    const awayPlayers = awayRoster.slice(0, 13).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation || 'AWY' }));
     const allPlayers  = [...homePlayers, ...awayPlayers];
 
-    console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players (5 per team)`);
+    console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players (up to 13 per team)`);
 
     // Step 2: Build player stats map from recent game summaries (fetched once for all players)
     console.log(`[pregame/analyze] Building player stats map...`);
