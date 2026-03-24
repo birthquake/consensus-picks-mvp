@@ -105,7 +105,7 @@ async function getTeamRoster(sport, league, teamId) {
 
 // ─── Historical form ──────────────────────────────────────────────────────────
 
-async function getHistoricalForm(sport, league, athleteId, gameDate) {
+async function getRecentGameIds(sport, league, gameDate) {
   const base = new Date(gameDate);
   const dates = Array.from({ length: 25 }, (_, i) => {
     const d = new Date(base);
@@ -122,17 +122,32 @@ async function getHistoricalForm(sport, league, athleteId, gameDate) {
     )
   );
 
-  const recentGameIds = [];
-  const gameDateMap = {}; // gameId → date string
+  const gameIds = [];
+  const gameDateMap = {};
   for (let i = 0; i < responses.length; i++) {
     const data = responses[i];
     if (!data?.events) continue;
     for (const event of data.events) {
       if (event.status?.type?.completed) {
-        recentGameIds.push(event.id);
+        gameIds.push(event.id);
         gameDateMap[event.id] = dates[i];
       }
     }
+  }
+
+  return { gameIds, gameDateMap };
+}
+
+async function getHistoricalForm(sport, league, athleteId, gameDate, sharedGameIds = null, sharedDateMap = null) {
+  let recentGameIds, gameDateMap;
+
+  if (sharedGameIds && sharedGameIds.length > 0) {
+    recentGameIds = sharedGameIds;
+    gameDateMap   = sharedDateMap || {};
+  } else {
+    const fetched = await getRecentGameIds(sport, league, gameDate);
+    recentGameIds = fetched.gameIds;
+    gameDateMap   = fetched.gameDateMap;
   }
 
   if (recentGameIds.length === 0) return null;
@@ -143,7 +158,7 @@ async function getHistoricalForm(sport, league, athleteId, gameDate) {
   for (let i = 0; i < recentGameIds.length && formData.byGame.length < 10; i += BATCH) {
     const batch = recentGameIds.slice(i, i + BATCH);
     const batchResults = await Promise.all(
-      batch.map(gameId => extractPlayerGameLine(sport, league, gameId, athleteId, gameDateMap[gameId]))
+      batch.map(gameId => extractPlayerGameLine(sport, league, gameId, athleteId, gameDateMap?.[gameId]))
     );
     for (const r of batchResults) {
       if (r && formData.byGame.length < 10) {
@@ -569,13 +584,23 @@ export default async function handler(req, res) {
 
     console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players`);
 
-    // Step 2: Fetch historical form + season averages in parallel
+    // Step 2: Fetch game IDs once (shared across all players — avoids 400+ parallel ESPN calls)
+    console.log(`[pregame/analyze] Fetching recent game IDs...`);
+    const { gameIds: sharedGameIds, gameDateMap: sharedDateMap } = await getRecentGameIds(sport, league, gameDate);
+    console.log(`[pregame/analyze] Found ${sharedGameIds.length} recent game IDs`);
+
+    // Step 3: Fetch historical form + season averages in parallel
+    // Form uses shared game IDs — no redundant scoreboard fetches per player
     const [formResults, seasonResults] = await Promise.all([
-      Promise.all(allPlayers.map(p => getHistoricalForm(sport, league, p.id, gameDate).catch(() => null))),
-      Promise.all(allPlayers.map(p => getSeasonAverages(sport, league, p.id).catch(() => null))),
+      Promise.all(allPlayers.map(p =>
+        getHistoricalForm(sport, league, p.id, gameDate, sharedGameIds, sharedDateMap).catch(() => null)
+      )),
+      Promise.all(allPlayers.map(p =>
+        getSeasonAverages(sport, league, p.id).catch(() => null)
+      )),
     ]);
 
-    // Step 3: Build projections, filter to players with enough data
+    // Step 4: Build projections, filter to players with enough data
     const playerData = allPlayers.map((p, i) => {
       const form   = formResults[i];
       const season = seasonResults[i];
@@ -602,7 +627,7 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Could not build projections for any players in this game' });
     }
 
-    // Step 4: Claude analysis
+    // Step 5: Claude analysis
     const picks = await generatePreGamePicks(
       { homeTeam, awayTeam, gameDate },
       playerData,
