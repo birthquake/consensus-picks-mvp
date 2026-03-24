@@ -198,66 +198,52 @@ async function buildPlayerStatsMap(sport, league, gameDate) {
     }
   }
 
-  console.log(`[pregame/analyze] Found ${gameIds.length} game IDs, fetching summaries...`);
+  // Cap to 25 most recent games — fetched ALL IN PARALLEL for maximum speed
+  // A player appears in roughly every other game, so 25 games = ~12 appearances per player
+  const gameIdsToFetch = gameIds.slice(0, 25);
+  console.log(`[pregame/analyze] Fetching ${gameIdsToFetch.length} summaries in parallel...`);
 
-  // Step 2: Fetch summaries in batches of 10 — stop when map has enough data
-  const playerStatsMap = {}; // athleteId → [{ stats, date, isHome }, ...]
-  const MAX_GAMES_PER_PLAYER = 5;
-  const SUMMARY_BATCH = 10;
+  const summaries = await Promise.all(
+    gameIdsToFetch.map(id =>
+      fetchWithTimeout(
+        `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${id}`,
+        5000
+      ).catch(() => null)
+    )
+  );
 
-  for (let i = 0; i < gameIds.length; i += SUMMARY_BATCH) {
-    const batch = gameIds.slice(i, i + SUMMARY_BATCH);
-    const summaries = await Promise.all(
-      batch.map(id =>
-        fetchWithTimeout(
-          `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${id}`,
-          4000
-        ).catch(() => null)
-      )
-    );
+  // Extract all player stats from all summaries into a single map
+  const playerStatsMap = {};
 
-    for (const summary of summaries) {
-      if (!summary?.boxscore?.players) continue;
-
-      for (const group of summary.boxscore.players) {
-        const statsBlock = group.statistics?.[0];
-        if (!statsBlock) continue;
-        const keys = statsBlock.keys || [];
-        const teamId = group.team?.id;
-
-        for (const athlete of (statsBlock.athletes || [])) {
-          const athleteId = String(athlete.athlete?.id);
-          if (!athleteId) continue;
-
-          // Skip if we already have enough games for this player
-          if ((playerStatsMap[athleteId] || []).length >= MAX_GAMES_PER_PLAYER) continue;
-
-          if (!athlete.stats?.length) continue;
-          const minutesIdx = keys.indexOf('minutes');
-          const minutes = minutesIdx >= 0 ? parseFloat(athlete.stats[minutesIdx]) || 0 : 0;
-          if (minutes < 5) continue;
-
-          const stats = {};
-          for (const stat of STAT_KEYS) {
-            const idx = keys.findIndex(k => k === stat || k.startsWith(stat));
-            if (idx >= 0) {
-              const val = parseStatValue(String(athlete.stats[idx] ?? ''));
-              if (val != null) stats[stat] = val;
-            }
+  for (const summary of summaries) {
+    if (!summary?.boxscore?.players) continue;
+    for (const group of summary.boxscore.players) {
+      const statsBlock = group.statistics?.[0];
+      if (!statsBlock) continue;
+      const keys = statsBlock.keys || [];
+      for (const athlete of (statsBlock.athletes || [])) {
+        const athleteId = String(athlete.athlete?.id);
+        if (!athleteId || !athlete.stats?.length) continue;
+        const minutesIdx = keys.indexOf('minutes');
+        const minutes = minutesIdx >= 0 ? parseFloat(athlete.stats[minutesIdx]) || 0 : 0;
+        if (minutes < 5) continue;
+        const stats = {};
+        for (const stat of STAT_KEYS) {
+          const idx = keys.findIndex(k => k === stat || k.startsWith(stat));
+          if (idx >= 0) {
+            const val = parseStatValue(String(athlete.stats[idx] ?? ''));
+            if (val != null) stats[stat] = val;
           }
-
-          if (!playerStatsMap[athleteId]) playerStatsMap[athleteId] = [];
+        }
+        if (!playerStatsMap[athleteId]) playerStatsMap[athleteId] = [];
+        if (playerStatsMap[athleteId].length < 5) {
           playerStatsMap[athleteId].push({ stats, minutes, isHome: null, date: null });
         }
       }
     }
-
-    // Stop fetching if we have data for enough players
-    const playersWithData = Object.keys(playerStatsMap).length;
-    if (playersWithData >= 20 && i >= 20) break;
   }
 
-  console.log(`[pregame/analyze] Built stats map for ${Object.keys(playerStatsMap).length} players`);
+  console.log(`[pregame/analyze] Built stats map for ${Object.keys(playerStatsMap).length} players from ${summaries.filter(Boolean).length} summaries`);
   return playerStatsMap;
 }
 
