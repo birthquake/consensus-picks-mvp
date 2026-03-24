@@ -162,61 +162,97 @@ async function getRecentGameIds(sport, league, gameDate) {
   return { gameIds, gameDateMap };
 }
 
-async function getFormFromGamelog(sport, league, athleteId) {
-  // Single API call that returns a player's recent game log with stats
-  // Much faster than searching through game summaries
-  try {
-    // Try the athlete splits endpoint first — returns per-game data
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/athletes/${athleteId}/splits`;
-    const data = await fetchWithTimeout(url, 4000);
-    if (!data) return null;
+// Intentionally empty — replaced by bulk summary approach below
 
-    // splits response has categories with per-game breakdowns
-    // Look for "gameLog" or "lastFive" type splits
-    const categories = data.filters || data.categories || [];
-    const splitData  = data.splitCategories || data.splits || [];
+// Fetch recent game summaries once and extract stats for ALL players simultaneously
+// This is the key optimization — O(games) fetches instead of O(players × games)
+async function buildPlayerStatsMap(sport, league, gameDate) {
+  // Step 1: Get recent game IDs (parallel scoreboard fetches)
+  const base = new Date(gameDate);
+  const dates = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(base);
+    d.setDate(d.getDate() - (i + 1));
+    return formatDate(d);
+  });
 
-    if (!splitData.length) return null;
+  const sbResponses = await Promise.all(
+    dates.map(dateStr =>
+      fetchWithTimeout(
+        `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/scoreboard?dates=${dateStr}`,
+        3000
+      ).catch(() => null)
+    )
+  );
 
-    // Find the game log split — has individual game rows
-    const gameLogSplit = splitData.find(s =>
-      s.displayName?.toLowerCase().includes('game') ||
-      s.type?.toLowerCase().includes('game') ||
-      s.abbreviation?.toLowerCase() === 'game'
+  const gameIds = [];
+  for (const data of sbResponses) {
+    if (!data?.events) continue;
+    for (const event of data.events) {
+      if (event.status?.type?.completed) gameIds.push(event.id);
+    }
+  }
+
+  console.log(`[pregame/analyze] Found ${gameIds.length} game IDs, fetching summaries...`);
+
+  // Step 2: Fetch summaries in batches of 10 — stop when map has enough data
+  const playerStatsMap = {}; // athleteId → [{ stats, date, isHome }, ...]
+  const MAX_GAMES_PER_PLAYER = 5;
+  const SUMMARY_BATCH = 10;
+
+  for (let i = 0; i < gameIds.length; i += SUMMARY_BATCH) {
+    const batch = gameIds.slice(i, i + SUMMARY_BATCH);
+    const summaries = await Promise.all(
+      batch.map(id =>
+        fetchWithTimeout(
+          `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${id}`,
+          4000
+        ).catch(() => null)
+      )
     );
 
-    if (!gameLogSplit?.rows) return null;
+    for (const summary of summaries) {
+      if (!summary?.boxscore?.players) continue;
 
-    // Each row is a game — extract stats
-    const statNames = (gameLogSplit.labels || gameLogSplit.names || []).map(n => n.toLowerCase());
-    const byGame = [];
+      for (const group of summary.boxscore.players) {
+        const statsBlock = group.statistics?.[0];
+        if (!statsBlock) continue;
+        const keys = statsBlock.keys || [];
+        const teamId = group.team?.id;
 
-    for (const row of (gameLogSplit.rows || []).slice(0, 5)) {
-      const stats = {};
-      const vals  = row.stats || row.values || [];
+        for (const athlete of (statsBlock.athletes || [])) {
+          const athleteId = String(athlete.athlete?.id);
+          if (!athleteId) continue;
 
-      for (let i = 0; i < statNames.length; i++) {
-        const name = statNames[i];
-        const val  = parseStatValue(String(vals[i] ?? ''));
-        if (val != null) {
-          if (name === 'pts' || name === 'points') stats.points = val;
-          if (name === 'reb' || name === 'rebounds') stats.rebounds = val;
-          if (name === 'ast' || name === 'assists') stats.assists = val;
-          if (name === 'stl' || name === 'steals') stats.steals = val;
-          if (name === 'blk' || name === 'blocks') stats.blocks = val;
-          if (name === 'min' || name === 'minutes') stats.minutes = val;
+          // Skip if we already have enough games for this player
+          if ((playerStatsMap[athleteId] || []).length >= MAX_GAMES_PER_PLAYER) continue;
+
+          if (!athlete.stats?.length) continue;
+          const minutesIdx = keys.indexOf('minutes');
+          const minutes = minutesIdx >= 0 ? parseFloat(athlete.stats[minutesIdx]) || 0 : 0;
+          if (minutes < 5) continue;
+
+          const stats = {};
+          for (const stat of STAT_KEYS) {
+            const idx = keys.findIndex(k => k === stat || k.startsWith(stat));
+            if (idx >= 0) {
+              const val = parseStatValue(String(athlete.stats[idx] ?? ''));
+              if (val != null) stats[stat] = val;
+            }
+          }
+
+          if (!playerStatsMap[athleteId]) playerStatsMap[athleteId] = [];
+          playerStatsMap[athleteId].push({ stats, minutes, isHome: null, date: null });
         }
-      }
-
-      if (Object.keys(stats).length > 0) {
-        byGame.push({ stats, isHome: null, date: row.gameDate || null });
       }
     }
 
-    return byGame.length > 0 ? buildFormData(byGame) : null;
-  } catch {
-    return null;
+    // Stop fetching if we have data for enough players
+    const playersWithData = Object.keys(playerStatsMap).length;
+    if (playersWithData >= 20 && i >= 20) break;
   }
+
+  console.log(`[pregame/analyze] Built stats map for ${Object.keys(playerStatsMap).length} players`);
+  return playerStatsMap;
 }
 
 function buildFormData(byGame) {
@@ -654,34 +690,18 @@ export default async function handler(req, res) {
 
     console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players (5 per team)`);
 
-    // Step 2: Fetch game IDs as fallback only — primary form fetch uses athlete splits endpoint
-    console.log(`[pregame/analyze] Fetching recent game IDs (fallback)...`);
-    const sharedGameIds = [];
-    const sharedDateMap = {};
-    // Only fetch if we need the fallback — skip for now to stay fast
-    // await getRecentGameIds() would go here if needed
+    // Step 2: Build player stats map from recent game summaries (fetched once for all players)
+    console.log(`[pregame/analyze] Building player stats map...`);
+    const playerStatsMap = await buildPlayerStatsMap(sport, league, gameDate);
 
-    // Step 3: Fetch historical form + season averages with hard timeout
-    const ANALYSIS_TIMEOUT = 40000; // 40s — leaves room for Claude call
-
-    let formResults   = allPlayers.map(() => null);
-    let seasonResults = allPlayers.map(() => null);
-
-    await Promise.race([
-      Promise.all([
-        Promise.all(allPlayers.map((p, i) =>
-          getHistoricalForm(sport, league, p.id, gameDate, sharedGameIds, sharedDateMap)
-            .then(r => { formResults[i] = r; }).catch(() => {})
-        )),
-        Promise.all(allPlayers.map((p, i) =>
-          getSeasonAverages(sport, league, p.id)
-            .then(r => { seasonResults[i] = r; }).catch(() => {})
-        )),
-      ]),
-      new Promise(resolve => setTimeout(resolve, ANALYSIS_TIMEOUT)),
-    ]);
-
+    // Step 3: Extract form from map (instant lookup) + fetch season averages in parallel
+    const formResults = allPlayers.map(p => getHistoricalFormFromMap(p.id, playerStatsMap));
     console.log(`[pregame/analyze] Form results: ${formResults.filter(Boolean).length}/${allPlayers.length}`);
+
+    // Season averages in parallel with tight timeout
+    const seasonResults = await Promise.all(
+      allPlayers.map(p => getSeasonAverages(sport, league, p.id).catch(() => null))
+    );
     console.log(`[pregame/analyze] Season results: ${seasonResults.filter(Boolean).length}/${allPlayers.length}`);
 
     // Step 4: Build projections, filter to players with enough data
