@@ -521,7 +521,7 @@ Return ONLY valid JSON, no markdown:
 Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad — quality over quantity. A 2-star rating means real uncertainty.`;
 
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5-20250514',
+    model: 'claude-sonnet-4-6',
     max_tokens: 2500,
     messages: [{ role: 'user', content: prompt }],
   });
