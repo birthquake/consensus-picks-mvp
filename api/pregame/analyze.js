@@ -66,6 +66,22 @@ async function getGameRoster(sport, league, gameId) {
   return { teams, rawSummary: data };
 }
 
+async function findTeamId(sport, league, abbreviation) {
+  if (!abbreviation) return null;
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams?limit=50`;
+    const data = await fetchWithTimeout(url, 4000);
+    const teamList = data?.sports?.[0]?.leagues?.[0]?.teams || data?.teams || [];
+    const match = teamList.find(t => {
+      const team = t.team || t;
+      return team.abbreviation?.toUpperCase() === abbreviation?.toUpperCase();
+    });
+    return match?.team?.id || match?.id || null;
+  } catch {
+    return null;
+  }
+}
+
 async function getTeamRoster(sport, league, teamId) {
   const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams/${teamId}/roster`;
   const data = await fetchWithTimeout(url, 5000);
@@ -529,15 +545,26 @@ export default async function handler(req, res) {
     console.log(`[pregame/analyze] Analyzing ${gameId} (${league.toUpperCase()})`);
 
     // Step 1: Get rosters for both teams
+    console.log(`[pregame/analyze] homeTeam:`, JSON.stringify(homeTeam));
+    console.log(`[pregame/analyze] awayTeam:`, JSON.stringify(awayTeam));
+
+    // If team IDs are missing, try to find them via the teams endpoint
+    const resolvedHomeId = homeTeam?.id || await findTeamId(sport, league, homeTeam?.abbreviation);
+    const resolvedAwayId = awayTeam?.id || await findTeamId(sport, league, awayTeam?.abbreviation);
+
+    console.log(`[pregame/analyze] resolvedHomeId: ${resolvedHomeId}, resolvedAwayId: ${resolvedAwayId}`);
+
     const [homeRoster, awayRoster] = await Promise.all([
-      homeTeam?.id ? getTeamRoster(sport, league, homeTeam.id) : [],
-      awayTeam?.id ? getTeamRoster(sport, league, awayTeam.id) : [],
+      resolvedHomeId ? getTeamRoster(sport, league, resolvedHomeId) : [],
+      resolvedAwayId ? getTeamRoster(sport, league, resolvedAwayId) : [],
     ]);
+
+    console.log(`[pregame/analyze] homeRoster: ${homeRoster.length}, awayRoster: ${awayRoster.length}`);
 
     // Tag players with home/away and limit to likely rotation players
     // Cap at 8 per team (16 total) to stay within time budget
-    const homePlayers = homeRoster.slice(0, 8).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation }));
-    const awayPlayers = awayRoster.slice(0, 8).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation }));
+    const homePlayers = homeRoster.slice(0, 8).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
+    const awayPlayers = awayRoster.slice(0, 8).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation || 'AWY' }));
     const allPlayers  = [...homePlayers, ...awayPlayers];
 
     console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players`);
