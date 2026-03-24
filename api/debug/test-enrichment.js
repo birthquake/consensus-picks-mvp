@@ -72,29 +72,25 @@ export default async function handler(req, res) {
     if (homeId) {
       const rosterUrl = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams/${homeId}/roster`;
       const rosterData = await fetchWithTimeout(rosterUrl);
-      const groups = rosterData?.athletes || [];
+      const athletes = rosterData?.athletes || [];
+      // Handle both flat array (each element is a player) and grouped array
+      const isFlat = athletes.length > 0 && (athletes[0].id || athletes[0].fullName);
       const players = [];
-      for (const g of groups) {
-        const items = g.items || g.athletes || [];
-        players.push(...items.map(p => ({ id: p.id, name: p.displayName, pos: p.position?.abbreviation })));
+      if (isFlat) {
+        for (const p of athletes) {
+          if (p.id) players.push({ id: p.id, name: p.displayName || p.fullName, pos: p.position?.abbreviation });
+        }
+      } else {
+        for (const g of athletes) {
+          const items = g.items || g.athletes || [];
+          players.push(...items.map(p => ({ id: p.id, name: p.displayName, pos: p.position?.abbreviation })));
+        }
       }
       steps.roster = {
         url: rosterUrl,
-        group_count: groups.length,
+        is_flat_array: isFlat,
         player_count: players.length,
         sample_players: players.slice(0, 5),
-        // Show full shape of first group so we can see exact keys
-        raw_group_0: groups[0] ? {
-          keys: Object.keys(groups[0]),
-          items_length: (groups[0].items || []).length,
-          athletes_length: (groups[0].athletes || []).length,
-          // Show what keys exist for the player objects
-          first_item_keys: groups[0].items?.[0] ? Object.keys(groups[0].items[0]) : [],
-          first_athlete_keys: groups[0].athletes?.[0] ? Object.keys(groups[0].athletes[0]) : [],
-          // Raw first group for full inspection
-          raw: groups[0],
-        } : null,
-        // Also show top-level keys of the roster response
         top_level_keys: rosterData ? Object.keys(rosterData) : [],
         error: rosterData?._error || null,
       };
