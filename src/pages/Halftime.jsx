@@ -706,7 +706,7 @@ export default function Halftime() {
             fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '600',
           }}>
             <div style={{ width: '8px', height: '8px', background: '#4ade80', borderRadius: '50%' }}/>
-            {games.length} game{games.length !== 1 ? 's' : ''} at halftime
+            {games.length} game{games.length !== 1 ? 's' : ''} {mode === 'halftime' ? 'at halftime' : 'today'}
           </div>
 
           {games.map(game => (
