@@ -224,7 +224,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
       setErrorMsg(err.message);
       setState('error');
     }
-  }, [game]);
+  }, [game, mode, analysisMode, legCount]);
 
   const savePicks = async (analysisData) => {
     // Build projection map keyed by player name for storage
