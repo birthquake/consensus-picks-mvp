@@ -552,6 +552,127 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
 
 // ─── Claude prompt ────────────────────────────────────────────────────────────
 
+async function generatePRARanking(game, playerData) {
+  // Build PRA projections for each player
+  const praPlayers = playerData.map(p => {
+    const proj = p.projections;
+    const pts  = proj?.points?.blended   ?? proj?.points?.last5   ?? null;
+    const reb  = proj?.rebounds?.blended ?? proj?.rebounds?.last5  ?? null;
+    const ast  = proj?.assists?.blended  ?? proj?.assists?.last5   ?? null;
+
+    if (pts == null && reb == null && ast == null) return null;
+
+    const pra = Math.round(((pts || 0) + (reb || 0) + (ast || 0)) * 10) / 10;
+
+    // Consistency score: how many of pts/reb/ast have below-floor flags
+    const belowFloorCount = [
+      proj?.points?.belowFloor,
+      proj?.rebounds?.belowFloor,
+      proj?.assists?.belowFloor,
+    ].filter(Boolean).length;
+
+    const stdDevs = [
+      proj?.points?.stdDev,
+      proj?.rebounds?.stdDev,
+      proj?.assists?.stdDev,
+    ].filter(v => v != null);
+    const avgStdDev = stdDevs.length
+      ? Math.round(stdDevs.reduce((a, b) => a + b, 0) / stdDevs.length * 10) / 10
+      : null;
+
+    return {
+      name:            p.name,
+      team:            p.team,
+      isHome:          p.isHome,
+      pts:             pts   ? Math.round(pts * 10) / 10   : null,
+      reb:             reb   ? Math.round(reb * 10) / 10   : null,
+      ast:             ast   ? Math.round(ast * 10) / 10   : null,
+      pra,
+      belowFloorCount,
+      avgStdDev,
+      isBackToBack:    proj?.points?.isBackToBack || false,
+      ptsTrend:        proj?.points?.trend  || 'neutral',
+      rebTrend:        proj?.rebounds?.trend || 'neutral',
+      astTrend:        proj?.assists?.trend  || 'neutral',
+      ptsFloor:        proj?.points?.floor   ?? null,
+      rebFloor:        proj?.rebounds?.floor ?? null,
+      astFloor:        proj?.assists?.floor  ?? null,
+    };
+  }).filter(Boolean);
+
+  praPlayers.sort((a, b) => b.pra - a.pra);
+
+  // Build prompt
+  const playerLines = praPlayers.map((p, i) => {
+    const trends = [
+      p.ptsTrend !== 'neutral' ? `pts ${p.ptsTrend}` : null,
+      p.rebTrend !== 'neutral' ? `reb ${p.rebTrend}` : null,
+      p.astTrend !== 'neutral' ? `ast ${p.astTrend}` : null,
+    ].filter(Boolean).join(', ') || 'all neutral';
+
+    const flags = [
+      p.isBackToBack ? 'BACK-TO-BACK' : null,
+      p.belowFloorCount === 3 ? 'ALL 3 STATS BELOW FLOOR' : p.belowFloorCount > 0 ? `${p.belowFloorCount} stats below floor` : null,
+      p.avgStdDev == null ? 'no variance data' : null,
+    ].filter(Boolean).join(' | ') || 'none';
+
+    return `${i + 1}. ${p.name} (${p.team}${p.isHome ? ' HOME' : ' AWAY'})
+   PRA projection: ${p.pra} (pts=${p.pts ?? '?'} reb=${p.reb ?? '?'} ast=${p.ast ?? '?'})
+   Floor: pts≥${p.ptsFloor ?? '?'} reb≥${p.rebFloor ?? '?'} ast≥${p.astFloor ?? '?'}
+   Trends: ${trends} | Avg std dev: ${p.avgStdDev ?? 'unknown'}
+   Flags: ${flags}`;
+  }).join('\n\n');
+
+  const prompt = `You are an expert sports bettor. A user wants to bet on which player will have the highest PRA (Points + Rebounds + Assists) tonight in this game. Analyze the projections and identify the single strongest candidate.
+
+GAME: ${game.awayTeam?.name ?? 'Away'} @ ${game.homeTeam?.name ?? 'Home'}
+
+PLAYERS RANKED BY PRA PROJECTION (highest to lowest):
+${playerLines}
+
+Provide a thorough analysis covering:
+1. Your top PRA candidate and why
+2. How confident you are based on floor consistency, variance, and trends
+3. Any risk factors that could derail them
+4. A secondary candidate if the top pick has significant risk
+
+Return ONLY valid JSON, no markdown:
+{
+  "top_pick": "Full Name",
+  "top_pick_team": "ABV",
+  "top_pick_pra_projection": 42.1,
+  "confidence": "high" | "medium" | "low",
+  "confidence_rating": 4,
+  "analysis": "3-4 sentence deep analysis of why this player is the best PRA candidate tonight",
+  "key_strengths": ["strength 1", "strength 2", "strength 3"],
+  "risk_factors": ["risk 1"] or [],
+  "secondary_pick": "Full Name or null",
+  "secondary_pick_team": "ABV or null",
+  "secondary_analysis": "1-2 sentences on secondary or null",
+  "rankings": [
+    { "rank": 1, "player": "Full Name", "team": "ABV", "pra": 42.1, "pts": 28.1, "reb": 9.2, "ast": 4.8 }
+  ]
+}`;
+
+  const msg = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1500,
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const raw = msg.content[0].text.replace(/```json[\n]?/g, '').replace(/```[\n]?/g, '').trim();
+  const result = JSON.parse(raw);
+
+  // Attach full ranking from our math (not just Claude's top picks)
+  result.full_rankings = praPlayers.map(p => ({
+    player: p.name, team: p.team, isHome: p.isHome,
+    pra: p.pra, pts: p.pts, reb: p.reb, ast: p.ast,
+    belowFloorCount: p.belowFloorCount, isBackToBack: p.isBackToBack,
+  }));
+
+  return result;
+}
+
 async function generatePreGamePicks(game, playerData, existingLegs, legCount) {
   const playerLines = playerData.map(p => {
     const proj = p.projections;
@@ -679,7 +800,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { gameId, sport, league, homeTeam, awayTeam, gameDate, existingLegs, legCount = 4 } = req.body;
+  const { gameId, sport, league, homeTeam, awayTeam, gameDate, existingLegs, legCount = 4, mode = 'picks' } = req.body;
 
   if (!gameId || !sport || !league) {
     return res.status(400).json({ error: 'Missing required fields: gameId, sport, league' });
@@ -761,6 +882,22 @@ export default async function handler(req, res) {
     }
 
     // Step 5: Claude analysis
+    if (mode === 'pra') {
+      const analysis = await generatePRARanking(
+        { homeTeam, awayTeam, gameDate },
+        playerData,
+      );
+      return res.status(200).json({
+        success: true,
+        gameId,
+        game: { homeTeam, awayTeam, sport, league, gameDate },
+        mode: 'pra',
+        ...analysis,
+        player_count: playerData.length,
+        analyzed_at: new Date().toISOString(),
+      });
+    }
+
     const picks = await generatePreGamePicks(
       { homeTeam, awayTeam, gameDate },
       playerData,
