@@ -110,7 +110,12 @@ function PickCard({ pick, isSelected, onToggle, index }) {
           </div>
           <div style={{ marginTop: '3px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '13px', color: '#60a5fa', fontWeight: '600' }}>
-              {pick.direction} {pick.stat}
+              {pick.direction} {pick.threshold != null ? pick.threshold : ''} {pick.stat}
+              {pick.projection != null && (
+                <span style={{ color: '#818cf8', fontWeight: '400', fontSize: '11px', marginLeft: '4px' }}>
+                  (proj: {pick.projection})
+                </span>
+              )}
             </span>
             {pick.risk_flags?.length > 0 && (
               <span style={{ display:'flex', alignItems:'center', gap:'3px', fontSize:'11px', color:'#fbbf24' }}>
@@ -179,7 +184,7 @@ function PickCard({ pick, isSelected, onToggle, index }) {
 }
 
 // ── Game Card ─────────────────────────────────────────────────────────────────
-function GameCard({ game, selectedLegs, onToggleLeg, legCount }) {
+function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime' }) {
   const [state, setState] = useState('idle'); // idle | loading | done | error
   const [analysis, setAnalysis] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
@@ -188,7 +193,10 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount }) {
     setState('loading');
     setErrorMsg('');
     try {
-      const res = await fetch('/api/halftime/analyze', {
+      const endpoint = mode === 'halftime'
+        ? '/api/halftime/analyze'
+        : '/api/pregame/analyze';
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -197,6 +205,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount }) {
           league: game.league,
           homeTeam: game.homeTeam,
           awayTeam: game.awayTeam,
+          gameDate: game.gameDate || game.startTime,
           existingLegs,
           legCount,
         }),
@@ -256,12 +265,15 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount }) {
         display: 'flex', alignItems: 'center', gap: '12px',
       }}>
         <div style={{
-          background: '#ef4444', borderRadius: '6px', padding: '3px 8px',
+          background: mode === 'halftime' ? '#ef4444' : '#6366f1',
+          borderRadius: '6px', padding: '3px 8px',
           fontSize: '10px', fontWeight: '800', color: '#fff', letterSpacing: '1px',
           display: 'flex', alignItems: 'center', gap: '4px',
         }}>
-          <span style={{ width: '6px', height: '6px', background: '#fff', borderRadius: '50%', animation: 'pulse 1.5s ease-in-out infinite', display: 'inline-block' }}/>
-          HALFTIME
+          {mode === 'halftime' && (
+            <span style={{ width: '6px', height: '6px', background: '#fff', borderRadius: '50%', animation: 'pulse 1.5s ease-in-out infinite', display: 'inline-block' }}/>
+          )}
+          {mode === 'halftime' ? 'HALFTIME' : 'PRE-GAME'}
         </div>
         <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
 
@@ -462,7 +474,8 @@ function ParlayBuilder({ legs, onRemove }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Halftime() {
-  const [scanState, setScanState] = useState('idle'); // idle | scanning | done | empty | error
+  const [mode, setMode] = useState('pregame'); // pregame | halftime
+  const [scanState, setScanState] = useState('idle');
   const [games, setGames] = useState([]);
   const [lastScanned, setLastScanned] = useState(null);
   const [selectedLegs, setSelectedLegs] = useState([]);
@@ -472,8 +485,12 @@ export default function Halftime() {
   const scan = useCallback(async () => {
     setScanState('scanning');
     setErrorMsg('');
+    setGames([]);
     try {
-      const res = await fetch('/api/halftime/scan?sports=nba');
+      const url = mode === 'halftime'
+        ? '/api/halftime/scan?sports=nba'
+        : '/api/pregame/scan?sport=nba';
+      const res = await fetch(url);
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
       setGames(data.games);
@@ -483,7 +500,15 @@ export default function Halftime() {
       setErrorMsg(err.message);
       setScanState('error');
     }
-  }, []);
+  }, [mode]);
+
+  const switchMode = (newMode) => {
+    setMode(newMode);
+    setScanState('idle');
+    setGames([]);
+    setLastScanned(null);
+    setErrorMsg('');
+  };
 
   const toggleLeg = (leg) => {
     setSelectedLegs(prev => {
@@ -524,6 +549,33 @@ export default function Halftime() {
               <Icon.Refresh /> Refresh
             </button>
           )}
+        </div>
+
+        {/* Mode toggle */}
+        <div style={{
+          marginTop: '14px', display: 'flex', gap: '8px',
+          background: 'var(--bg-secondary, #111)',
+          border: '1px solid var(--border-color, #222)',
+          borderRadius: '10px', padding: '4px',
+        }}>
+          {[
+            { id: 'pregame',  label: '🏀 Pre-Game Picks' },
+            { id: 'halftime', label: '⏸ Halftime Picks' },
+          ].map(m => (
+            <button
+              key={m.id}
+              onClick={() => switchMode(m.id)}
+              style={{
+                flex: 1, padding: '9px 12px', borderRadius: '7px', border: 'none',
+                background: mode === m.id ? '#6366f1' : 'transparent',
+                color: mode === m.id ? '#fff' : 'var(--text-secondary, #888)',
+                fontWeight: '700', fontSize: '13px', cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+            >
+              {m.label}
+            </button>
+          ))}
         </div>
 
         {lastScanned && (
@@ -579,8 +631,9 @@ export default function Halftime() {
             Ready to scan
           </h3>
           <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px', lineHeight: '1.6' }}>
-            Scan for NBA games currently at halftime.
-            Works best when games are actually in progress.
+            {mode === 'halftime'
+              ? 'Scan for NBA games currently at halftime. Works best during game windows.'
+              : 'Load today\'s NBA games and get pre-game prop recommendations based on recent form and trends.'}
           </p>
           <button onClick={scan} style={{
             padding: '14px 32px', borderRadius: '12px',
@@ -588,7 +641,7 @@ export default function Halftime() {
             border: 'none', color: '#fff', fontWeight: '700', fontSize: '15px',
             cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px',
           }}>
-            <Icon.Zap /> Scan for Halftime Games
+            <Icon.Zap /> {mode === 'halftime' ? 'Scan for Halftime Games' : 'Find Today\'s Games'}
           </button>
         </div>
       )}
@@ -602,7 +655,7 @@ export default function Halftime() {
             borderRadius: '50%', animation: 'spin 0.8s linear infinite',
           }}/>
           <p style={{ color: 'var(--text-secondary, #888)', fontSize: '14px', margin: 0 }}>
-            Scanning NBA scoreboards...
+            {mode === 'halftime' ? 'Scanning for halftime games...' : 'Loading today\'s games...'}
           </p>
         </div>
       )}
@@ -629,7 +682,9 @@ export default function Halftime() {
             No halftime games right now
           </h3>
           <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px' }}>
-            Check back when NBA games are in progress.
+            {mode === 'halftime'
+              ? 'Check back when NBA games are at halftime.'
+              : 'No NBA games scheduled for today. Check back tomorrow.'}
           </p>
           <button onClick={scan} style={{
             padding: '10px 24px', borderRadius: '8px',
@@ -661,6 +716,7 @@ export default function Halftime() {
               selectedLegs={selectedLegs}
               onToggleLeg={toggleLeg}
               legCount={legCount}
+              mode={mode}
             />
           ))}
         </div>
