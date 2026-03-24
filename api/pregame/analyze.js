@@ -243,7 +243,18 @@ async function buildPlayerStatsMap(sport, league, gameDate) {
     }
   }
 
-  console.log(`[pregame/analyze] Built stats map for ${Object.keys(playerStatsMap).length} players from ${summaries.filter(Boolean).length} summaries`);
+  const successfulSummaries = summaries.filter(Boolean).length;
+  const playerCount = Object.keys(playerStatsMap).length;
+  const gamesPerPlayer = Object.values(playerStatsMap).map(g => g.length);
+  const avgGames = gamesPerPlayer.length
+    ? Math.round(gamesPerPlayer.reduce((a,b) => a+b, 0) / gamesPerPlayer.length * 10) / 10
+    : 0;
+
+  console.log(`[pregame/analyze] Summaries: ${successfulSummaries}/${gameIdsToFetch.length} fetched`);
+  console.log(`[pregame/analyze] Players in map: ${playerCount} | Avg games per player: ${avgGames}`);
+  console.log(`[pregame/analyze] Games distribution: min=${Math.min(...gamesPerPlayer)||0} max=${Math.max(...gamesPerPlayer)||0}`);
+
+  // Log which of our target players are/aren't in the map
   return playerStatsMap;
 }
 
@@ -704,7 +715,12 @@ export default async function handler(req, res) {
 
     // Step 3: Extract form from map (instant lookup) + fetch season averages in parallel
     const formResults = allPlayers.map(p => getHistoricalFormFromMap(p.id, playerStatsMap));
-    console.log(`[pregame/analyze] Form results: ${formResults.filter(Boolean).length}/${allPlayers.length}`);
+    const formFound = formResults.filter(Boolean).length;
+    console.log(`[pregame/analyze] Form results: ${formFound}/${allPlayers.length}`);
+    allPlayers.forEach((p, i) => {
+      const gamesFound = playerStatsMap[String(p.id)]?.length || 0;
+      console.log(`  ${p.name} (${p.id}): ${gamesFound} games in map`);
+    });
 
     // Season averages in parallel with tight timeout
     const seasonResults = await Promise.all(
