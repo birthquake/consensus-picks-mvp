@@ -112,6 +112,28 @@ export default async function handler(req, res) {
     }
     steps.recent_game_ids = { days_checked: 3, games_found: recentIds.length, sample: recentIds.slice(0, 5) };
 
+    // Test splits endpoint for first player on home roster
+    if (steps.roster?.sample_players?.length > 0) {
+      const testPlayer = steps.roster.sample_players[0];
+      const splitsUrl = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/athletes/${testPlayer.id}/splits`;
+      const splitsData = await fetchWithTimeout(splitsUrl);
+      steps.splits_test = {
+        player: testPlayer.name,
+        player_id: testPlayer.id,
+        url: splitsUrl,
+        top_level_keys: splitsData ? Object.keys(splitsData) : [],
+        error: splitsData?._error || null,
+        // Show shape of splitCategories
+        split_categories_count: splitsData?.splitCategories?.length || 0,
+        split_categories_names: (splitsData?.splitCategories || []).map(s => s.displayName || s.type || s.abbreviation),
+        // Show filters/categories
+        filters_count: splitsData?.filters?.length || 0,
+        filters: (splitsData?.filters || []).map(f => ({ name: f.displayName, value: f.value })),
+        // Raw first 200 chars to see shape
+        raw_sample: JSON.stringify(splitsData || {}).substring(0, 500),
+      };
+    }
+
     return res.status(200).json({ success: true, mode: 'pregame', steps });
   }
 
