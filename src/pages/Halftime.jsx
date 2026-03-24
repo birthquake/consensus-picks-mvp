@@ -188,6 +188,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
   const [state, setState] = useState('idle'); // idle | loading | done | error
   const [analysis, setAnalysis] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [analysisMode, setAnalysisMode] = useState('picks'); // picks | pra
 
   const analyze = useCallback(async (existingLegs = []) => {
     setState('loading');
@@ -208,6 +209,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
           gameDate: game.gameDate || game.startTime,
           existingLegs,
           legCount,
+          mode: analysisMode,
         }),
       });
       const data = await res.json();
@@ -302,17 +304,45 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
       {/* Analyze button / loading / results */}
       <div style={{ padding: '16px 20px' }}>
         {state === 'idle' && (
-          <button
-            onClick={() => analyze()}
-            style={{
-              width: '100%', padding: '12px', borderRadius: '10px',
-              background: 'linear-gradient(135deg, #6366f1, #3b82f6)',
-              border: 'none', color: '#fff', fontWeight: '700', fontSize: '14px',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-            }}
-          >
-            <Icon.Zap /> Analyze This Game
-          </button>
+          <div>
+            {mode === 'pregame' && (
+              <div style={{
+                display: 'flex', gap: '6px', marginBottom: '10px',
+                background: 'var(--bg-tertiary, #0a0a0a)',
+                padding: '4px', borderRadius: '8px',
+              }}>
+                {[
+                  { id: 'picks', label: '🎯 Prop Picks' },
+                  { id: 'pra',   label: '📊 PRA Leader' },
+                ].map(m => (
+                  <button
+                    key={m.id}
+                    onClick={() => setAnalysisMode(m.id)}
+                    style={{
+                      flex: 1, padding: '7px', borderRadius: '6px', border: 'none',
+                      background: analysisMode === m.id ? '#6366f1' : 'transparent',
+                      color: analysisMode === m.id ? '#fff' : 'var(--text-secondary, #888)',
+                      fontWeight: '600', fontSize: '12px', cursor: 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => analyze()}
+              style={{
+                width: '100%', padding: '12px', borderRadius: '10px',
+                background: 'linear-gradient(135deg, #6366f1, #3b82f6)',
+                border: 'none', color: '#fff', fontWeight: '700', fontSize: '14px',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              }}
+            >
+              <Icon.Zap /> {analysisMode === 'pra' ? 'Find PRA Leader' : 'Analyze This Game'}
+            </button>
+          </div>
         )}
 
         {state === 'loading' && (
@@ -344,7 +374,128 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
           </div>
         )}
 
-        {state === 'done' && analysis && (
+        {state === 'done' && analysis && analysis.mode === 'pra' && (
+          <div>
+            {/* PRA top pick */}
+            <div style={{
+              background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.2)',
+              borderRadius: '12px', padding: '16px', marginBottom: '14px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                <div style={{
+                  background: '#4ade80', color: '#000', borderRadius: '8px',
+                  padding: '4px 10px', fontSize: '11px', fontWeight: '800',
+                }}>TOP PRA PICK</div>
+                <span style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-primary, #fff)' }}>
+                  {analysis.top_pick}
+                </span>
+                <span style={{
+                  fontSize: '10px', fontWeight: '700', padding: '2px 7px',
+                  background: 'rgba(99,102,241,0.15)', color: '#818cf8', borderRadius: '20px',
+                }}>
+                  {analysis.top_pick_team}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '10px' }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '22px', fontWeight: '800', color: '#4ade80' }}>
+                    {analysis.top_pick_pra_projection}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--text-secondary, #888)', fontWeight: '600' }}>PRA PROJ</div>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                    {[
+                      { label: 'confidence', val: analysis.confidence?.toUpperCase(), color: analysis.confidence === 'high' ? '#4ade80' : analysis.confidence === 'medium' ? '#fbbf24' : '#f87171' },
+                    ].map(b => (
+                      <span key={b.label} style={{
+                        fontSize: '10px', fontWeight: '700', padding: '2px 8px',
+                        background: `${b.color}22`, color: b.color, borderRadius: '20px',
+                      }}>{b.val}</span>
+                    ))}
+                    {'⭐'.repeat(analysis.confidence_rating || 0)}
+                  </div>
+                </div>
+              </div>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary, #999)', lineHeight: '1.6', margin: '0 0 8px' }}>
+                {analysis.analysis}
+              </p>
+              {analysis.key_strengths?.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
+                  {analysis.key_strengths.map((s, i) => (
+                    <span key={i} style={{
+                      fontSize: '11px', padding: '3px 8px',
+                      background: 'rgba(74,222,128,0.1)', color: '#4ade80', borderRadius: '20px',
+                    }}>✓ {s}</span>
+                  ))}
+                </div>
+              )}
+              {analysis.risk_factors?.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {analysis.risk_factors.map((r, i) => (
+                    <span key={i} style={{
+                      fontSize: '11px', padding: '3px 8px',
+                      background: 'rgba(251,191,36,0.1)', color: '#fbbf24', borderRadius: '20px',
+                    }}>⚠ {r}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Secondary pick */}
+            {analysis.secondary_pick && (
+              <div style={{
+                background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)',
+                borderRadius: '10px', padding: '12px', marginBottom: '14px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: '700', color: '#818cf8' }}>SECONDARY</span>
+                  <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary, #fff)' }}>
+                    {analysis.secondary_pick}
+                  </span>
+                  <span style={{ fontSize: '10px', color: '#818cf8', padding: '2px 6px', background: 'rgba(99,102,241,0.15)', borderRadius: '20px' }}>
+                    {analysis.secondary_pick_team}
+                  </span>
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary, #999)', lineHeight: '1.5', margin: 0 }}>
+                  {analysis.secondary_analysis}
+                </p>
+              </div>
+            )}
+
+            {/* Full rankings table */}
+            {analysis.full_rankings?.length > 0 && (
+              <div>
+                <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary, #888)', marginBottom: '8px', letterSpacing: '0.5px' }}>
+                  ALL PLAYERS RANKED BY PRA
+                </div>
+                {analysis.full_rankings.map((p, i) => (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    padding: '8px 0',
+                    borderBottom: i < analysis.full_rankings.length - 1 ? '1px solid var(--border-color, #1a1a1a)' : 'none',
+                  }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary, #666)', width: '16px' }}>{i + 1}</span>
+                    <span style={{ flex: 1, fontSize: '13px', color: 'var(--text-primary, #fff)', fontWeight: i === 0 ? '700' : '400' }}>
+                      {p.player}
+                    </span>
+                    <span style={{ fontSize: '10px', color: '#818cf8', padding: '1px 6px', background: 'rgba(99,102,241,0.1)', borderRadius: '10px' }}>
+                      {p.team}
+                    </span>
+                    <span style={{ fontSize: '13px', fontWeight: '700', color: i === 0 ? '#4ade80' : 'var(--text-primary, #fff)', minWidth: '36px', textAlign: 'right' }}>
+                      {p.pra}
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', minWidth: '80px', textAlign: 'right' }}>
+                      {p.pts}/{p.reb}/{p.ast}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {state === 'done' && analysis && analysis.mode !== 'pra' && (
           <div>
             {/* Game summary */}
             <p style={{ fontSize: '13px', color: 'var(--text-secondary, #999)', lineHeight: '1.6', margin: '0 0 6px' }}>
