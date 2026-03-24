@@ -473,7 +473,7 @@ export default function Halftime() {
     setScanState('scanning');
     setErrorMsg('');
     try {
-      const res = await fetch('/api/halftime/scan?sports=nba,nhl');
+      const res = await fetch('/api/halftime/scan?sports=nba');
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
       setGames(data.games);
@@ -579,7 +579,7 @@ export default function Halftime() {
             Ready to scan
           </h3>
           <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px', lineHeight: '1.6' }}>
-            Scan for NBA and NHL games currently at halftime.
+            Scan for NBA games currently at halftime.
             Works best when games are actually in progress.
           </p>
           <button onClick={scan} style={{
@@ -602,7 +602,7 @@ export default function Halftime() {
             borderRadius: '50%', animation: 'spin 0.8s linear infinite',
           }}/>
           <p style={{ color: 'var(--text-secondary, #888)', fontSize: '14px', margin: 0 }}>
-            Scanning NBA &amp; NHL scoreboards...
+            Scanning NBA scoreboards...
           </p>
         </div>
       )}
@@ -629,7 +629,7 @@ export default function Halftime() {
             No halftime games right now
           </h3>
           <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px' }}>
-            Check back when NBA or NHL games are in progress.
+            Check back when NBA games are in progress.
           </p>
           <button onClick={scan} style={{
             padding: '10px 24px', borderRadius: '8px',
