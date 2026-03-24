@@ -474,11 +474,19 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
                     display: 'flex', alignItems: 'center', gap: '10px',
                     padding: '8px 0',
                     borderBottom: i < analysis.full_rankings.length - 1 ? '1px solid var(--border-color, #1a1a1a)' : 'none',
+                    opacity: p.lowSample ? 0.6 : 1,
                   }}>
                     <span style={{ fontSize: '12px', color: 'var(--text-secondary, #666)', width: '16px' }}>{i + 1}</span>
-                    <span style={{ flex: 1, fontSize: '13px', color: 'var(--text-primary, #fff)', fontWeight: i === 0 ? '700' : '400' }}>
-                      {p.player}
-                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontSize: '13px', color: 'var(--text-primary, #fff)', fontWeight: i === 0 ? '700' : '400' }}>
+                        {p.player}
+                      </span>
+                      {p.lowSample && (
+                        <span style={{ fontSize: '10px', color: '#fbbf24', marginLeft: '6px' }}>
+                          ⚠ {p.sampleSize}g
+                        </span>
+                      )}
+                    </div>
                     <span style={{ fontSize: '10px', color: '#818cf8', padding: '1px 6px', background: 'rgba(99,102,241,0.1)', borderRadius: '10px' }}>
                       {p.team}
                     </span>
