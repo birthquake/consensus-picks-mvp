@@ -1,155 +1,162 @@
 // FILE LOCATION: api/debug/test-enrichment.js
-// Temporary debug endpoint — remove before production.
+// Combined debug endpoint for testing both enrichment and pre-game data pipeline.
 //
-// Usage:
-//   GET /api/debug/test-enrichment?player=Shai+Gilgeous-Alexander&stat=Points&sport=NBA&date=2026-03-21&line=28.5
-//   GET /api/debug/test-enrichment?player=Connor+McDavid&stat=Goals&sport=NHL&date=2026-03-21
-//   GET /api/debug/test-enrichment?player=Aaron+Judge&stat=Home+Runs&sport=MLB&date=2026-04-05
+// Enrichment test:
+//   GET /api/debug/test-enrichment?player=Shai+Gilgeous-Alexander&stat=Points&sport=NBA&date=2026-03-21
+//
+// Pre-game pipeline test:
+//   GET /api/debug/test-enrichment?mode=pregame&sport=basketball&league=nba
 
 import { enrichPicks, formatEnrichmentForPrompt } from '../../lib/espn-enrichment.js';
 
-// Also import internals directly so we can test each step individually
-const SPORT_CONFIG = {
-  NFL:  { sport: 'football',   league: 'nfl' },
-  NBA:  { sport: 'basketball', league: 'nba' },
-  MLB:  { sport: 'baseball',   league: 'mlb' },
-  NHL:  { sport: 'hockey',     league: 'nhl' },
-};
-
-async function fetchWithTimeout(url, timeoutMs = 6000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+async function fetchWithTimeout(url, ms = 5000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, { signal: ctrl.signal });
     clearTimeout(timer);
-    if (!res.ok) return { _error: `HTTP ${res.status}`, url };
+    if (!res.ok) return { _error: `HTTP ${res.status}`, _url: url };
     return res.json();
   } catch (e) {
     clearTimeout(timer);
-    return { _error: e.message, url };
+    return { _error: e.message, _url: url };
   }
 }
 
+function formatDate(d) {
+  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+}
+
 export default async function handler(req, res) {
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
+
+  const mode = req.query.mode || 'enrichment';
+
+  // ── Pre-game pipeline debug ──────────────────────────────────────────────
+  if (mode === 'pregame') {
+    const sport  = req.query.sport  || 'basketball';
+    const league = req.query.league || 'nba';
+    const steps  = {};
+
+    const today = formatDate(new Date());
+    const sbUrl = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/scoreboard?dates=${today}`;
+    const sbData = await fetchWithTimeout(sbUrl);
+
+    steps.scoreboard = {
+      url: sbUrl,
+      event_count: sbData?.events?.length || 0,
+      error: sbData?._error || null,
+      games: (sbData?.events || []).slice(0, 5).map(e => ({
+        id: e.id,
+        name: e.shortName,
+        state: e.competitions?.[0]?.status?.type?.state,
+        competitors: (e.competitions?.[0]?.competitors || []).map(c => ({
+          homeAway: c.homeAway,
+          teamId: c.team?.id,
+          abbrev: c.team?.abbreviation,
+        })),
+      })),
+    };
+
+    const game = sbData?.events?.find(e => e.competitions?.[0]?.status?.type?.state === 'pre')
+      || sbData?.events?.[0];
+
+    if (!game) return res.status(200).json({ steps, error: 'No games found' });
+
+    const competitors = game.competitions?.[0]?.competitors || [];
+    const homeComp = competitors.find(c => c.homeAway === 'home');
+    const homeId   = homeComp?.team?.id;
+
+    steps.chosen_game = { id: game.id, name: game.shortName, homeId, homeAbbrev: homeComp?.team?.abbreviation };
+
+    if (homeId) {
+      const rosterUrl = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams/${homeId}/roster`;
+      const rosterData = await fetchWithTimeout(rosterUrl);
+      const groups = rosterData?.athletes || [];
+      const players = [];
+      for (const g of groups) {
+        const items = g.items || g.athletes || [];
+        players.push(...items.map(p => ({ id: p.id, name: p.displayName, pos: p.position?.abbreviation })));
+      }
+      steps.roster = {
+        url: rosterUrl,
+        group_count: groups.length,
+        player_count: players.length,
+        sample_players: players.slice(0, 5),
+        // Show full shape of first group so we can see exact keys
+        raw_group_0: groups[0] ? {
+          keys: Object.keys(groups[0]),
+          items_length: (groups[0].items || []).length,
+          athletes_length: (groups[0].athletes || []).length,
+          // Show what keys exist for the player objects
+          first_item_keys: groups[0].items?.[0] ? Object.keys(groups[0].items[0]) : [],
+          first_athlete_keys: groups[0].athletes?.[0] ? Object.keys(groups[0].athletes[0]) : [],
+          // Raw first group for full inspection
+          raw: groups[0],
+        } : null,
+        // Also show top-level keys of the roster response
+        top_level_keys: rosterData ? Object.keys(rosterData) : [],
+        error: rosterData?._error || null,
+      };
+    }
+
+    // Recent game IDs (3 days)
+    const dates = [1,2,3].map(i => { const d = new Date(); d.setDate(d.getDate()-i); return formatDate(d); });
+    const sbResponses = await Promise.all(dates.map(ds =>
+      fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/scoreboard?dates=${ds}`, 3000).catch(() => null)
+    ));
+    const recentIds = [];
+    for (const d of sbResponses) {
+      if (!d?.events) continue;
+      for (const e of d.events) if (e.status?.type?.completed) recentIds.push(e.id);
+    }
+    steps.recent_game_ids = { days_checked: 3, games_found: recentIds.length, sample: recentIds.slice(0, 5) };
+
+    return res.status(200).json({ success: true, mode: 'pregame', steps });
   }
 
+  // ── Enrichment debug (original) ──────────────────────────────────────────
   const { player, stat, sport, date, line } = req.query;
 
   if (!player || !stat || !sport) {
     return res.status(400).json({
       error: 'Missing params',
-      usage: '/api/debug/test-enrichment?player=Shai+Gilgeous-Alexander&stat=Points&sport=NBA&date=2026-03-21&line=28.5',
+      usage_enrichment: '/api/debug/test-enrichment?player=Shai+Gilgeous-Alexander&stat=Points&sport=NBA&date=2026-03-21',
+      usage_pregame: '/api/debug/test-enrichment?mode=pregame&sport=basketball&league=nba',
     });
   }
 
   const gameDate = date || new Date().toISOString().split('T')[0];
-  const config = SPORT_CONFIG[sport.toUpperCase()];
-
-  if (!config) {
-    return res.status(400).json({ error: `Unknown sport: ${sport}` });
-  }
-
-  const steps = {};
-
-  // ── Step 1: Teams endpoint ────────────────────────────────────────────────
-  const teamsUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/teams?limit=50`;
-  const teamsData = await fetchWithTimeout(teamsUrl);
-  const teamList = teamsData?.sports?.[0]?.leagues?.[0]?.teams || teamsData?.teams || [];
-  steps.teams = {
-    url: teamsUrl,
-    team_count: teamList.length,
-    error: teamsData?._error || null,
-  };
-
-  // ── Step 2: Sample roster (first team) ───────────────────────────────────
-  const firstTeamId = teamList[0]?.team?.id || teamList[0]?.id;
-  if (firstTeamId) {
-    const rosterUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/teams/${firstTeamId}/roster`;
-    const rosterData = await fetchWithTimeout(rosterUrl);
-    const groups = rosterData?.athletes || [];
-    const samplePlayers = [];
-    for (const g of groups) {
-      const items = g.items || g.athletes || [];
-      samplePlayers.push(...items.slice(0, 2).map(p => ({
-        id: p.id,
-        displayName: p.displayName,
-        uid: p.uid,
-      })));
-    }
-    steps.sample_roster = {
-      team_id: firstTeamId,
-      url: rosterUrl,
-      sample_players: samplePlayers.slice(0, 6),
-      error: rosterData?._error || null,
-    };
-  }
-
-  // ── Step 3: Full enrichment ───────────────────────────────────────────────
-  const mockPick = {
-    player,
-    stat,
-    sport,
-    bet_type: 'Over',
-    line: line ? parseFloat(line) : null,
-  };
+  const mockPick = { player, stat, sport, bet_type: 'Over', line: line ? parseFloat(line) : null };
 
   const start = Date.now();
   const enrichments = await enrichPicks([mockPick], gameDate);
   const elapsed = Date.now() - start;
   const e = enrichments[0];
 
-  // ── Step 4: Gamelog raw check (if we got an athlete ID) ───────────────────
-  if (e.espnId) {
-    // Test the scoreboard lookback approach directly
-    const recentGameIds = [];
-    const lookbackDate = new Date(gameDate);
-    for (let daysBack = 1; daysBack <= 7 && recentGameIds.length < 8; daysBack++) {
-      lookbackDate.setDate(lookbackDate.getDate() - 1);
-      const dateStr = lookbackDate.toISOString().slice(0,10).replace(/-/g,'');
-      const sbUrl = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${dateStr}`;
-      const sbData = await fetchWithTimeout(sbUrl);
-      if (sbData?.events) {
-        for (const ev of sbData.events) {
-          if (ev.status?.type?.completed) recentGameIds.push({ id: ev.id, date: dateStr, name: ev.shortName });
-        }
-      }
-    }
-    steps.gamelog = {
-      approach: 'scoreboard_lookback',
-      recent_game_ids: recentGameIds,
-      recentForm_from_enrichment: e.recentForm,
-    };
-  }
-
-  // ── Build response ────────────────────────────────────────────────────────
   const checks = {
-    athlete_found:    !!e.espnId,
-    injury_found:     !!e.injuryStatus && e.injuryStatus !== 'Unknown',
-    form_found:       !!(e.recentForm?.length > 0),
-    form_has_values:  !!(e.recentForm?.some(g => g.value !== null)),
-    opponent_found:   !!e.opponent,
-    prompt_populated: (formatEnrichmentForPrompt(enrichments) || '').length > 50,
+    athlete_found:   !!e.espnId,
+    injury_found:    !!e.injuryStatus && e.injuryStatus !== 'Unknown',
+    form_found:      !!(e.recentForm?.length > 0),
+    form_has_values: !!(e.recentForm?.some(g => g.value !== null)),
+    opponent_found:  !!e.opponent,
   };
 
   return res.status(200).json({
+    success: true,
+    mode: 'enrichment',
     input: { player, stat, sport, gameDate, line: mockPick.line },
     elapsed_ms: elapsed,
     checks,
-    status: Object.values(checks).every(Boolean)
-      ? '✅ All checks passed'
-      : '⚠️ Some data missing — see steps for details',
+    status: Object.values(checks).every(Boolean) ? '✅ All checks passed' : '⚠️ Some data missing',
     enrichment_result: {
       playerFullName: e.playerFullName || null,
-      espnId: e.espnId || null,
-      injuryStatus: e.injuryStatus || null,
-      statKey: e.statKey || null,
-      opponent: e.opponent || null,
-      recentForm: e.recentForm || null,
-      error: e.error || null,
+      espnId:         e.espnId || null,
+      injuryStatus:   e.injuryStatus || null,
+      opponent:       e.opponent || null,
+      recentForm:     e.recentForm || null,
+      error:          e.error || null,
     },
     prompt_block: formatEnrichmentForPrompt(enrichments),
-    diagnostic_steps: steps,
   });
 }
