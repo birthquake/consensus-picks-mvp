@@ -108,25 +108,33 @@ export default async function handler(req, res) {
     }
     steps.recent_game_ids = { days_checked: 3, games_found: recentIds.length, sample: recentIds.slice(0, 5) };
 
-    // Test splits endpoint for first player on home roster
+    // Test season averages endpoints for first player
     if (steps.roster?.sample_players?.length > 0) {
-      const testPlayer = steps.roster.sample_players[0];
-      const splitsUrl = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/athletes/${testPlayer.id}/splits`;
-      const splitsData = await fetchWithTimeout(splitsUrl);
-      steps.splits_test = {
-        player: testPlayer.name,
-        player_id: testPlayer.id,
-        url: splitsUrl,
-        top_level_keys: splitsData ? Object.keys(splitsData) : [],
-        error: splitsData?._error || null,
-        // Show shape of splitCategories
-        split_categories_count: splitsData?.splitCategories?.length || 0,
-        split_categories_names: (splitsData?.splitCategories || []).map(s => s.displayName || s.type || s.abbreviation),
-        // Show filters/categories
-        filters_count: splitsData?.filters?.length || 0,
-        filters: (splitsData?.filters || []).map(f => ({ name: f.displayName, value: f.value })),
-        // Raw first 200 chars to see shape
-        raw_sample: JSON.stringify(splitsData || {}).substring(0, 500),
+      const p = steps.roster.sample_players[0];
+
+      // Test 1: statistics endpoint
+      const statsUrl = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/athletes/${p.id}/statistics`;
+      const statsData = await fetchWithTimeout(statsUrl);
+      steps.statistics_test = {
+        player: p.name, url: statsUrl,
+        top_level_keys: statsData ? Object.keys(statsData) : [],
+        splits_keys: statsData?.splits ? Object.keys(statsData.splits) : [],
+        categories_count: statsData?.splits?.categories?.length || statsData?.categories?.length || 0,
+        first_category_sample: JSON.stringify(statsData?.splits?.categories?.[0] || statsData?.categories?.[0] || {}).substring(0, 400),
+        error: statsData?._error || null,
+      };
+
+      // Test 2: overview endpoint
+      const overviewUrl = `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${p.id}/overview`;
+      const overviewData = await fetchWithTimeout(overviewUrl);
+      steps.overview_test = {
+        player: p.name, url: overviewUrl,
+        top_level_keys: overviewData ? Object.keys(overviewData) : [],
+        athlete_keys: overviewData?.athlete ? Object.keys(overviewData.athlete) : [],
+        has_statistics: !!(overviewData?.athlete?.statistics || overviewData?.statistics),
+        statistics_keys: overviewData?.athlete?.statistics ? Object.keys(overviewData.athlete.statistics) : [],
+        error: overviewData?._error || null,
+        raw_sample: JSON.stringify(overviewData || {}).substring(0, 400),
       };
     }
 
