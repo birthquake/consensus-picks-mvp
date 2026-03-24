@@ -202,11 +202,11 @@ async function buildPlayerStatsMap(sport, league, gameDate) {
   // A player appears in roughly every other game, so 25 games = ~12 appearances per player
   // Each NBA team plays every 2-3 days. To get 5 games per player we need
   // ~5 × 15 league games/day = 75 total games. Use 60 as a balance.
-  const gameIdsToFetch = gameIds.slice(0, 60);
+  const gameIdsToFetch = gameIds.slice(0, 80);
   console.log(`[pregame/analyze] Fetching ${gameIdsToFetch.length} summaries in parallel...`);
 
   // Fetch in two parallel batches of 30 to avoid overwhelming ESPN
-  const [batch1, batch2] = [gameIdsToFetch.slice(0, 30), gameIdsToFetch.slice(30)];
+  const [batch1, batch2] = [gameIdsToFetch.slice(0, 40), gameIdsToFetch.slice(40)];
   const [results1, results2] = await Promise.all([
     Promise.all(batch1.map(id =>
       fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${id}`, 5000).catch(() => null)
