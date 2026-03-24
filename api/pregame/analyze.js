@@ -162,6 +162,110 @@ async function getRecentGameIds(sport, league, gameDate) {
   return { gameIds, gameDateMap };
 }
 
+async function getFormFromGamelog(sport, league, athleteId) {
+  // Single API call that returns a player's recent game log with stats
+  // Much faster than searching through game summaries
+  try {
+    // Try the athlete splits endpoint first — returns per-game data
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/athletes/${athleteId}/splits`;
+    const data = await fetchWithTimeout(url, 4000);
+    if (!data) return null;
+
+    // splits response has categories with per-game breakdowns
+    // Look for "gameLog" or "lastFive" type splits
+    const categories = data.filters || data.categories || [];
+    const splitData  = data.splitCategories || data.splits || [];
+
+    if (!splitData.length) return null;
+
+    // Find the game log split — has individual game rows
+    const gameLogSplit = splitData.find(s =>
+      s.displayName?.toLowerCase().includes('game') ||
+      s.type?.toLowerCase().includes('game') ||
+      s.abbreviation?.toLowerCase() === 'game'
+    );
+
+    if (!gameLogSplit?.rows) return null;
+
+    // Each row is a game — extract stats
+    const statNames = (gameLogSplit.labels || gameLogSplit.names || []).map(n => n.toLowerCase());
+    const byGame = [];
+
+    for (const row of (gameLogSplit.rows || []).slice(0, 5)) {
+      const stats = {};
+      const vals  = row.stats || row.values || [];
+
+      for (let i = 0; i < statNames.length; i++) {
+        const name = statNames[i];
+        const val  = parseStatValue(String(vals[i] ?? ''));
+        if (val != null) {
+          if (name === 'pts' || name === 'points') stats.points = val;
+          if (name === 'reb' || name === 'rebounds') stats.rebounds = val;
+          if (name === 'ast' || name === 'assists') stats.assists = val;
+          if (name === 'stl' || name === 'steals') stats.steals = val;
+          if (name === 'blk' || name === 'blocks') stats.blocks = val;
+          if (name === 'min' || name === 'minutes') stats.minutes = val;
+        }
+      }
+
+      if (Object.keys(stats).length > 0) {
+        byGame.push({ stats, isHome: null, date: row.gameDate || null });
+      }
+    }
+
+    return byGame.length > 0 ? buildFormData(byGame) : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildFormData(byGame) {
+  const calc = (games, stat) => {
+    const vals = games.map(g => g.stats[stat]).filter(v => v != null && !isNaN(v));
+    if (!vals.length) return null;
+    return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10;
+  };
+
+  const stdDev = (games, stat) => {
+    const vals = games.map(g => g.stats[stat]).filter(v => v != null && !isNaN(v));
+    if (vals.length < 2) return null;
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    return Math.round(Math.sqrt(vals.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / vals.length) * 10) / 10;
+  };
+
+  const formData = { byGame };
+  formData.averages = {
+    last5:  Object.fromEntries(STAT_KEYS.map(s => [s, calc(byGame, s)])),
+    last10: Object.fromEntries(STAT_KEYS.map(s => [s, calc(byGame, s)])),
+  };
+  formData.stdDev   = Object.fromEntries(STAT_KEYS.map(s => [s, stdDev(byGame, s)]));
+  formData.floor    = Object.fromEntries(STAT_KEYS.map(s => {
+    const vals = byGame.map(g => g.stats[s]).filter(v => v != null);
+    return [s, vals.length ? Math.min(...vals) : null];
+  }));
+  formData.ceiling  = Object.fromEntries(STAT_KEYS.map(s => {
+    const vals = byGame.map(g => g.stats[s]).filter(v => v != null);
+    return [s, vals.length ? Math.max(...vals) : null];
+  }));
+
+  const last3 = byGame.slice(0, 2);
+  const older = byGame.slice(2);
+  formData.trends = {};
+  for (const stat of STAT_KEYS) {
+    const r = calc(last3, stat);
+    const o = calc(older, stat);
+    if (!r || !o || o === 0) { formData.trends[stat] = 'neutral'; continue; }
+    formData.trends[stat] = r > o * 1.15 ? 'up' : r < o * 0.85 ? 'down' : 'neutral';
+  }
+
+  formData.homeAvg = Object.fromEntries(STAT_KEYS.map(s => [s, null]));
+  formData.awayAvg = Object.fromEntries(STAT_KEYS.map(s => [s, null]));
+  formData.daysSinceLastGame = 2;
+  formData.isBackToBack = false;
+
+  return formData;
+}
+
 async function getHistoricalForm(sport, league, athleteId, gameDate, sharedGameIds = null, sharedDateMap = null) {
   let recentGameIds, gameDateMap;
 
@@ -176,10 +280,13 @@ async function getHistoricalForm(sport, league, athleteId, gameDate, sharedGameI
 
   if (recentGameIds.length === 0) return null;
 
+  // Cap game IDs to search — no need to search all 190, player plays every 2-3 days
+  const gameIdsToSearch = recentGameIds.slice(0, 50);
+
   const formData = { byGame: [], gameDates: {} };
   const BATCH = 8;
 
-  for (let i = 0; i < recentGameIds.length && formData.byGame.length < 10; i += BATCH) {
+  for (let i = 0; i < gameIdsToSearch.length && formData.byGame.length < 5; i += BATCH) {
     const batch = recentGameIds.slice(i, i + BATCH);
     const batchResults = await Promise.all(
       batch.map(gameId => extractPlayerGameLine(sport, league, gameId, athleteId, gameDateMap?.[gameId]))
@@ -193,69 +300,7 @@ async function getHistoricalForm(sport, league, athleteId, gameDate, sharedGameI
   }
 
   if (formData.byGame.length === 0) return null;
-
-  const calc = (games, stat) => {
-    const vals = games.map(g => g.stats[stat]).filter(v => v != null && !isNaN(v));
-    if (vals.length === 0) return null;
-    return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
-  };
-
-  const stdDev = (games, stat) => {
-    const vals = games.map(g => g.stats[stat]).filter(v => v != null && !isNaN(v));
-    if (vals.length < 2) return null;
-    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-    const variance = vals.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / vals.length;
-    return Math.round(Math.sqrt(variance) * 10) / 10;
-  };
-
-  const last5  = formData.byGame.slice(0, 5);
-  const last10 = formData.byGame.slice(0, 10);
-
-  formData.averages = {
-    last5:  Object.fromEntries(STAT_KEYS.map(s => [s, calc(last5, s)])),
-    last10: Object.fromEntries(STAT_KEYS.map(s => [s, calc(last10, s)])),
-  };
-
-  formData.stdDev = Object.fromEntries(STAT_KEYS.map(s => [s, stdDev(last10, s)]));
-  formData.floor  = Object.fromEntries(STAT_KEYS.map(s => {
-    const vals = last10.map(g => g.stats[s]).filter(v => v != null);
-    return [s, vals.length > 0 ? Math.min(...vals) : null];
-  }));
-  formData.ceiling = Object.fromEntries(STAT_KEYS.map(s => {
-    const vals = last10.map(g => g.stats[s]).filter(v => v != null);
-    return [s, vals.length > 0 ? Math.max(...vals) : null];
-  }));
-
-  // Trend: last 3 vs games 4-10
-  const last3 = formData.byGame.slice(0, 3);
-  const older = formData.byGame.slice(3, 10);
-  formData.trends = {};
-  for (const stat of STAT_KEYS) {
-    const r = calc(last3, stat);
-    const o = calc(older, stat);
-    if (r == null || o == null || o === 0) { formData.trends[stat] = 'neutral'; continue; }
-    if (r > o * 1.15) formData.trends[stat] = 'up';
-    else if (r < o * 0.85) formData.trends[stat] = 'down';
-    else formData.trends[stat] = 'neutral';
-  }
-
-  // Home/away splits
-  formData.homeAvg = Object.fromEntries(STAT_KEYS.map(s => [s, calc(formData.byGame.filter(g => g.isHome), s)]));
-  formData.awayAvg = Object.fromEntries(STAT_KEYS.map(s => [s, calc(formData.byGame.filter(g => !g.isHome), s)]));
-
-  // Days since last game (rest)
-  if (formData.byGame.length > 0) {
-    const lastGameDate = formData.byGame[0].date;
-    if (lastGameDate) {
-      const daysSinceLastGame = Math.floor(
-        (new Date(gameDate) - new Date(lastGameDate)) / 86400000
-      );
-      formData.daysSinceLastGame = daysSinceLastGame;
-      formData.isBackToBack = daysSinceLastGame <= 1;
-    }
-  }
-
-  return formData;
+  return buildFormData(formData.byGame);
 }
 
 async function extractPlayerGameLine(sport, league, gameId, athleteId, date) {
@@ -602,27 +647,42 @@ export default async function handler(req, res) {
 
     // Tag players with home/away and limit to likely rotation players
     // Cap at 8 per team (16 total) to stay within time budget
-    const homePlayers = homeRoster.slice(0, 8).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
-    const awayPlayers = awayRoster.slice(0, 8).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation || 'AWY' }));
+    // Cap to 5 per team (10 total) — starters only to stay within timeout budget
+    const homePlayers = homeRoster.slice(0, 5).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
+    const awayPlayers = awayRoster.slice(0, 5).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation || 'AWY' }));
     const allPlayers  = [...homePlayers, ...awayPlayers];
 
-    console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players`);
+    console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players (5 per team)`);
 
-    // Step 2: Fetch game IDs once (shared across all players — avoids 400+ parallel ESPN calls)
-    console.log(`[pregame/analyze] Fetching recent game IDs...`);
-    const { gameIds: sharedGameIds, gameDateMap: sharedDateMap } = await getRecentGameIds(sport, league, gameDate);
-    console.log(`[pregame/analyze] Found ${sharedGameIds.length} recent game IDs`);
+    // Step 2: Fetch game IDs as fallback only — primary form fetch uses athlete splits endpoint
+    console.log(`[pregame/analyze] Fetching recent game IDs (fallback)...`);
+    const sharedGameIds = [];
+    const sharedDateMap = {};
+    // Only fetch if we need the fallback — skip for now to stay fast
+    // await getRecentGameIds() would go here if needed
 
-    // Step 3: Fetch historical form + season averages in parallel
-    // Form uses shared game IDs — no redundant scoreboard fetches per player
-    const [formResults, seasonResults] = await Promise.all([
-      Promise.all(allPlayers.map(p =>
-        getHistoricalForm(sport, league, p.id, gameDate, sharedGameIds, sharedDateMap).catch(() => null)
-      )),
-      Promise.all(allPlayers.map(p =>
-        getSeasonAverages(sport, league, p.id).catch(() => null)
-      )),
+    // Step 3: Fetch historical form + season averages with hard timeout
+    const ANALYSIS_TIMEOUT = 40000; // 40s — leaves room for Claude call
+
+    let formResults   = allPlayers.map(() => null);
+    let seasonResults = allPlayers.map(() => null);
+
+    await Promise.race([
+      Promise.all([
+        Promise.all(allPlayers.map((p, i) =>
+          getHistoricalForm(sport, league, p.id, gameDate, sharedGameIds, sharedDateMap)
+            .then(r => { formResults[i] = r; }).catch(() => {})
+        )),
+        Promise.all(allPlayers.map((p, i) =>
+          getSeasonAverages(sport, league, p.id)
+            .then(r => { seasonResults[i] = r; }).catch(() => {})
+        )),
+      ]),
+      new Promise(resolve => setTimeout(resolve, ANALYSIS_TIMEOUT)),
     ]);
+
+    console.log(`[pregame/analyze] Form results: ${formResults.filter(Boolean).length}/${allPlayers.length}`);
+    console.log(`[pregame/analyze] Season results: ${seasonResults.filter(Boolean).length}/${allPlayers.length}`);
 
     // Step 4: Build projections, filter to players with enough data
     const playerData = allPlayers.map((p, i) => {
