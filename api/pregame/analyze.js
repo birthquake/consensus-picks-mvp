@@ -682,12 +682,28 @@ Return ONLY valid JSON, no markdown:
 
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 1500,
+    max_tokens: 3000,
     messages: [{ role: 'user', content: prompt }],
   });
 
-  const raw = msg.content[0].text.replace(/```json[\n]?/g, '').replace(/```[\n]?/g, '').trim();
-  const result = JSON.parse(raw);
+  let raw = msg.content[0].text.replace(/```json[\n]?/g, '').replace(/```[\n]?/g, '').trim();
+  
+  // Find the outermost JSON object — Claude sometimes adds text before/after
+  const jsonStart = raw.indexOf('{');
+  const jsonEnd   = raw.lastIndexOf('}');
+  if (jsonStart !== -1 && jsonEnd !== -1) {
+    raw = raw.substring(jsonStart, jsonEnd + 1);
+  }
+
+  let result;
+  try {
+    result = JSON.parse(raw);
+  } catch (parseErr) {
+    console.error('[pregame/PRA] JSON parse error:', parseErr.message);
+    console.error('[pregame/PRA] Raw (first 500):', raw.substring(0, 500));
+    console.error('[pregame/PRA] Raw (around error pos 3681):', raw.substring(3600, 3750));
+    throw new Error(`Claude response JSON parse failed: ${parseErr.message}`);
+  }
 
   // Attach full ranking from our math (not just Claude's top picks)
   result.full_rankings = praPlayers.map(p => ({
@@ -816,8 +832,17 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
     messages: [{ role: 'user', content: prompt }],
   });
 
-  const raw = msg.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  return JSON.parse(raw);
+  let raw = msg.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  const jsonStart = raw.indexOf('{');
+  const jsonEnd   = raw.lastIndexOf('}');
+  if (jsonStart !== -1 && jsonEnd !== -1) raw = raw.substring(jsonStart, jsonEnd + 1);
+  try {
+    return JSON.parse(raw);
+  } catch (parseErr) {
+    console.error('[pregame/picks] JSON parse error at pos', parseErr.message);
+    console.error('[pregame/picks] Raw snippet:', raw.substring(0, 300));
+    throw new Error(`Claude response JSON parse failed: ${parseErr.message}`);
+  }
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
