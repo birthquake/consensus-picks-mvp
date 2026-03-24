@@ -164,6 +164,12 @@ async function getRecentGameIds(sport, league, gameDate) {
 
 // Intentionally empty — replaced by bulk summary approach below
 
+function getHistoricalFormFromMap(athleteId, playerStatsMap) {
+  const byGame = playerStatsMap[String(athleteId)] || [];
+  if (byGame.length === 0) return null;
+  return buildFormData(byGame);
+}
+
 // Fetch recent game summaries once and extract stats for ALL players simultaneously
 // This is the key optimization — O(games) fetches instead of O(players × games)
 async function buildPlayerStatsMap(sport, league, gameDate) {
