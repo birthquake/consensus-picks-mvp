@@ -87,19 +87,43 @@ async function getTeamRoster(sport, league, teamId) {
   const data = await fetchWithTimeout(url, 5000);
   if (!data) return [];
 
+  const athletes = data.athletes || [];
+
+  // ESPN roster shape varies:
+  // Shape A (flat): data.athletes = [{ id, displayName, position, ... }, ...]
+  // Shape B (grouped): data.athletes = [{ displayName:"Guards", items:[...] }, ...]
+  // Detect by checking if first element has an "id" field (flat) or "items" field (grouped)
+  const isFlat = athletes.length > 0 && (athletes[0].id || athletes[0].fullName);
+
   const players = [];
-  const groups = data.athletes || [];
-  for (const group of groups) {
-    const items = group.items || group.athletes || [];
-    for (const p of items) {
+
+  if (isFlat) {
+    // Flat array — each element IS a player
+    for (const p of athletes) {
+      if (!p.id) continue;
       players.push({
         id: p.id,
-        name: p.displayName,
+        name: p.displayName || p.fullName,
         position: p.position?.abbreviation,
         jersey: p.jersey,
       });
     }
+  } else {
+    // Grouped array — each element is a position group containing players
+    for (const group of athletes) {
+      const items = group.items || group.athletes || group.entries || [];
+      for (const p of items) {
+        if (!p.id) continue;
+        players.push({
+          id: p.id,
+          name: p.displayName || p.fullName,
+          position: p.position?.abbreviation,
+          jersey: p.jersey,
+        });
+      }
+    }
   }
+
   return players;
 }
 
