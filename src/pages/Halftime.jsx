@@ -285,6 +285,12 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', marginTop: '2px' }}>
             {game.label} · {game.statusDescription}
+            {game.startTime && (() => {
+              const d = new Date(game.startTime);
+              const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+              const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+              return <span style={{ marginLeft: '6px', color: 'var(--text-secondary, #888)' }}>· {date} {time}</span>;
+            })()}
             {game.scoreDiff >= 20 && (
               <span style={{ color: '#fbbf24', marginLeft: '8px', fontWeight: '600' }}>
                 ⚠️ Large lead
