@@ -25,12 +25,13 @@ async function fetchWithTimeout(url, ms = 5000) {
   }
 }
 
-function extractGameData(event, config) {
+function extractGameData(event, config, targetDate = null) {
   const comp        = event.competitions?.[0];
   const status      = comp?.status;
   const competitors = comp?.competitors || [];
   const home        = competitors.find(c => c.homeAway === 'home');
   const away        = competitors.find(c => c.homeAway === 'away');
+  const gameDate    = comp?.date ? comp.date.substring(0, 10) : null;
 
   return {
     id:        event.id,
@@ -40,6 +41,7 @@ function extractGameData(event, config) {
     name:      event.name,
     shortName: event.shortName,
     gameDate:  comp?.date || event.date,
+    gameDateStr: gameDate, // YYYY-MM-DD for filtering
     homeTeam: {
       id:           home?.team?.id,
       name:         home?.team?.displayName,
@@ -87,25 +89,47 @@ export default async function handler(req, res) {
     const todayGames    = (todayData?.events    || []).map(e => extractGameData(e, config));
     const tomorrowGames = (tomorrowData?.events || []).map(e => extractGameData(e, config));
 
-    // Pre-game = not yet started
-    const preGamesToday    = todayGames.filter(g => g.state === 'pre');
-    const liveGamesToday   = todayGames.filter(g => g.state === 'in');
-    const preGamesTomorrow = tomorrowGames.filter(g => g.state === 'pre');
+    const todayStr = new Date().toISOString().substring(0, 10);
+    const preGamesToday  = todayGames.filter(g => g.state === 'pre' && (!g.gameDateStr || g.gameDateStr === todayStr));
+    const liveGamesToday = todayGames.filter(g => g.state === 'in'  && (!g.gameDateStr || g.gameDateStr === todayStr));
+    const finishedToday  = todayGames.filter(g => g.state === 'post' && (!g.gameDateStr || g.gameDateStr === todayStr));
+    // Only include games actually scheduled for tomorrow (ESPN sometimes returns extra days)
+    const tomorrowStr = new Date(Date.now() + 86400000).toISOString().substring(0, 10);
+    const preGamesTomorrow = tomorrowGames.filter(g => 
+      g.state === 'pre' && (!g.gameDateStr || g.gameDateStr === tomorrowStr)
+    );
 
-    // Combine: show today's pre-game first, then live (can still preview),
-    // then tomorrow's if today has nothing
-    let games = [...preGamesToday];
-    if (games.length === 0) games = [...liveGamesToday, ...preGamesTomorrow.slice(0, 3)];
+    // Priority: pre-game today → live today → tomorrow's pre-games
+    // Never mix days — show one clear context at a time
+    let games = [];
+    let context = '';
 
-    console.log(`[pregame/scan] Found ${games.length} games (${preGamesToday.length} pre-game today)`);
+    if (preGamesToday.length > 0) {
+      games = preGamesToday;
+      context = 'pre-game today';
+    } else if (liveGamesToday.length > 0) {
+      // Games in progress — still useful for analysis
+      games = liveGamesToday;
+      context = 'live today';
+    } else if (preGamesTomorrow.length > 0) {
+      games = preGamesTomorrow;
+      context = 'pre-game tomorrow';
+    } else if (finishedToday.length > 0) {
+      // All done for tonight — show tomorrow
+      games = preGamesTomorrow;
+      context = 'pre-game tomorrow (all finished today)';
+    }
+
+    console.log(`[pregame/scan] Found ${games.length} games (context: ${context})`);
 
     return res.status(200).json({
       success:     true,
       games,
-      total:       games.length,
-      today_count: todayGames.length,
-      scanned_at:  new Date().toISOString(),
-      sport:       config.label,
+      total:        games.length,
+      context,
+      today_count:  todayGames.length,
+      scanned_at:   new Date().toISOString(),
+      sport:        config.label,
     });
 
   } catch (err) {
