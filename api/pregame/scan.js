@@ -6,7 +6,7 @@
 //
 // Usage: GET /api/pregame/scan?sport=nba
 
-import { fetchNBAPlayerProps } from '../../lib/odds-client.js';
+// import { fetchNBAPlayerProps } from '../../lib/odds-client.js'; // DISABLED — conserve API credits
 
 const SPORT_CONFIG = {
   nba: { sport: 'basketball', league: 'nba', label: 'NBA' },
@@ -83,11 +83,13 @@ export default async function handler(req, res) {
     const today    = formatDate(new Date());
     const tomorrow = formatDate(new Date(Date.now() + 86400000));
 
-    const [todayData, tomorrowData, oddsMap] = await Promise.all([
+    const [todayData, tomorrowData] = await Promise.all([
       fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${today}`),
       fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${tomorrow}`),
-      sportKey === 'nba' ? fetchNBAPlayerProps() : Promise.resolve({}),
     ]);
+
+    // Odds fetching disabled — using calculated thresholds instead
+    const oddsMap = {};
 
     const todayGames    = (todayData?.events    || []).map(e => extractGameData(e, config));
     const tomorrowGames = (tomorrowData?.events || []).map(e => extractGameData(e, config));
@@ -121,9 +123,7 @@ export default async function handler(req, res) {
     }
 
     console.log(`[pregame/scan] Found ${games.length} games (context: ${context})`);
-
-    const oddsPlayerCount = Object.keys(oddsMap || {}).length;
-    console.log(`[pregame/scan] Odds map: ${oddsPlayerCount} players`);
+    console.log(`[pregame/scan] Odds disabled — using calculated thresholds`);
 
     return res.status(200).json({
       success:     true,
@@ -133,8 +133,8 @@ export default async function handler(req, res) {
       today_count:  todayGames.length,
       scanned_at:   new Date().toISOString(),
       sport:        config.label,
-      oddsMap:      oddsMap || {},
-      odds_players: oddsPlayerCount,
+      oddsMap:      {},
+      odds_players: 0,
     });
 
   } catch (err) {
