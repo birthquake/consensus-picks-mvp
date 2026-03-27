@@ -6,6 +6,8 @@
 //
 // Usage: GET /api/pregame/scan?sport=nba
 
+import { fetchNBAPlayerProps } from '../../lib/odds-client.js';
+
 const SPORT_CONFIG = {
   nba: { sport: 'basketball', league: 'nba', label: 'NBA' },
   mlb: { sport: 'baseball',   league: 'mlb', label: 'MLB' },
@@ -81,9 +83,10 @@ export default async function handler(req, res) {
     const today    = formatDate(new Date());
     const tomorrow = formatDate(new Date(Date.now() + 86400000));
 
-    const [todayData, tomorrowData] = await Promise.all([
+    const [todayData, tomorrowData, oddsMap] = await Promise.all([
       fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${today}`),
       fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${tomorrow}`),
+      sportKey === 'nba' ? fetchNBAPlayerProps() : Promise.resolve({}),
     ]);
 
     const todayGames    = (todayData?.events    || []).map(e => extractGameData(e, config));
@@ -119,6 +122,9 @@ export default async function handler(req, res) {
 
     console.log(`[pregame/scan] Found ${games.length} games (context: ${context})`);
 
+    const oddsPlayerCount = Object.keys(oddsMap || {}).length;
+    console.log(`[pregame/scan] Odds map: ${oddsPlayerCount} players`);
+
     return res.status(200).json({
       success:     true,
       games,
@@ -127,6 +133,8 @@ export default async function handler(req, res) {
       today_count:  todayGames.length,
       scanned_at:   new Date().toISOString(),
       sport:        config.label,
+      oddsMap:      oddsMap || {},
+      odds_players: oddsPlayerCount,
     });
 
   } catch (err) {
