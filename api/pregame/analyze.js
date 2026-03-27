@@ -800,6 +800,68 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
 
 // ─── Claude prompt ────────────────────────────────────────────────────────────
 
+function buildDailyCardPicks(playerData, matchupContext, gameId, homeTeam, awayTeam) {
+  // Build ranked pick candidates from projection data — no Claude needed
+  // Returns picks sorted by edge and confidence for the Daily Card aggregator
+  const candidates = [];
+
+  for (const p of playerData) {
+    if (!p.projections) continue;
+
+    for (const [stat, proj] of Object.entries(p.projections)) {
+      if (!proj || proj.blended == null || proj.threshold == null) continue;
+      if (proj.edge <= 0) continue;
+      if (proj.lowSample) continue; // skip low sample players
+
+      // Build confidence rating 1-5 based on signals
+      let rating = 3;
+      if (proj.belowFloor)              rating += 1;
+      if (proj.trend === 'up')          rating += 0.5;
+      if (proj.trend === 'down')        rating -= 0.5;
+      if (proj.isBackToBack)            rating -= 1;
+      if (proj.stdDev != null && proj.stdDev < 3) rating += 0.5; // low variance
+      if (proj.stdDev != null && proj.stdDev > 7) rating -= 0.5; // high variance
+      if (matchupContext?.blowoutRisk === 'high') rating -= 0.5;
+      if (proj.defenseRating === 'poor' || proj.defenseRating === 'bottom-tier') rating += 0.5;
+      if (proj.defenseRating === 'elite') rating -= 0.5;
+      if (proj.sampleSize >= 8)         rating += 0.5;
+
+      rating = Math.max(1, Math.min(5, Math.round(rating)));
+
+      // Only include 3+ star picks for daily card
+      if (rating < 3) continue;
+
+      const statLabel = stat.charAt(0).toUpperCase() + stat.slice(1);
+
+      candidates.push({
+        gameId,
+        player:     p.name,
+        team:       p.team,
+        isHome:     p.isHome,
+        stat:       statLabel,
+        direction:  'Over',
+        threshold:  proj.threshold,
+        projection: proj.blended,
+        edge:       proj.edge,
+        rating,
+        trend:      proj.trend,
+        belowFloor: proj.belowFloor,
+        isBackToBack: proj.isBackToBack,
+        sampleSize:   proj.sampleSize,
+        blowoutRisk:  matchupContext?.blowoutRisk || 'low',
+        homeTeam:   homeTeam?.abbreviation,
+        awayTeam:   awayTeam?.abbreviation,
+        game:       `${awayTeam?.abbreviation} @ ${homeTeam?.abbreviation}`,
+      });
+    }
+  }
+
+  // Sort by rating desc, then edge desc
+  return candidates.sort((a, b) =>
+    b.rating !== a.rating ? b.rating - a.rating : b.edge - a.edge
+  );
+}
+
 async function generatePRARanking(game, playerData, matchupContext = null) {
   // Build PRA projections for each player
   const praPlayers = playerData.map(p => {
@@ -1222,6 +1284,20 @@ export default async function handler(req, res) {
         mode: 'pra',
         ...analysis,
         player_count: playerData.length,
+        analyzed_at: new Date().toISOString(),
+      });
+    }
+
+    if (mode === 'daily') {
+      // Daily card mode — return top picks for this game without Claude call
+      // Just run projections and return raw ranked data for the UI to aggregate
+      const dailyPicks = buildDailyCardPicks(playerData, matchupContext, gameId, homeTeam, awayTeam);
+      return res.status(200).json({
+        success: true,
+        gameId,
+        game: { homeTeam, awayTeam, sport, league, gameDate },
+        mode: 'daily',
+        picks: dailyPicks,
         analyzed_at: new Date().toISOString(),
       });
     }
