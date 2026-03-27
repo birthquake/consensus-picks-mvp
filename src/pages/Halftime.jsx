@@ -309,46 +309,46 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
 
       {/* Analyze button / loading / results */}
       <div style={{ padding: '16px 20px' }}>
-        {state === 'idle' && (
-          <div>
-            {mode === 'pregame' && (
-              <div style={{
-                display: 'flex', gap: '6px', marginBottom: '10px',
-                background: 'var(--bg-tertiary, #0a0a0a)',
-                padding: '4px', borderRadius: '8px',
-              }}>
-                {[
-                  { id: 'picks', label: '🎯 Prop Picks' },
-                  { id: 'pra',   label: '📊 PRA Leader' },
-                ].map(m => (
-                  <button
-                    key={m.id}
-                    onClick={() => setAnalysisMode(m.id)}
-                    style={{
-                      flex: 1, padding: '7px', borderRadius: '6px', border: 'none',
-                      background: analysisMode === m.id ? '#6366f1' : 'transparent',
-                      color: analysisMode === m.id ? '#fff' : 'var(--text-secondary, #888)',
-                      fontWeight: '600', fontSize: '12px', cursor: 'pointer',
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            )}
-            <button
-              onClick={() => analyze()}
-              style={{
-                width: '100%', padding: '12px', borderRadius: '10px',
-                background: 'linear-gradient(135deg, #6366f1, #3b82f6)',
-                border: 'none', color: '#fff', fontWeight: '700', fontSize: '14px',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-              }}
-            >
-              <Icon.Zap /> {analysisMode === 'pra' ? 'Find PRA Leader' : 'Analyze This Game'}
-            </button>
+        {/* Mode toggle — always visible in pregame mode */}
+        {mode === 'pregame' && (
+          <div style={{
+            display: 'flex', gap: '6px', marginBottom: '10px',
+            background: 'var(--bg-tertiary, #0a0a0a)',
+            padding: '4px', borderRadius: '8px',
+          }}>
+            {[
+              { id: 'picks', label: '🎯 Prop Picks' },
+              { id: 'pra',   label: '📊 PRA Leader' },
+            ].map(m => (
+              <button
+                key={m.id}
+                onClick={() => { setAnalysisMode(m.id); setState('idle'); setAnalysis(null); }}
+                style={{
+                  flex: 1, padding: '7px', borderRadius: '6px', border: 'none',
+                  background: analysisMode === m.id ? '#6366f1' : 'transparent',
+                  color: analysisMode === m.id ? '#fff' : 'var(--text-secondary, #888)',
+                  fontWeight: '600', fontSize: '12px', cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {m.label}
+              </button>
+            ))}
           </div>
+        )}
+
+        {state === 'idle' && (
+          <button
+            onClick={() => analyze()}
+            style={{
+              width: '100%', padding: '12px', borderRadius: '10px',
+              background: 'linear-gradient(135deg, #6366f1, #3b82f6)',
+              border: 'none', color: '#fff', fontWeight: '700', fontSize: '14px',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+            }}
+          >
+            <Icon.Zap /> {analysisMode === 'pra' ? 'Find PRA Leader' : 'Analyze This Game'}
+          </button>
         )}
 
         {state === 'loading' && (
@@ -378,6 +378,21 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
               padding: '4px 12px', cursor: 'pointer', fontSize: '12px',
             }}>Retry</button>
           </div>
+        )}
+
+        {state === 'done' && (
+          <button
+            onClick={() => analyze()}
+            style={{
+              width: '100%', padding: '9px', borderRadius: '8px', marginBottom: '12px',
+              background: 'transparent',
+              border: '1px solid var(--border-color, #333)',
+              color: 'var(--text-secondary, #888)', fontWeight: '600', fontSize: '12px',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+            }}
+          >
+            <Icon.Refresh /> Re-analyze
+          </button>
         )}
 
         {state === 'done' && analysis && analysis.mode === 'pra' && (
