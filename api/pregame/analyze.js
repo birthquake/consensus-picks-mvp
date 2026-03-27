@@ -170,6 +170,18 @@ function getHistoricalFormFromMap(athleteId, playerStatsMap) {
   return buildFormData(byGame);
 }
 
+function buildFormDataFromGamelog(gamelog) {
+  if (!gamelog || gamelog.allGames.length === 0) return null;
+  // Convert gamelog format to byGame format expected by buildFormData
+  const byGame = gamelog.allGames.map(g => ({
+    stats:   g.stats,
+    minutes: g.stats.minutes,
+    isHome:  null,
+    date:    null,
+  }));
+  return buildFormData(byGame);
+}
+
 // Fetch recent game summaries once and extract stats for ALL players simultaneously
 // This is the key optimization — O(games) fetches instead of O(players × games)
 async function buildPlayerStatsMap(sport, league, gameDate) {
@@ -391,77 +403,104 @@ async function extractPlayerGameLine(sport, league, gameId, athleteId, date) {
 
 // ─── Season averages ──────────────────────────────────────────────────────────
 
-async function getSeasonAverages(sport, league, athleteId) {
-  // The overview endpoint returns season averages in statistics.names/values arrays
-  // AND recent game log in gameLog.statistics[0] with per-game values
-  const url = `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${athleteId}/overview`;
+// Fetches gamelog for a player — returns both season averages AND recent game form
+// Single call replaces both getSeasonAverages and per-player summary searches
+async function getPlayerGamelog(sport, league, athleteId) {
+  const url = `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${athleteId}/gamelog`;
   const data = await fetchWithTimeout(url, 4000);
   if (!data) return null;
 
-  const result = {};
+  // Top-level names array — stat column order for all events
+  const names = data.names || [];
+  // seasonTypes[0].categories = monthly buckets, each with events array
+  const seasonType = data.seasonTypes?.[0];
+  const categories = seasonType?.categories || [];
 
-  // Parse season averages from overview statistics
-  // Shape: { statistics: { names: [...], values: [...] } }
-  const stats = data.statistics;
-  if (stats?.names && stats?.values && stats.values.length > 0) {
-    stats.names.forEach((name, i) => {
-      const val = parseFloat(stats.values[i]);
-      if (isNaN(val)) return;
-      const n = name.toLowerCase();
-      if (n === 'avgpoints')    result.points   = val;
-      if (n === 'avgrebounds')  result.rebounds = val;
-      if (n === 'avgassists')   result.assists  = val;
-      if (n === 'avgminutes')   result.minutes  = val;
-      if (n === 'fieldgoalpct') result.fgPct    = val;
-      if (n === 'avgsteals')    result.steals   = val;
-      if (n === 'avgblocks')    result.blocks   = val;
-    });
-  }
+  if (!names.length || !categories.length) return null;
 
-  // Also try to extract from gameLog.statistics (recent game totals block)
-  // Shape: { gameLog: { statistics: [{ names: [...], values: [...] }] } }
-  if (Object.keys(result).length === 0) {
-    const gameLogStats = data.gameLog?.statistics;
-    if (Array.isArray(gameLogStats)) {
-      for (const block of gameLogStats) {
-        const names  = block.names  || [];
-        const values = block.values || [];
-        if (!values.length) continue;
-        names.forEach((name, i) => {
-          const val = parseFloat(values[i]);
-          if (isNaN(val)) return;
-          const n = name.toLowerCase();
-          if (n === 'avgpoints' || n === 'points')     result.points   = val;
-          if (n === 'avgrebounds' || n === 'totalrebounds') result.rebounds = val;
-          if (n === 'avgassists' || n === 'assists')   result.assists  = val;
-          if (n === 'avgminutes' || n === 'minutes')   result.minutes  = val;
-          if (n === 'fieldgoalpct')                    result.fgPct    = val;
-          if (n === 'avgsteals' || n === 'steals')     result.steals   = val;
-          if (n === 'avgblocks' || n === 'blocks')     result.blocks   = val;
-        });
-        if (Object.keys(result).length > 0) break;
-      }
+  // Stat index map
+  const idx = (name) => names.findIndex(n =>
+    n === name || n.startsWith(name.split('-')[0])
+  );
+  const PTS_I = idx('points');
+  const REB_I = idx('totalRebounds');
+  const AST_I = idx('assists');
+  const STL_I = idx('steals');
+  const BLK_I = idx('blocks');
+  const MIN_I = idx('minutes');
+  const FGP_I = idx('fieldGoalPct');
+
+  // Collect all game entries chronologically (categories are month buckets)
+  const allGames = [];
+  for (const cat of categories) {
+    for (const event of (cat.events || [])) {
+      const stats = event.stats || [];
+      const parseS = (i) => {
+        if (i < 0 || i >= stats.length) return null;
+        const s = String(stats[i]);
+        // Handle "made-attempted" fractions — take first number
+        if (s.includes('-')) return parseFloat(s.split('-')[0]);
+        const v = parseFloat(s);
+        return isNaN(v) ? null : v;
+      };
+
+      const pts = parseS(PTS_I);
+      const reb = parseS(REB_I);
+      const ast = parseS(AST_I);
+      const min = parseS(MIN_I);
+
+      // Skip DNP entries (0 minutes, 0 everything)
+      if (min !== null && min < 5 && pts === 0 && reb === 0 && ast === 0) continue;
+
+      allGames.push({
+        eventId: event.eventId,
+        stats: {
+          points:   pts,
+          rebounds: reb,
+          assists:  ast,
+          steals:   parseS(STL_I),
+          blocks:   parseS(BLK_I),
+          minutes:  min,
+          fgPct:    parseS(FGP_I),
+        },
+      });
     }
   }
 
-  // Also extract per-game form data from gameLog.events for use as form data
-  // Each event in gameLog has an id and the values are in a parallel array
-  // stored in gameLog.statistics[0].athletes (if present) or we skip
-  result._gameLogData = null;
-  const gameLogEvents = data.gameLog?.events;
-  const gameLogStatBlock = data.gameLog?.statistics?.[0];
-  if (gameLogEvents && gameLogStatBlock) {
-    const names  = gameLogStatBlock.names  || [];
-    // events is keyed by event ID, values may be on the event or in a values array
-    // For now just store raw for future use
-    result._rawGameLog = {
-      names,
-      events: gameLogEvents,
-      valuesBlock: gameLogStatBlock,
-    };
-  }
+  if (allGames.length === 0) return null;
 
-  return Object.keys(result).filter(k => !k.startsWith('_')).length > 0 ? result : null;
+  // Games come back oldest-first from ESPN — reverse to get newest first
+  allGames.reverse();
+
+  // Compute averages
+  const avg = (games, stat) => {
+    const vals = games.map(g => g.stats[stat]).filter(v => v != null && !isNaN(v));
+    if (!vals.length) return null;
+    return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10;
+  };
+
+  const last5  = allGames.slice(0, 5);
+  const last10 = allGames.slice(0, 10);
+  const season = allGames; // all games = season
+
+  const seasonAvg = {
+    points:   avg(season, 'points'),
+    rebounds: avg(season, 'rebounds'),
+    assists:  avg(season, 'assists'),
+    steals:   avg(season, 'steals'),
+    blocks:   avg(season, 'blocks'),
+    minutes:  avg(season, 'minutes'),
+    fgPct:    avg(season, 'fgPct'),
+  };
+
+  return { allGames, last5, last10, seasonAvg, gamesPlayed: allGames.length };
+}
+
+async function getSeasonAverages(sport, league, athleteId) {
+  // Now backed by getPlayerGamelog
+  const gamelog = await getPlayerGamelog(sport, league, athleteId);
+  if (!gamelog) return null;
+  return gamelog.seasonAvg;
 }
 
 // ─── Opponent defensive rating ────────────────────────────────────────────────
@@ -1099,30 +1138,33 @@ export default async function handler(req, res) {
 
     console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players (up to 13 per team)`);
 
-    // Step 2: Build player stats map + fetch standings in parallel
-    console.log(`[pregame/analyze] Building player stats map + standings...`);
-    const [playerStatsMap, standingsMap] = await Promise.all([
-      buildPlayerStatsMap(sport, league, gameDate),
+    // Step 2: Fetch gamelogs + standings in parallel
+    // Each player's gamelog gives us BOTH form data AND season averages in one call
+    console.log(`[pregame/analyze] Fetching gamelogs + standings...`);
+    const [gamelogResults, standingsMap] = await Promise.all([
+      Promise.all(allPlayers.map(p =>
+        getPlayerGamelog(sport, league, p.id).catch(() => null)
+      )),
       getTeamStandings(sport, league),
     ]);
 
     const matchupContext = buildMatchupContext(resolvedHomeId, resolvedAwayId, standingsMap);
     console.log(`[pregame/analyze] Matchup context: blowout risk=${matchupContext?.blowoutRisk || 'unknown'}, margin=${matchupContext?.expectedMargin || '?'}`);
+    console.log(`[pregame/analyze] Gamelogs: ${gamelogResults.filter(Boolean).length}/${allPlayers.length} fetched`);
 
-    // Step 3: Extract form from map (instant lookup) + fetch season averages in parallel
-    const formResults = allPlayers.map(p => getHistoricalFormFromMap(p.id, playerStatsMap));
-    const formFound = formResults.filter(Boolean).length;
-    console.log(`[pregame/analyze] Form results: ${formFound}/${allPlayers.length}`);
-    allPlayers.forEach((p, i) => {
-      const gamesFound = playerStatsMap[String(p.id)]?.length || 0;
-      console.log(`  ${p.name} (${p.id}): ${gamesFound} games in map`);
+    // Step 3: Build form + season averages from gamelogs (already fetched above)
+    const formResults = gamelogResults.map(gl => {
+      if (!gl || gl.allGames.length === 0) return null;
+      return buildFormDataFromGamelog(gl);
     });
 
-    // Season averages in parallel with tight timeout
-    const seasonResults = await Promise.all(
-      allPlayers.map(p => getSeasonAverages(sport, league, p.id).catch(() => null))
-    );
-    console.log(`[pregame/analyze] Season results: ${seasonResults.filter(Boolean).length}/${allPlayers.length}`);
+    const seasonResults = gamelogResults.map(gl => gl?.seasonAvg || null);
+
+    console.log(`[pregame/analyze] Form: ${formResults.filter(Boolean).length}/${allPlayers.length} | Season: ${seasonResults.filter(Boolean).length}/${allPlayers.length}`);
+    allPlayers.forEach((p, i) => {
+      const games = gamelogResults[i]?.allGames?.length || 0;
+      if (games > 0) console.log(`  ${p.name}: ${games} games, season avg pts=${seasonResults[i]?.points ?? '?'}`);
+    });
 
     // Step 4: Build projections, filter to players with enough data
     const playerData = allPlayers.map((p, i) => {
