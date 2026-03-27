@@ -1322,7 +1322,7 @@ export default function Halftime() {
         )}
 
         {/* Leg count selector — hidden on Daily Card */}
-        {mode !== 'daily' && (
+        {mode !== 'daily' && mode !== 'performance' && (
           <div style={{
             marginTop: '14px', padding: '10px 14px',
             background: 'var(--bg-secondary, #111)',
