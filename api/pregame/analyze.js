@@ -14,6 +14,7 @@
 // Body: { gameId, sport, league, homeTeam, awayTeam, gameDate, existingLegs?, legCount? }
 
 import Anthropic from '@anthropic-ai/sdk';
+import { getLineForPlayer } from '../../lib/odds-client.js';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -1026,7 +1027,7 @@ Return ONLY valid JSON, no markdown:
   return result;
 }
 
-async function generatePreGamePicks(game, playerData, existingLegs, legCount, matchupContext = null) {
+async function generatePreGamePicks(game, playerData, existingLegs, legCount, matchupContext = null, oddsMap = {}) {
   const playerLines = playerData.map(p => {
     const proj = p.projections;
     if (!proj || Object.keys(proj).length === 0) return null;
@@ -1042,9 +1043,14 @@ async function generatePreGamePicks(game, playerData, existingLegs, legCount, ma
       const floorFlag = s.belowFloor ? ' 🔒 BELOW 10-GAME FLOOR' : '';
       const location  = s.isHome ? 'HOME' : 'AWAY';
 
+      const realOdds = getLineForPlayer(oddsMap, p.name, stat);
+      const realLineNote = realOdds
+        ? `\n    SPORTSBOOK LINE: Over ${realOdds.line} (${realOdds.book}) | overOdds: ${realOdds.overOdds} | proj edge vs line: ${Math.round((s.blended - realOdds.line) * 10) / 10}`
+        : '\n    SPORTSBOOK LINE: not available — use suggested threshold';
+
       lines.push(
         `  ${stat.toUpperCase()}:${b2bFlag}${floorFlag}
-    Projection: ${s.blended} (L5=${s.last5 ?? '?'} L10=${s.last10 ?? '?'} Season=${s.season ?? '?'})
+    Projection: ${s.blended} (L5=${s.last5 ?? '?'} L10=${s.last10 ?? '?'} Season=${s.season ?? '?'})${realLineNote}
     Suggested threshold: Over ${s.threshold} | Cushion: ${s.cushion} | Edge: ${s.edge}
     Variance (std dev): ${s.stdDev ?? '?'} | Floor: ${s.floor ?? '?'} | Ceiling: ${s.ceiling ?? '?'}
     Trend: ${trendIcon} ${s.trend} | ${location} | Rest: ${s.daysSinceLastGame ?? '?'}d since last game
@@ -1078,7 +1084,16 @@ ${playerLines}
 
 HOW TO USE THESE PROJECTIONS:
 
-THRESHOLD LOGIC:
+SPORTSBOOK LINE LOGIC (when available):
+- The "SPORTSBOOK LINE" is the actual betting number from DraftKings/FanDuel — this is what you're recommending bettors wager on
+- "proj edge vs line" = your projection minus the sportsbook line — positive means the projection is ABOVE the book line (Over value)
+- If proj edge vs line >= 2.0: strong Over candidate — meaningful gap between projection and market
+- If proj edge vs line is 0.5–1.9: marginal edge — only recommend if other factors align (trend up, below floor, good rest)
+- If proj edge vs line <= 0: skip this prop — projection doesn't clear the book's number
+- When a real line is available, use it as the threshold in your pick (not the suggested threshold)
+- When no real line is available, fall back to the suggested threshold
+
+THRESHOLD LOGIC (fallback when no real line):
 - "Suggested threshold" = blended projection minus variance cushion
 - A larger cushion means higher variance player — threshold is conservative on purpose
 - "BELOW 10-GAME FLOOR" = extremely strong pick — player hasn't gone this low in 10 games
@@ -1165,6 +1180,30 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
   }
 }
 
+// ─── Odds attachment ─────────────────────────────────────────────────────────
+
+// Attaches real sportsbook lines to an array of picks.
+// Adds: realLine, overOdds, underOdds, book, hasRealLine fields.
+// Falls back gracefully — if no line found, pick is unchanged.
+function attachOdds(picks, oddsMap) {
+  if (!oddsMap || !picks?.length) return picks;
+  return picks.map(pick => {
+    const statKey = pick.stat?.toLowerCase();
+    const entry = getLineForPlayer(oddsMap, pick.player, statKey);
+    if (!entry) return { ...pick, hasRealLine: false };
+    return {
+      ...pick,
+      hasRealLine: true,
+      realLine:    entry.line,
+      overOdds:    entry.overOdds,
+      underOdds:   entry.underOdds,
+      book:        entry.book,
+      // If real line differs from our calculated threshold, note the gap
+      lineGap: Math.round((pick.projection - entry.line) * 10) / 10,
+    };
+  });
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
@@ -1172,7 +1211,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { gameId, sport, league, homeTeam, awayTeam, gameDate, existingLegs, legCount = 4, mode = 'picks' } = req.body;
+  const { gameId, sport, league, homeTeam, awayTeam, gameDate, existingLegs, legCount = 4, mode = 'picks', oddsMap = {} } = req.body;
 
   if (!gameId || !sport || !league) {
     return res.status(400).json({ error: 'Missing required fields: gameId, sport, league' });
@@ -1217,6 +1256,7 @@ export default async function handler(req, res) {
       )),
       getTeamStandings(sport, league),
     ]);
+    // oddsMap passed in from scan — no per-game fetch needed
 
     const matchupContext = buildMatchupContext(resolvedHomeId, resolvedAwayId, standingsMap);
     console.log(`[pregame/analyze] Matchup context: blowout risk=${matchupContext?.blowoutRisk || 'unknown'}, margin=${matchupContext?.expectedMargin || '?'}`);
@@ -1292,12 +1332,13 @@ export default async function handler(req, res) {
       // Daily card mode — return top picks for this game without Claude call
       // Just run projections and return raw ranked data for the UI to aggregate
       const dailyPicks = buildDailyCardPicks(playerData, matchupContext, gameId, homeTeam, awayTeam);
+      const dailyPicksWithOdds = attachOdds(dailyPicks, oddsMap);
       return res.status(200).json({
         success: true,
         gameId,
         game: { homeTeam, awayTeam, sport, league, gameDate },
         mode: 'daily',
-        picks: dailyPicks,
+        picks: dailyPicksWithOdds,
         analyzed_at: new Date().toISOString(),
       });
     }
@@ -1308,13 +1349,15 @@ export default async function handler(req, res) {
       existingLegs || [],
       legCount,
       matchupContext,
+      oddsMap,
     );
 
+    const picksWithOdds = picks.picks ? { ...picks, picks: attachOdds(picks.picks, oddsMap) } : picks;
     return res.status(200).json({
       success: true,
       gameId,
       game: { homeTeam, awayTeam, sport, league, gameDate },
-      ...picks,
+      ...picksWithOdds,
       player_count: playerData.length,
       analyzed_at: new Date().toISOString(),
     });
