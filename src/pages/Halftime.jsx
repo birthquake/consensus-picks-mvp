@@ -149,7 +149,7 @@ function PickCard({ pick, isSelected, onToggle, index }) {
               )}
               {pick.projection != null && (
                 <span style={{ color: '#818cf8', fontWeight: '400', fontSize: '11px', marginLeft: '4px' }}>
-                  (proj: {pick.projection}{pick.hasRealLine && pick.lineGap != null ? ` · edge ${pick.lineGap > 0 ? '+' : ''}{pick.lineGap}` : ''})
+                  (proj: {pick.projection}{pick.hasRealLine && pick.lineGap != null ? ` · edge ${pick.lineGap > 0 ? '+' : ''}${pick.lineGap}` : ''})
                 </span>
               )}
             </span>
