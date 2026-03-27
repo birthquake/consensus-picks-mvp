@@ -184,6 +184,394 @@ function PickCard({ pick, isSelected, onToggle, index }) {
 }
 
 
+
+// ── Daily Card ────────────────────────────────────────────────────────────────
+function DailyCard({ legCount }) {
+  const [state, setState] = useState('idle');
+  const [picks, setPicks] = useState([]);
+  const [selectedLegs, setSelectedLegs] = useState([]);
+  const [copied, setCopied] = useState(false);
+  const [bankroll, setBankroll] = useState(() => {
+    try { return parseFloat(localStorage.getItem('paigrade_bankroll') || '100'); } catch { return 100; }
+  });
+  const [showBankroll, setShowBankroll] = useState(false);
+
+  const STAKE_BY_RATING = { 5: 1.00, 4: 0.75, 3: 0.50 };
+
+  const load = async () => {
+    setState('loading');
+    setPicks([]);
+    try {
+      // Step 1: Get today's games
+      const scanRes = await fetch('/api/pregame/scan?sport=nba');
+      const scanData = await scanRes.json();
+      if (!scanData.success || !scanData.games?.length) {
+        setState('empty');
+        return;
+      }
+
+      // Step 2: Analyze all games in parallel using daily mode (no Claude)
+      const gameResults = await Promise.all(
+        scanData.games.map(game =>
+          fetch('/api/pregame/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              gameId:   game.id,
+              sport:    game.sport,
+              league:   game.league,
+              homeTeam: game.homeTeam,
+              awayTeam: game.awayTeam,
+              gameDate: game.gameDate || game.startTime,
+              mode:     'daily',
+            }),
+          })
+          .then(r => r.json())
+          .catch(() => null)
+        )
+      );
+
+      // Step 3: Aggregate all picks, dedupe by player+stat, take top N
+      const allPicks = [];
+      const seen = new Set();
+      for (const result of gameResults) {
+        if (!result?.success || !result.picks?.length) continue;
+        for (const pick of result.picks) {
+          const key = `${pick.player}:${pick.stat}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          allPicks.push(pick);
+        }
+      }
+
+      // Sort by rating desc, edge desc — take top picks
+      allPicks.sort((a, b) => b.rating !== a.rating ? b.rating - a.rating : b.edge - a.edge);
+      setPicks(allPicks.slice(0, Math.max(legCount * 2, 10)));
+      setState(allPicks.length > 0 ? 'done' : 'empty');
+    } catch (err) {
+      console.error('[DailyCard]', err);
+      setState('error');
+    }
+  };
+
+  const toggleLeg = (pick) => {
+    const key = `${pick.player}:${pick.stat}`;
+    setSelectedLegs(prev => {
+      const exists = prev.find(l => l.key === key);
+      return exists
+        ? prev.filter(l => l.key !== key)
+        : [...prev, { ...pick, key }];
+    });
+  };
+
+  const copyParlay = () => {
+    const text = selectedLegs.map(l =>
+      `${l.player} Over ${l.threshold} ${l.stat} (${l.rating}★ | proj: ${l.projection})`
+    ).join('
+');
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const saveBankroll = (val) => {
+    const n = parseFloat(val);
+    if (!isNaN(n) && n > 0) {
+      setBankroll(n);
+      try { localStorage.setItem('paigrade_bankroll', String(n)); } catch {}
+    }
+  };
+
+  const totalStake = selectedLegs.reduce((s, l) => s + (STAKE_BY_RATING[l.rating] || 0.50), 0);
+  const ratingColor = (r) => r >= 4 ? '#4ade80' : r >= 3 ? '#fbbf24' : '#f87171';
+
+  return (
+    <div style={{ paddingBottom: selectedLegs.length > 0 ? '180px' : '24px' }}>
+
+      {/* Header */}
+      <div style={{ marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <h2 style={{ margin: '0 0 4px', fontSize: '20px', fontWeight: '800', color: 'var(--text-primary, #fff)' }}>
+              Daily Card
+            </h2>
+            <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)' }}>
+              Top picks across today's slate — ranked by confidence
+            </p>
+          </div>
+          <button
+            onClick={() => setShowBankroll(b => !b)}
+            style={{
+              background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)',
+              borderRadius: '8px', padding: '8px 12px', cursor: 'pointer',
+              fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary, #888)',
+            }}
+          >
+            Bankroll
+          </button>
+        </div>
+
+        {/* Bankroll tracker */}
+        {showBankroll && (
+          <div style={{
+            marginTop: '12px', padding: '14px 16px',
+            background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)',
+            borderRadius: '10px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)', fontWeight: '600' }}>Starting bankroll</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>$</span>
+                <input
+                  type="number"
+                  defaultValue={bankroll}
+                  onBlur={e => saveBankroll(e.target.value)}
+                  style={{
+                    width: '80px', padding: '6px 8px', borderRadius: '6px',
+                    border: '1px solid var(--border-color, #333)',
+                    background: 'transparent', color: 'var(--text-primary, #fff)',
+                    fontSize: '13px', fontWeight: '700',
+                  }}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+              {[
+                { label: '5★ stake', val: `$${STAKE_BY_RATING[5].toFixed(2)}` },
+                { label: '4★ stake', val: `$${STAKE_BY_RATING[4].toFixed(2)}` },
+                { label: '3★ stake', val: `$${STAKE_BY_RATING[3].toFixed(2)}` },
+              ].map(item => (
+                <div key={item.label} style={{
+                  background: 'var(--bg-primary, #000)', borderRadius: '8px',
+                  padding: '8px', textAlign: 'center',
+                }}>
+                  <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-primary, #fff)' }}>{item.val}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', marginTop: '2px' }}>{item.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Load button */}
+      {state === 'idle' && (
+        <button onClick={load} style={{
+          width: '100%', padding: '14px', borderRadius: '12px',
+          background: 'linear-gradient(135deg, #6366f1, #3b82f6)',
+          border: 'none', color: '#fff', fontWeight: '700', fontSize: '15px',
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+        }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+          </svg>
+          Load Today's Best Picks
+        </button>
+      )}
+
+      {/* Loading */}
+      {state === 'loading' && (
+        <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+          <div style={{
+            width: '36px', height: '36px', margin: '0 auto 14px',
+            border: '3px solid var(--border-color, #222)', borderTopColor: '#6366f1',
+            borderRadius: '50%', animation: 'spin 0.8s linear infinite',
+          }}/>
+          <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>
+            Analyzing today's full slate...
+          </p>
+          <p style={{ color: 'var(--text-secondary, #555)', fontSize: '11px', marginTop: '6px' }}>
+            This takes 15-20 seconds for all games
+          </p>
+        </div>
+      )}
+
+      {/* Empty */}
+      {state === 'empty' && (
+        <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+          <p style={{ color: 'var(--text-secondary, #888)', fontSize: '14px', marginBottom: '16px' }}>
+            No strong picks found for today's slate.
+          </p>
+          <button onClick={load} style={{
+            background: 'transparent', border: '1px solid var(--border-color, #333)',
+            borderRadius: '8px', color: 'var(--text-secondary, #888)',
+            padding: '8px 20px', cursor: 'pointer', fontSize: '13px',
+          }}>Retry</button>
+        </div>
+      )}
+
+      {/* Error */}
+      {state === 'error' && (
+        <div style={{ textAlign: 'center', padding: '32px 24px' }}>
+          <p style={{ color: '#f87171', fontSize: '13px', marginBottom: '12px' }}>Failed to load picks</p>
+          <button onClick={load} style={{
+            background: 'transparent', border: '1px solid #f87171',
+            borderRadius: '8px', color: '#f87171',
+            padding: '6px 16px', cursor: 'pointer', fontSize: '12px',
+          }}>Retry</button>
+        </div>
+      )}
+
+      {/* Picks */}
+      {state === 'done' && picks.length > 0 && (
+        <div>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            marginBottom: '14px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ width: '8px', height: '8px', background: '#4ade80', borderRadius: '50%' }}/>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '600' }}>
+                {picks.length} picks found across today's slate
+              </span>
+            </div>
+            <button onClick={load} style={{
+              background: 'transparent', border: '1px solid var(--border-color, #333)',
+              borderRadius: '6px', color: 'var(--text-secondary, #888)',
+              padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '600',
+              display: 'flex', alignItems: 'center', gap: '4px',
+            }}>
+              <Icon.Refresh /> Refresh
+            </button>
+          </div>
+
+          {picks.map((pick, i) => {
+            const key = `${pick.player}:${pick.stat}`;
+            const isSelected = selectedLegs.some(l => l.key === key);
+            const stake = STAKE_BY_RATING[pick.rating] || 0.50;
+
+            return (
+              <div key={key} style={{
+                background: isSelected ? 'rgba(74,222,128,0.06)' : 'var(--bg-secondary, #111)',
+                border: `1px solid ${isSelected ? '#4ade80' : 'var(--border-color, #222)'}`,
+                borderRadius: '12px', padding: '14px 16px', marginBottom: '10px',
+                display: 'flex', alignItems: 'center', gap: '12px',
+                animation: `fadeUp 0.25s ease ${i * 0.04}s both`,
+              }}>
+                <style>{`@keyframes fadeUp { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }`}</style>
+
+                {/* Rating */}
+                <div style={{
+                  width: '42px', height: '42px', borderRadius: '10px', flexShrink: 0,
+                  background: `${ratingColor(pick.rating)}15`,
+                  border: `1px solid ${ratingColor(pick.rating)}30`,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <span style={{ fontSize: '17px', fontWeight: '800', color: ratingColor(pick.rating), lineHeight: 1 }}>
+                    {pick.rating}
+                  </span>
+                  <span style={{ fontSize: '9px', color: ratingColor(pick.rating), opacity: 0.8 }}>★</span>
+                </div>
+
+                {/* Info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary, #fff)' }}>
+                      {pick.player}
+                    </span>
+                    <span style={{
+                      fontSize: '10px', padding: '1px 6px', borderRadius: '10px',
+                      background: 'rgba(99,102,241,0.15)', color: '#818cf8', fontWeight: '700',
+                    }}>{pick.team}</span>
+                  </div>
+                  <div style={{ marginTop: '2px', fontSize: '12px', color: '#60a5fa', fontWeight: '600' }}>
+                    Over {pick.threshold} {pick.stat}
+                    <span style={{ color: 'var(--text-secondary, #777)', fontWeight: '400', marginLeft: '6px' }}>
+                      proj {pick.projection} · {pick.game}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: '3px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {pick.belowFloor && (
+                      <span style={{ fontSize: '10px', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 6px', borderRadius: '10px' }}>
+                        below floor
+                      </span>
+                    )}
+                    {pick.trend === 'up' && (
+                      <span style={{ fontSize: '10px', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', padding: '1px 6px', borderRadius: '10px' }}>
+                        trending up
+                      </span>
+                    )}
+                    {pick.isBackToBack && (
+                      <span style={{ fontSize: '10px', color: '#fbbf24', background: 'rgba(251,191,36,0.1)', padding: '1px 6px', borderRadius: '10px' }}>
+                        b2b
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Stake + Add */}
+                <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', marginBottom: '6px' }}>
+                    ${stake.toFixed(2)}
+                  </div>
+                  <button
+                    onClick={() => toggleLeg(pick)}
+                    style={{
+                      background: isSelected ? '#4ade80' : 'transparent',
+                      border: `1px solid ${isSelected ? '#4ade80' : 'var(--border-color, #333)'}`,
+                      borderRadius: '6px', color: isSelected ? '#000' : 'var(--text-secondary, #888)',
+                      padding: '5px 10px', cursor: 'pointer',
+                      fontSize: '11px', fontWeight: '700', transition: 'all 0.15s',
+                    }}
+                  >
+                    {isSelected ? '✓' : '+'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Parlay builder */}
+      {selectedLegs.length > 0 && (
+        <div style={{
+          position: 'fixed', bottom: '80px', left: '50%', transform: 'translateX(-50%)',
+          width: 'min(420px, calc(100vw - 32px))',
+          background: '#0f0f14', border: '1px solid #6366f133',
+          borderRadius: '16px', padding: '16px', zIndex: 100,
+          boxShadow: '0 -4px 40px rgba(99,102,241,0.2)',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <span style={{ fontWeight: '800', fontSize: '14px', color: '#fff' }}>
+              Parlay ({selectedLegs.length} leg{selectedLegs.length !== 1 ? 's' : ''})
+            </span>
+            <span style={{ fontSize: '12px', color: '#4ade80', fontWeight: '700' }}>
+              Total stake: ${totalStake.toFixed(2)}
+            </span>
+          </div>
+          {selectedLegs.map(leg => (
+            <div key={leg.key} style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              background: 'rgba(255,255,255,0.04)', borderRadius: '8px',
+              padding: '7px 10px', marginBottom: '6px',
+            }}>
+              <span style={{ fontSize: '11px', color: ratingColor(leg.rating), fontWeight: '700', width: '16px' }}>
+                {leg.rating}★
+              </span>
+              <span style={{ flex: 1, fontSize: '12px', color: '#e2e8f0', fontWeight: '600' }}>{leg.player}</span>
+              <span style={{ fontSize: '11px', color: '#60a5fa' }}>Over {leg.threshold} {leg.stat}</span>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary, #666)' }}>${(STAKE_BY_RATING[leg.rating] || 0.50).toFixed(2)}</span>
+              <button onClick={() => toggleLeg(leg)} style={{
+                background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '13px',
+              }}>✕</button>
+            </div>
+          ))}
+          <button onClick={copyParlay} style={{
+            width: '100%', padding: '10px', borderRadius: '8px',
+            background: copied ? '#4ade80' : 'linear-gradient(135deg, #6366f1, #3b82f6)',
+            border: 'none', color: copied ? '#000' : '#fff',
+            fontWeight: '700', fontSize: '13px', cursor: 'pointer',
+            marginTop: '4px', transition: 'all 0.2s',
+          }}>
+            {copied ? '✓ Copied!' : 'Copy Parlay'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Performance Stats ─────────────────────────────────────────────────────────
 function PerformanceStats() {
   const [stats, setStats] = useState(null);
@@ -1001,8 +1389,9 @@ export default function Halftime() {
           borderRadius: '10px', padding: '4px',
         }}>
           {[
-            { id: 'pregame',     label: 'Pre-Game Picks' },
-            { id: 'halftime',    label: 'Halftime Picks' },
+            { id: 'daily',       label: 'Daily Card' },
+            { id: 'pregame',     label: 'Pre-Game' },
+            { id: 'halftime',    label: 'Halftime' },
             { id: 'performance', label: 'Performance' },
           ].map(m => (
             <button
@@ -1060,7 +1449,7 @@ export default function Halftime() {
       </div>
 
       {/* Idle state */}
-      {mode !== 'performance' && scanState === 'idle' && (
+      {mode !== 'performance' && mode !== 'daily' && scanState === 'idle' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{
             width: '64px', height: '64px', margin: '0 auto 16px',
@@ -1090,7 +1479,7 @@ export default function Halftime() {
       )}
 
       {/* Scanning */}
-      {mode !== 'performance' && scanState === 'scanning' && (
+      {mode !== 'performance' && mode !== 'daily' && scanState === 'scanning' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{
             width: '40px', height: '40px', margin: '0 auto 16px',
@@ -1104,7 +1493,7 @@ export default function Halftime() {
       )}
 
       {/* Error */}
-      {mode !== 'performance' && scanState === 'error' && (
+      {mode !== 'performance' && mode !== 'daily' && scanState === 'error' && (
         <div style={{ textAlign: 'center', padding: '32px 24px' }}>
           <p style={{ color: '#f87171', marginBottom: '12px', fontSize: '14px' }}>{errorMsg}</p>
           <button onClick={scan} style={{
@@ -1118,7 +1507,7 @@ export default function Halftime() {
       )}
 
       {/* Empty */}
-      {mode !== 'performance' && scanState === 'empty' && (
+      {mode !== 'performance' && mode !== 'daily' && scanState === 'empty' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ fontSize: '40px', marginBottom: '12px' }}>🏁</div>
           <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '700' }}>
@@ -1143,8 +1532,9 @@ export default function Halftime() {
 
       {/* Games found */}
       {mode === 'performance' && <PerformanceStats />}
+      {mode === 'daily' && <DailyCard legCount={legCount} />}
 
-      {mode !== 'performance' && scanState === 'done' && games.length > 0 && (
+      {mode !== 'performance' && mode !== 'daily' && scanState === 'done' && games.length > 0 && (
         <div>
           <div style={{
             display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px',
