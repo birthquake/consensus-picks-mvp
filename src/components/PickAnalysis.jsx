@@ -59,7 +59,7 @@ export default function PickAnalysis({ analysis }) {
       {/* Red Flags */}
       {analysis.redFlags && analysis.redFlags.length > 0 && (
         <div className="analysis-section">
-          <h4>⚠️ Concerns</h4>
+          <h4><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{marginRight:"4px",verticalAlign:"middle"}}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Concerns</h4>
           <ul className="analysis-list red-list">
             {analysis.redFlags.map((flag, i) => (
               <li key={i}>{flag}</li>
