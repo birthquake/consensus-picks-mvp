@@ -183,6 +183,268 @@ function PickCard({ pick, isSelected, onToggle, index }) {
   );
 }
 
+
+// ── Performance Stats ─────────────────────────────────────────────────────────
+function PerformanceStats() {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [days, setDays] = useState(30);
+
+  const load = async (d) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/halftime/stats?days=${d}`);
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load stats');
+      setStats(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(days); }, [days]);
+
+  if (loading) return (
+    <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+      <div style={{
+        width: '32px', height: '32px', margin: '0 auto 12px',
+        border: '2px solid var(--border-color, #222)', borderTopColor: '#6366f1',
+        borderRadius: '50%', animation: 'spin 0.8s linear infinite',
+      }}/>
+      <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>
+        Loading performance data...
+      </p>
+    </div>
+  );
+
+  if (error) return (
+    <div style={{ textAlign: 'center', padding: '32px 24px' }}>
+      <p style={{ color: '#f87171', fontSize: '13px', marginBottom: '12px' }}>{error}</p>
+      <button onClick={() => load(days)} style={{
+        background: 'transparent', border: '1px solid #f87171',
+        borderRadius: '6px', color: '#f87171', padding: '6px 16px',
+        cursor: 'pointer', fontSize: '12px',
+      }}>Retry</button>
+    </div>
+  );
+
+  if (!stats) return null;
+
+  const { summary, by_rating, by_stat, by_direction, projection_accuracy, insights } = stats;
+
+  // No data yet
+  if (summary.graded === 0) return (
+    <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+      <div style={{
+        width: '48px', height: '48px', margin: '0 auto 16px',
+        background: 'rgba(99,102,241,0.1)', borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2">
+          <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+        </svg>
+      </div>
+      <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '700' }}>
+        No graded picks yet
+      </h3>
+      <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.6' }}>
+        Run some analyses and check back after the games finish. The cron job grades picks every 2 hours.
+      </p>
+      <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--text-secondary, #666)' }}>
+        {summary.pending} pick{summary.pending !== 1 ? 's' : ''} pending grading
+      </p>
+    </div>
+  );
+
+  const hitRateColor = (rate) => {
+    if (rate == null) return 'var(--text-secondary, #888)';
+    if (rate >= 60) return '#4ade80';
+    if (rate >= 50) return '#fbbf24';
+    return '#f87171';
+  };
+
+  const starLabel = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+
+  return (
+    <div style={{ paddingBottom: '24px' }}>
+      {/* Period selector */}
+      <div style={{ display: 'flex', gap: '6px', marginBottom: '20px' }}>
+        {[7, 14, 30, 90].map(d => (
+          <button key={d} onClick={() => setDays(d)} style={{
+            padding: '5px 12px', borderRadius: '6px', border: 'none',
+            background: days === d ? '#6366f1' : 'var(--bg-secondary, #111)',
+            color: days === d ? '#fff' : 'var(--text-secondary, #888)',
+            fontWeight: '600', fontSize: '12px', cursor: 'pointer',
+            outline: days === d ? 'none' : '1px solid var(--border-color, #222)',
+          }}>
+            {d}d
+          </button>
+        ))}
+        <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--text-secondary, #555)', alignSelf: 'center' }}>
+          Last {days} days
+        </span>
+      </div>
+
+      {/* Summary cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '20px' }}>
+        {[
+          { label: 'Hit Rate', value: summary.hit_rate != null ? `${summary.hit_rate}%` : '—', color: hitRateColor(summary.hit_rate) },
+          { label: 'Graded', value: summary.graded, color: 'var(--text-primary, #fff)' },
+          { label: 'Pending', value: summary.pending, color: 'var(--text-secondary, #888)' },
+        ].map(card => (
+          <div key={card.label} style={{
+            background: 'var(--bg-secondary, #111)',
+            border: '1px solid var(--border-color, #222)',
+            borderRadius: '10px', padding: '12px',
+            textAlign: 'center',
+          }}>
+            <div style={{ fontSize: '22px', fontWeight: '800', color: card.color }}>{card.value}</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', marginTop: '4px', fontWeight: '600' }}>{card.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Recent streak */}
+      {summary.recent_streak && (
+        <div style={{
+          background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)',
+          borderRadius: '10px', padding: '10px 14px', marginBottom: '20px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '600' }}>Last 10 picks</span>
+          <span style={{ fontSize: '14px', fontWeight: '800', color: '#818cf8' }}>{summary.recent_streak}</span>
+        </div>
+      )}
+
+      {/* By star rating */}
+      <div style={{
+        background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)',
+        borderRadius: '12px', padding: '16px', marginBottom: '14px',
+      }}>
+        <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary, #888)', marginBottom: '12px', letterSpacing: '0.5px' }}>
+          HIT RATE BY STAR RATING
+        </div>
+        {[5,4,3,2,1].map(r => {
+          const d = by_rating?.[r];
+          if (!d || d.total === 0) return null;
+          const pct = d.hitRate ?? 0;
+          return (
+            <div key={r} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+              <span style={{ fontSize: '12px', color: '#fbbf24', width: '60px', flexShrink: 0 }}>
+                {starLabel(r)}
+              </span>
+              <div style={{ flex: 1, height: '6px', background: 'var(--border-color, #222)', borderRadius: '3px' }}>
+                <div style={{ height: '6px', borderRadius: '3px', width: `${pct}%`, background: hitRateColor(pct), transition: 'width 0.4s ease' }}/>
+              </div>
+              <span style={{ fontSize: '13px', fontWeight: '700', color: hitRateColor(pct), width: '36px', textAlign: 'right' }}>
+                {pct}%
+              </span>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', width: '32px', textAlign: 'right' }}>
+                {d.hits}/{d.total}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* By stat */}
+      <div style={{
+        background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)',
+        borderRadius: '12px', padding: '16px', marginBottom: '14px',
+      }}>
+        <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary, #888)', marginBottom: '12px', letterSpacing: '0.5px' }}>
+          HIT RATE BY STAT
+        </div>
+        {Object.entries(by_stat || {}).sort((a,b) => (b[1].hitRate||0) - (a[1].hitRate||0)).map(([stat, d]) => {
+          if (d.total === 0) return null;
+          const pct = d.hitRate ?? 0;
+          return (
+            <div key={stat} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', width: '72px', flexShrink: 0 }}>{stat}</span>
+              <div style={{ flex: 1, height: '6px', background: 'var(--border-color, #222)', borderRadius: '3px' }}>
+                <div style={{ height: '6px', borderRadius: '3px', width: `${pct}%`, background: hitRateColor(pct), transition: 'width 0.4s ease' }}/>
+              </div>
+              <span style={{ fontSize: '13px', fontWeight: '700', color: hitRateColor(pct), width: '36px', textAlign: 'right' }}>
+                {pct}%
+              </span>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', width: '32px', textAlign: 'right' }}>
+                {d.hits}/{d.total}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Projection accuracy + insights */}
+      {projection_accuracy?.picks_with_data > 0 && (
+        <div style={{
+          background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)',
+          borderRadius: '12px', padding: '16px', marginBottom: '14px',
+        }}>
+          <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary, #888)', marginBottom: '12px', letterSpacing: '0.5px' }}>
+            PROJECTION ACCURACY
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            {[
+              { label: 'Avg Error', value: projection_accuracy.avg_absolute_error != null ? `±${projection_accuracy.avg_absolute_error}` : '—' },
+              { label: 'Avg Error %', value: projection_accuracy.avg_error_pct != null ? `±${projection_accuracy.avg_error_pct}%` : '—' },
+            ].map(item => (
+              <div key={item.label} style={{
+                background: 'var(--bg-primary, #000)', borderRadius: '8px', padding: '10px',
+                textAlign: 'center',
+              }}>
+                <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary, #fff)' }}>{item.value}</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', marginTop: '3px' }}>{item.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Insights */}
+      {(insights?.best_stat || insights?.worst_stat) && (
+        <div style={{
+          background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)',
+          borderRadius: '12px', padding: '16px',
+        }}>
+          <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary, #888)', marginBottom: '12px', letterSpacing: '0.5px' }}>
+            INSIGHTS
+          </div>
+          {insights.best_stat && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Strongest stat category</span>
+              <span style={{ fontSize: '13px', fontWeight: '700', color: '#4ade80' }}>
+                {insights.best_stat.stat} ({insights.best_stat.hitRate}%)
+              </span>
+            </div>
+          )}
+          {insights.worst_stat && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Weakest stat category</span>
+              <span style={{ fontSize: '13px', fontWeight: '700', color: '#f87171' }}>
+                {insights.worst_stat.stat} ({insights.worst_stat.hitRate}%)
+              </span>
+            </div>
+          )}
+          {insights.best_rating && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Most reliable rating tier</span>
+              <span style={{ fontSize: '13px', fontWeight: '700', color: '#fbbf24' }}>
+                {starLabel(parseInt(insights.best_rating))}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Game Card ─────────────────────────────────────────────────────────────────
 function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime' }) {
   const [state, setState] = useState('idle'); // idle | loading | done | error
@@ -739,8 +1001,9 @@ export default function Halftime() {
           borderRadius: '10px', padding: '4px',
         }}>
           {[
-            { id: 'pregame',  label: '🏀 Pre-Game Picks' },
-            { id: 'halftime', label: '⏸ Halftime Picks' },
+            { id: 'pregame',     label: 'Pre-Game Picks' },
+            { id: 'halftime',    label: 'Halftime Picks' },
+            { id: 'performance', label: 'Performance' },
           ].map(m => (
             <button
               key={m.id}
@@ -797,7 +1060,7 @@ export default function Halftime() {
       </div>
 
       {/* Idle state */}
-      {scanState === 'idle' && (
+      {mode !== 'performance' && scanState === 'idle' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{
             width: '64px', height: '64px', margin: '0 auto 16px',
@@ -827,7 +1090,7 @@ export default function Halftime() {
       )}
 
       {/* Scanning */}
-      {scanState === 'scanning' && (
+      {mode !== 'performance' && scanState === 'scanning' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{
             width: '40px', height: '40px', margin: '0 auto 16px',
@@ -841,7 +1104,7 @@ export default function Halftime() {
       )}
 
       {/* Error */}
-      {scanState === 'error' && (
+      {mode !== 'performance' && scanState === 'error' && (
         <div style={{ textAlign: 'center', padding: '32px 24px' }}>
           <p style={{ color: '#f87171', marginBottom: '12px', fontSize: '14px' }}>{errorMsg}</p>
           <button onClick={scan} style={{
@@ -855,7 +1118,7 @@ export default function Halftime() {
       )}
 
       {/* Empty */}
-      {scanState === 'empty' && (
+      {mode !== 'performance' && scanState === 'empty' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ fontSize: '40px', marginBottom: '12px' }}>🏁</div>
           <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '700' }}>
@@ -879,7 +1142,9 @@ export default function Halftime() {
       )}
 
       {/* Games found */}
-      {scanState === 'done' && games.length > 0 && (
+      {mode === 'performance' && <PerformanceStats />}
+
+      {mode !== 'performance' && scanState === 'done' && games.length > 0 && (
         <div>
           <div style={{
             display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px',
