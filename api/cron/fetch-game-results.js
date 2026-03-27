@@ -104,6 +104,91 @@ export default async function handler(req, res) {
   }
 }
 
+// ─── Halftime pick grading ────────────────────────────────────────────────────
+
+async function gradeHalftimePicks() {
+  const results = { processed: 0, graded: 0, skipped: 0, errors: [] };
+
+  try {
+    const snapshot = await db
+      .collection('halftime_picks')
+      .where('status', '==', 'pending')
+      .get();
+
+    results.processed = snapshot.docs.length;
+
+    for (const doc of snapshot.docs) {
+      const pick = doc.data();
+
+      try {
+        const gameDate = pick.gameDate || pick.game_date;
+        if (!gameDate) { results.skipped++; continue; }
+
+        const pickDate = new Date(gameDate);
+        const now = new Date();
+        const hoursSinceGame = (now - pickDate) / 3600000;
+        if (hoursSinceGame < 4) { results.skipped++; continue; }
+
+        const sport = normalizeSport(pick.sport);
+        const result = await getPlayerStatForGame(
+          sport,
+          pick.player,
+          pick.stat,
+          gameDate,
+        );
+
+        if (!result.found || result.value === null) {
+          if (result.gameStatus === 'final' && hoursSinceGame > 12) {
+            await doc.ref.update({
+              status: 'void',
+              graded_at: new Date(),
+              grade_note: result.error || 'Stat not found after 12h',
+            });
+          }
+          results.skipped++;
+          continue;
+        }
+
+        if (result.gameStatus !== 'final') { results.skipped++; continue; }
+
+        const actualValue = result.value;
+        const hit = pick.direction === 'Over'
+          ? actualValue > (pick.projection?.blended || 0)
+          : actualValue < (pick.projection?.blended || Infinity);
+
+        const blended = pick.projection?.blended;
+        const projError = blended != null ? Math.round((actualValue - blended) * 10) / 10 : null;
+        const projErrorPct = blended != null && blended > 0
+          ? Math.round(((actualValue - blended) / blended) * 100)
+          : null;
+
+        await doc.ref.update({
+          status:               hit ? 'hit' : 'miss',
+          actual_value:         actualValue,
+          hit,
+          projection_error:     projError,
+          projection_error_pct: projErrorPct,
+          graded_at:            new Date(),
+          game_status_at_grade: result.gameStatus,
+        });
+
+        results.graded++;
+        console.log(`✅ Halftime pick graded: ${pick.player} ${pick.stat} ${pick.direction} → actual ${actualValue} (${hit ? 'HIT' : 'MISS'})`);
+
+      } catch (err) {
+        results.errors.push({ id: doc.id, player: pick.player, error: err.message });
+        console.error(`❌ Error grading halftime pick ${doc.id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('[gradeHalftimePicks] Fatal:', err.message);
+    results.errors.push({ error: err.message });
+  }
+
+  console.log(`[gradeHalftimePicks] Graded: ${results.graded}/${results.processed}`);
+  return results;
+}
+
 // ─── Core grading logic ───────────────────────────────────────────────────────
 
 async function gradeBet(bet, betId, userId) {
