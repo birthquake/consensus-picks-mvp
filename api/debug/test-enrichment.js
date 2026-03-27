@@ -118,6 +118,7 @@ export default async function handler(req, res) {
         { key: 'stats_base', url: `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/athletes/${p.id}/statistics` },
         { key: 'core_stats', url: `https://sports.core.api.espn.com/v2/sports/${sport}/leagues/${league}/seasons/2026/athletes/${p.id}/statistics/0` },
         { key: 'overview',   url: `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${p.id}/overview` },
+        { key: 'gamelog',    url: `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${p.id}/gamelog` },
       ];
 
       const endpointResults = await Promise.all(
@@ -141,6 +142,18 @@ export default async function handler(req, res) {
               return firstStat ? { name: firstStat.name, abbr: firstStat.abbreviation, val: firstStat.displayValue } : null;
             })(),
             raw_100: JSON.stringify(data || {}).substring(0, 200),
+            // For overview: show full statistics shape
+            overview_stats_shape: key === 'overview' ? {
+              has_labels: !!(data?.statistics?.labels),
+              has_names: !!(data?.statistics?.names),
+              has_values: !!(data?.statistics?.values),
+              labels: data?.statistics?.labels || [],
+              names: data?.statistics?.names || [],
+              values: data?.statistics?.values || [],
+              has_gamelog: !!(data?.gameLog),
+              gamelog_keys: data?.gameLog ? Object.keys(data.gameLog) : [],
+              gamelog_sample: JSON.stringify(data?.gameLog || {}).substring(0, 300),
+            } : null,
           };
         })
       );
