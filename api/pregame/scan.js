@@ -89,15 +89,12 @@ export default async function handler(req, res) {
     const todayGames    = (todayData?.events    || []).map(e => extractGameData(e, config));
     const tomorrowGames = (tomorrowData?.events || []).map(e => extractGameData(e, config));
 
-    const todayStr = new Date().toISOString().substring(0, 10);
-    const preGamesToday  = todayGames.filter(g => g.state === 'pre' && (!g.gameDateStr || g.gameDateStr === todayStr));
-    const liveGamesToday = todayGames.filter(g => g.state === 'in'  && (!g.gameDateStr || g.gameDateStr === todayStr));
-    const finishedToday  = todayGames.filter(g => g.state === 'post' && (!g.gameDateStr || g.gameDateStr === todayStr));
-    // Only include games actually scheduled for tomorrow (ESPN sometimes returns extra days)
-    const tomorrowStr = new Date(Date.now() + 86400000).toISOString().substring(0, 10);
-    const preGamesTomorrow = tomorrowGames.filter(g => 
-      g.state === 'pre' && (!g.gameDateStr || g.gameDateStr === tomorrowStr)
-    );
+    // Trust ESPN's scoreboard response — it returns the correct games for the date passed
+    // Don't filter by UTC date string (causes issues for evening ET games that are next day UTC)
+    const preGamesToday    = todayGames.filter(g => g.state === 'pre');
+    const liveGamesToday   = todayGames.filter(g => g.state === 'in');
+    const finishedToday    = todayGames.filter(g => g.state === 'post');
+    const preGamesTomorrow = tomorrowGames.filter(g => g.state === 'pre');
 
     // Priority: pre-game today → live today → tomorrow's pre-games
     // Never mix days — show one clear context at a time
