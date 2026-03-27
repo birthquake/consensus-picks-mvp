@@ -49,13 +49,10 @@ async function fetchWithTimeout(url, ms = 5000) {
 // ─── Schedule / roster ────────────────────────────────────────────────────────
 
 async function getGameRoster(sport, league, gameId) {
-  // Pull the pre-game summary to get projected starters / roster
   const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${gameId}`;
   const data = await fetchWithTimeout(url, 6000);
   if (!data) return null;
 
-  // Pre-game summaries have rosters in data.rosters or data.leaders
-  // Fall back to fetching team rosters directly
   const competitors = data.header?.competitions?.[0]?.competitors || [];
   const teams = competitors.map(c => ({
     id: c.team?.id,
@@ -89,17 +86,10 @@ async function getTeamRoster(sport, league, teamId) {
   if (!data) return [];
 
   const athletes = data.athletes || [];
-
-  // ESPN roster shape varies:
-  // Shape A (flat): data.athletes = [{ id, displayName, position, ... }, ...]
-  // Shape B (grouped): data.athletes = [{ displayName:"Guards", items:[...] }, ...]
-  // Detect by checking if first element has an "id" field (flat) or "items" field (grouped)
   const isFlat = athletes.length > 0 && (athletes[0].id || athletes[0].fullName);
-
   const players = [];
 
   if (isFlat) {
-    // Flat array — each element IS a player
     for (const p of athletes) {
       if (!p.id) continue;
       players.push({
@@ -110,7 +100,6 @@ async function getTeamRoster(sport, league, teamId) {
       });
     }
   } else {
-    // Grouped array — each element is a position group containing players
     for (const group of athletes) {
       const items = group.items || group.athletes || group.entries || [];
       for (const p of items) {
@@ -163,8 +152,6 @@ async function getRecentGameIds(sport, league, gameDate) {
   return { gameIds, gameDateMap };
 }
 
-// Intentionally empty — replaced by bulk summary approach below
-
 function getHistoricalFormFromMap(athleteId, playerStatsMap) {
   const byGame = playerStatsMap[String(athleteId)] || [];
   if (byGame.length === 0) return null;
@@ -173,7 +160,6 @@ function getHistoricalFormFromMap(athleteId, playerStatsMap) {
 
 function buildFormDataFromGamelog(gamelog) {
   if (!gamelog || gamelog.allGames.length === 0) return null;
-  // Convert gamelog format to byGame format expected by buildFormData
   const byGame = gamelog.allGames.map(g => ({
     stats:   g.stats,
     minutes: g.stats.minutes,
@@ -183,10 +169,7 @@ function buildFormDataFromGamelog(gamelog) {
   return buildFormData(byGame);
 }
 
-// Fetch recent game summaries once and extract stats for ALL players simultaneously
-// This is the key optimization — O(games) fetches instead of O(players × games)
 async function buildPlayerStatsMap(sport, league, gameDate) {
-  // Step 1: Get recent game IDs (parallel scoreboard fetches)
   const base = new Date(gameDate);
   const dates = Array.from({ length: 21 }, (_, i) => {
     const d = new Date(base);
@@ -211,14 +194,9 @@ async function buildPlayerStatsMap(sport, league, gameDate) {
     }
   }
 
-  // Cap to 25 most recent games — fetched ALL IN PARALLEL for maximum speed
-  // A player appears in roughly every other game, so 25 games = ~12 appearances per player
-  // Each NBA team plays every 2-3 days. To get 5 games per player we need
-  // ~5 × 15 league games/day = 75 total games. Use 60 as a balance.
   const gameIdsToFetch = gameIds.slice(0, 100);
   console.log(`[pregame/analyze] Fetching ${gameIdsToFetch.length} summaries in parallel...`);
 
-  // Fetch in two parallel batches of 30 to avoid overwhelming ESPN
   const [batch1, batch2, batch3] = [gameIdsToFetch.slice(0, 34), gameIdsToFetch.slice(34, 67), gameIdsToFetch.slice(67)];
   const [results1, results2, results3] = await Promise.all([
     Promise.all(batch1.map(id =>
@@ -233,7 +211,6 @@ async function buildPlayerStatsMap(sport, league, gameDate) {
   ]);
   const summaries = [...results1, ...results2, ...results3];
 
-  // Extract all player stats from all summaries into a single map
   const playerStatsMap = {};
 
   for (const summary of summaries) {
@@ -275,7 +252,6 @@ async function buildPlayerStatsMap(sport, league, gameDate) {
   console.log(`[pregame/analyze] Players in map: ${playerCount} | Avg games per player: ${avgGames}`);
   console.log(`[pregame/analyze] Games distribution: min=${Math.min(...gamesPerPlayer)||0} max=${Math.max(...gamesPerPlayer)||0}`);
 
-  // Log which of our target players are/aren't in the map
   return playerStatsMap;
 }
 
@@ -308,8 +284,8 @@ function buildFormData(byGame) {
     return [s, vals.length ? Math.max(...vals) : null];
   }));
 
-  const last3 = byGame.slice(0, 2);
-  const older = byGame.slice(2);
+  const last3 = byGame.slice(0, 3);
+  const older = byGame.slice(3);
   formData.trends = {};
   for (const stat of STAT_KEYS) {
     const r = calc(last3, stat);
@@ -340,9 +316,7 @@ async function getHistoricalForm(sport, league, athleteId, gameDate, sharedGameI
 
   if (recentGameIds.length === 0) return null;
 
-  // Cap game IDs to search — no need to search all 190, player plays every 2-3 days
   const gameIdsToSearch = recentGameIds.slice(0, 50);
-
   const formData = { byGame: [], gameDates: {} };
   const BATCH = 8;
 
@@ -389,7 +363,6 @@ async function extractPlayerGameLine(sport, league, gameId, athleteId, date) {
       const minutes = minutesIdx >= 0 ? parseFloat(athlete.stats[minutesIdx]) || 0 : 0;
       if (minutes < 5 && !Object.keys(stats).length) return null;
 
-      // Determine home/away for this game
       const competitors = summary.header?.competitions?.[0]?.competitors || [];
       const playerTeamId = group.team?.id;
       const isHome = competitors.find(c => String(c.team?.id) === String(playerTeamId))?.homeAway === 'home';
@@ -404,22 +377,17 @@ async function extractPlayerGameLine(sport, league, gameId, athleteId, date) {
 
 // ─── Season averages ──────────────────────────────────────────────────────────
 
-// Fetches gamelog for a player — returns both season averages AND recent game form
-// Single call replaces both getSeasonAverages and per-player summary searches
 async function getPlayerGamelog(sport, league, athleteId) {
   const url = `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${athleteId}/gamelog`;
   const data = await fetchWithTimeout(url, 4000);
   if (!data) return null;
 
-  // Top-level names array — stat column order for all events
   const names = data.names || [];
-  // seasonTypes[0].categories = monthly buckets, each with events array
   const seasonType = data.seasonTypes?.[0];
   const categories = seasonType?.categories || [];
 
   if (!names.length || !categories.length) return null;
 
-  // Stat index map
   const idx = (name) => names.findIndex(n =>
     n === name || n.startsWith(name.split('-')[0])
   );
@@ -431,7 +399,6 @@ async function getPlayerGamelog(sport, league, athleteId) {
   const MIN_I = idx('minutes');
   const FGP_I = idx('fieldGoalPct');
 
-  // Collect all game entries chronologically (categories are month buckets)
   const allGames = [];
   for (const cat of categories) {
     for (const event of (cat.events || [])) {
@@ -439,7 +406,6 @@ async function getPlayerGamelog(sport, league, athleteId) {
       const parseS = (i) => {
         if (i < 0 || i >= stats.length) return null;
         const s = String(stats[i]);
-        // Handle "made-attempted" fractions — take first number
         if (s.includes('-')) return parseFloat(s.split('-')[0]);
         const v = parseFloat(s);
         return isNaN(v) ? null : v;
@@ -450,7 +416,6 @@ async function getPlayerGamelog(sport, league, athleteId) {
       const ast = parseS(AST_I);
       const min = parseS(MIN_I);
 
-      // Skip DNP entries (0 minutes, 0 everything)
       if (min !== null && min < 5 && pts === 0 && reb === 0 && ast === 0) continue;
 
       allGames.push({
@@ -470,18 +435,13 @@ async function getPlayerGamelog(sport, league, athleteId) {
 
   if (allGames.length === 0) return null;
 
-  // Games come back oldest-first from ESPN — reverse to get newest first
   allGames.reverse();
 
-  // Extract player's current team from seasonType displayTeam
-  // Format: "LAC/IND" for traded players, "LAC" for stable players
-  // The last team listed is their current team
   const displayTeam = seasonType?.displayTeam || '';
   const currentTeam = displayTeam.includes('/')
     ? displayTeam.split('/').pop()
     : displayTeam || null;
 
-  // Compute averages
   const avg = (games, stat) => {
     const vals = games.map(g => g.stats[stat]).filter(v => v != null && !isNaN(v));
     if (!vals.length) return null;
@@ -490,7 +450,7 @@ async function getPlayerGamelog(sport, league, athleteId) {
 
   const last5  = allGames.slice(0, 5);
   const last10 = allGames.slice(0, 10);
-  const season = allGames; // all games = season
+  const season = allGames;
 
   const seasonAvg = {
     points:   avg(season, 'points'),
@@ -506,7 +466,6 @@ async function getPlayerGamelog(sport, league, athleteId) {
 }
 
 async function getSeasonAverages(sport, league, athleteId) {
-  // Now backed by getPlayerGamelog
   const gamelog = await getPlayerGamelog(sport, league, athleteId);
   if (!gamelog) return null;
   return gamelog.seasonAvg;
@@ -514,15 +473,12 @@ async function getSeasonAverages(sport, league, athleteId) {
 
 // ─── Opponent defensive rating ────────────────────────────────────────────────
 
-// Fetches standings data for both teams — used for blowout probability
-// and opponent defensive context
 async function getTeamStandings(sport, league) {
   try {
     const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/standings`;
     const data = await fetchWithTimeout(url, 5000);
     if (!data) return null;
 
-    // ESPN standings shape: data.children[].standings.entries[]
     const entries = [];
     const groups = data.children || data.groups || [];
     for (const group of groups) {
@@ -530,13 +486,11 @@ async function getTeamStandings(sport, league) {
       entries.push(...groupEntries);
     }
 
-    // Build a map of teamId → standing data
     const standingsMap = {};
     for (const entry of entries) {
       const teamId = entry.team?.id;
       if (!teamId) continue;
 
-      // Extract wins, losses, point differential from stats array
       const stats = entry.stats || [];
       const getStat = name => {
         const s = stats.find(s => s.name === name || s.abbreviation === name);
@@ -562,8 +516,6 @@ async function getTeamStandings(sport, league) {
   }
 }
 
-// Calculates blowout probability and opponent defensive context
-// Returns structured context used in projections and Claude prompt
 function buildMatchupContext(homeTeamId, awayTeamId, standingsMap) {
   if (!standingsMap) return null;
 
@@ -572,18 +524,15 @@ function buildMatchupContext(homeTeamId, awayTeamId, standingsMap) {
 
   if (!home || !away) return null;
 
-  // Win percentage differential — proxy for talent gap
   const homeWinPct = home.winPct || (home.wins / ((home.wins || 0) + (home.losses || 1)));
   const awayWinPct = away.winPct || (away.wins / ((away.wins || 0) + (away.losses || 1)));
   const winPctDiff = Math.abs(homeWinPct - awayWinPct);
   const favoredTeam = homeWinPct >= awayWinPct ? 'home' : 'away';
 
-  // Point differential proxy for expected margin
   const homeDiff = home.pointDiff || 0;
   const awayDiff = away.pointDiff || 0;
-  const expectedMargin = Math.abs(homeDiff - awayDiff) * 0.4; // rough game margin estimate
+  const expectedMargin = Math.abs(homeDiff - awayDiff) * 0.4;
 
-  // Blowout risk tiers
   let blowoutRisk = 'low';
   let blowoutNote = null;
   if (winPctDiff > 0.25 || expectedMargin > 12) {
@@ -594,11 +543,9 @@ function buildMatchupContext(homeTeamId, awayTeamId, standingsMap) {
     blowoutNote = `Moderate mismatch — possible garbage time for weaker team`;
   }
 
-  // Defensive ratings (points allowed per game — lower = better defense)
   const homeOppPpg = home.oppPpg;
   const awayOppPpg = away.oppPpg;
-  
-  // League avg NBA ~113 ppg allowed — classify defense
+
   const classifyDefense = (oppPpg) => {
     if (!oppPpg) return 'unknown';
     if (oppPpg < 109) return 'elite';
@@ -617,7 +564,6 @@ function buildMatchupContext(homeTeamId, awayTeamId, standingsMap) {
       pointDiff: home.pointDiff,
       oppPpg: homeOppPpg,
       defenseRating: classifyDefense(homeOppPpg),
-      // For away players: home team is their opponent
       asOpponent: {
         defenseRating: classifyDefense(homeOppPpg),
         oppPpg: homeOppPpg,
@@ -632,7 +578,6 @@ function buildMatchupContext(homeTeamId, awayTeamId, standingsMap) {
       pointDiff: away.pointDiff,
       oppPpg: awayOppPpg,
       defenseRating: classifyDefense(awayOppPpg),
-      // For home players: away team is their opponent
       asOpponent: {
         defenseRating: classifyDefense(awayOppPpg),
         oppPpg: awayOppPpg,
@@ -648,7 +593,6 @@ function buildMatchupContext(homeTeamId, awayTeamId, standingsMap) {
 }
 
 async function getOpponentDefenseRating(sport, league, opponentTeamId, stat) {
-  // Now handled by getTeamStandings + buildMatchupContext
   return null;
 }
 
@@ -672,67 +616,54 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
 
     if (last10 == null && season == null) continue;
 
-    // Base projection: weighted blend of last5, last10, season
     const base = last5 != null && last10 != null && season != null
       ? (last5 * 0.40) + (last10 * 0.35) + (season * 0.25)
       : last10 ?? season ?? last5 ?? 0;
 
-    // Home/away adjustment
     let locationAdj = 0;
     if (isHome && homeAvg != null && last10 != null) {
-      locationAdj = (homeAvg - last10) * 0.5; // partial weight
+      locationAdj = (homeAvg - last10) * 0.5;
     } else if (!isHome && awayAvg != null && last10 != null) {
       locationAdj = (awayAvg - last10) * 0.5;
     }
 
-    // Rest adjustment
     let restAdj = 0;
     if (isBackToBack) {
-      // Back-to-back typically drops output ~8-12% for counting stats
       restAdj = -(base * 0.10);
     } else if (daysSince >= 3) {
-      // Well rested — slight positive
       restAdj = base * 0.03;
     }
 
-    // Trend adjustment
     let trendAdj = 0;
     if (trend === 'up'   && last5 != null && last10 != null) trendAdj =  (last5 - last10) * 0.3;
     if (trend === 'down' && last5 != null && last10 != null) trendAdj =  (last5 - last10) * 0.3;
 
-    // Final blended projection
     const blended = Math.round((base + locationAdj + restAdj + trendAdj) * 10) / 10;
 
-    // Variance-based cushion
     const cushionConfig = VARIANCE_CUSHION[stat];
-    let cushion = 3; // default
+    let cushion = 3;
     if (cushionConfig && sd != null) {
       if      (sd < cushionConfig.low[1])  cushion = cushionConfig.low[2];
       else if (sd < cushionConfig.mid[1])  cushion = cushionConfig.mid[2];
       else                                  cushion = cushionConfig.high[2];
     }
 
-    // Opponent defense adjustment (points-focused)
     let defenseAdj = 0;
     if (stat === 'points' && opponentContext?.defenseRating) {
-      if (opponentContext.defenseRating === 'elite')       defenseAdj = -(blended * 0.08);
-      else if (opponentContext.defenseRating === 'good')   defenseAdj = -(blended * 0.04);
-      else if (opponentContext.defenseRating === 'poor')   defenseAdj =  (blended * 0.04);
-      else if (opponentContext.defenseRating === 'bottom-tier') defenseAdj = (blended * 0.08);
+      if (opponentContext.defenseRating === 'elite')            defenseAdj = -(blended * 0.08);
+      else if (opponentContext.defenseRating === 'good')        defenseAdj = -(blended * 0.04);
+      else if (opponentContext.defenseRating === 'poor')        defenseAdj =  (blended * 0.04);
+      else if (opponentContext.defenseRating === 'bottom-tier') defenseAdj =  (blended * 0.08);
     }
 
-    // Blowout risk adjustment — reduce projection for likely garbage time team
     let blowoutAdj = 0;
     if (matchupContext?.blowoutRisk === 'high') {
       const playerOnFavoredTeam = matchupContext.favoredTeam === (isHome ? 'home' : 'away');
       if (!playerOnFavoredTeam) {
-        // Player is on the likely losing team — may play more desperate minutes
-        // but efficiency often drops chasing a big lead
         blowoutAdj = -(blended * 0.05);
       } else {
-        // Player is on the likely winning team — starters pulled in 4th
         blowoutAdj = -(blended * 0.08);
-        cushion += 1.5; // extra cushion since minutes are uncertain
+        cushion += 1.5;
       }
     } else if (matchupContext?.blowoutRisk === 'medium') {
       const playerOnFavoredTeam = matchupContext.favoredTeam === (isHome ? 'home' : 'away');
@@ -741,33 +672,22 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
 
     const adjustedBlended = Math.round((blended + defenseAdj + blowoutAdj) * 10) / 10;
 
-    // Additional cushion adjustments
-    if (isBackToBack) cushion += 1;          // more uncertainty on B2B
-    if (trend === 'up') cushion -= 0.5;      // trending hot → tighter cushion OK
-    if (trend === 'down') cushion += 0.5;    // trending cold → more buffer
+    if (isBackToBack) cushion += 1;
+    if (trend === 'up')   cushion -= 0.5;
+    if (trend === 'down') cushion += 0.5;
 
-    // Minimum sportsbook thresholds — no book offers below these
     const SPORTSBOOK_MINIMUMS = {
       points: 10.5, rebounds: 3.5, assists: 2.5, steals: 0.5, blocks: 0.5,
     };
 
-    // Use adjusted blended (accounts for defense + blowout)
     const finalBlended = adjustedBlended;
-
-    // Suggested threshold (round to nearest 0.5, enforce minimum)
     const rawThreshold = finalBlended - cushion;
     const rounded = Math.round(rawThreshold * 2) / 2;
     const threshold = Math.max(rounded, SPORTSBOOK_MINIMUMS[stat] || 0.5);
-
-    // Edge: how far above threshold the projection sits
     const edge = Math.round((finalBlended - threshold) * 10) / 10;
-
-    // Floor check: is suggested threshold below their worst game in last 10?
     const belowFloor = floor != null && threshold <= floor;
-
-    // Sample size — how many games this projection is based on
     const sampleSize = historicalForm?.byGame?.length || 0;
-    const lowSample  = sampleSize < 3; // flag if fewer than 3 games
+    const lowSample  = sampleSize < 3;
 
     projections[stat] = {
       last5, last10, season,
@@ -799,72 +719,9 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
   return projections;
 }
 
-// ─── Claude prompt ────────────────────────────────────────────────────────────
-
-function buildDailyCardPicks(playerData, matchupContext, gameId, homeTeam, awayTeam) {
-  // Build ranked pick candidates from projection data — no Claude needed
-  // Returns picks sorted by edge and confidence for the Daily Card aggregator
-  const candidates = [];
-
-  for (const p of playerData) {
-    if (!p.projections) continue;
-
-    for (const [stat, proj] of Object.entries(p.projections)) {
-      if (!proj || proj.blended == null || proj.threshold == null) continue;
-      if (proj.edge <= 0) continue;
-      if (proj.lowSample) continue; // skip low sample players
-
-      // Build confidence rating 1-5 based on signals
-      let rating = 3;
-      if (proj.belowFloor)              rating += 1;
-      if (proj.trend === 'up')          rating += 0.5;
-      if (proj.trend === 'down')        rating -= 0.5;
-      if (proj.isBackToBack)            rating -= 1;
-      if (proj.stdDev != null && proj.stdDev < 3) rating += 0.5; // low variance
-      if (proj.stdDev != null && proj.stdDev > 7) rating -= 0.5; // high variance
-      if (matchupContext?.blowoutRisk === 'high') rating -= 0.5;
-      if (proj.defenseRating === 'poor' || proj.defenseRating === 'bottom-tier') rating += 0.5;
-      if (proj.defenseRating === 'elite') rating -= 0.5;
-      if (proj.sampleSize >= 8)         rating += 0.5;
-
-      rating = Math.max(1, Math.min(5, Math.round(rating)));
-
-      // Only include 3+ star picks for daily card
-      if (rating < 3) continue;
-
-      const statLabel = stat.charAt(0).toUpperCase() + stat.slice(1);
-
-      candidates.push({
-        gameId,
-        player:     p.name,
-        team:       p.team,
-        isHome:     p.isHome,
-        stat:       statLabel,
-        direction:  'Over',
-        threshold:  proj.threshold,
-        projection: proj.blended,
-        edge:       proj.edge,
-        rating,
-        trend:      proj.trend,
-        belowFloor: proj.belowFloor,
-        isBackToBack: proj.isBackToBack,
-        sampleSize:   proj.sampleSize,
-        blowoutRisk:  matchupContext?.blowoutRisk || 'low',
-        homeTeam:   homeTeam?.abbreviation,
-        awayTeam:   awayTeam?.abbreviation,
-        game:       `${awayTeam?.abbreviation} @ ${homeTeam?.abbreviation}`,
-      });
-    }
-  }
-
-  // Sort by rating desc, then edge desc
-  return candidates.sort((a, b) =>
-    b.rating !== a.rating ? b.rating - a.rating : b.edge - a.edge
-  );
-}
+// ─── Claude prompts ───────────────────────────────────────────────────────────
 
 async function generatePRARanking(game, playerData, matchupContext = null) {
-  // Build PRA projections for each player
   const praPlayers = playerData.map(p => {
     const proj = p.projections;
     const pts  = proj?.points?.blended   ?? proj?.points?.last5   ?? null;
@@ -875,7 +732,6 @@ async function generatePRARanking(game, playerData, matchupContext = null) {
 
     const pra = Math.round(((pts || 0) + (reb || 0) + (ast || 0)) * 10) / 10;
 
-    // Consistency score: how many of pts/reb/ast have below-floor flags
     const belowFloorCount = [
       proj?.points?.belowFloor,
       proj?.rebounds?.belowFloor,
@@ -894,53 +750,39 @@ async function generatePRARanking(game, playerData, matchupContext = null) {
     const sampleSize = proj?.points?.sampleSize ?? proj?.rebounds?.sampleSize ?? proj?.assists?.sampleSize ?? 0;
 
     return {
-      name:            p.name,
-      team:            p.team,
-      isHome:          p.isHome,
-      pts:             pts   ? Math.round(pts * 10) / 10   : null,
-      reb:             reb   ? Math.round(reb * 10) / 10   : null,
-      ast:             ast   ? Math.round(ast * 10) / 10   : null,
-      pra,
-      belowFloorCount,
-      avgStdDev,
-      sampleSize,
-      lowSample:       sampleSize < 3,
-      isBackToBack:    proj?.points?.isBackToBack || false,
-      ptsTrend:        proj?.points?.trend  || 'neutral',
-      rebTrend:        proj?.rebounds?.trend || 'neutral',
-      astTrend:        proj?.assists?.trend  || 'neutral',
-      ptsFloor:        proj?.points?.floor   ?? null,
-      rebFloor:        proj?.rebounds?.floor ?? null,
-      astFloor:        proj?.assists?.floor  ?? null,
+      name: p.name, team: p.team, isHome: p.isHome,
+      pts: pts ? Math.round(pts * 10) / 10 : null,
+      reb: reb ? Math.round(reb * 10) / 10 : null,
+      ast: ast ? Math.round(ast * 10) / 10 : null,
+      pra, belowFloorCount, avgStdDev, sampleSize,
+      lowSample: sampleSize < 3,
+      isBackToBack: proj?.points?.isBackToBack || false,
+      ptsTrend: proj?.points?.trend  || 'neutral',
+      rebTrend: proj?.rebounds?.trend || 'neutral',
+      astTrend: proj?.assists?.trend  || 'neutral',
+      ptsFloor: proj?.points?.floor   ?? null,
+      rebFloor: proj?.rebounds?.floor ?? null,
+      astFloor: proj?.assists?.floor  ?? null,
     };
   }).filter(Boolean);
 
-  // Filter out players with no data at all
   const validPlayers = praPlayers.filter(p => p.pra > 0 && (p.pts || p.reb || p.ast));
-  const invalidPlayers = praPlayers.filter(p => !p.pra || (!p.pts && !p.reb && !p.ast));
-  
   validPlayers.sort((a, b) => b.pra - a.pra);
-  
-  console.log(`[pregame/analyze] PRA ranking: ${validPlayers.length} valid, ${invalidPlayers.length} excluded (no data)`);
-  
-  // Replace praPlayers with filtered + sorted list
+  console.log(`[pregame/analyze] PRA ranking: ${validPlayers.length} valid`);
   praPlayers.length = 0;
   praPlayers.push(...validPlayers);
 
-  // Build prompt
   const playerLines = praPlayers.map((p, i) => {
     const trends = [
       p.ptsTrend !== 'neutral' ? `pts ${p.ptsTrend}` : null,
       p.rebTrend !== 'neutral' ? `reb ${p.rebTrend}` : null,
       p.astTrend !== 'neutral' ? `ast ${p.astTrend}` : null,
     ].filter(Boolean).join(', ') || 'all neutral';
-
     const flags = [
       p.isBackToBack ? 'BACK-TO-BACK' : null,
       p.belowFloorCount === 3 ? 'ALL 3 STATS BELOW FLOOR' : p.belowFloorCount > 0 ? `${p.belowFloorCount} stats below floor` : null,
       p.avgStdDev == null ? 'no variance data' : null,
     ].filter(Boolean).join(' | ') || 'none';
-
     const sampleNote = p.lowSample ? ` ⚠️ LOW SAMPLE (${p.sampleSize} games)` : ` (${p.sampleSize} games)`;
     return `${i + 1}. ${p.name} (${p.team}${p.isHome ? ' HOME' : ' AWAY'})${sampleNote}
    PRA projection: ${p.pra} (pts=${p.pts ?? '?'} reb=${p.reb ?? '?'} ast=${p.ast ?? '?'})
@@ -965,13 +807,7 @@ ${praMatchupBlock}
 PLAYERS RANKED BY PRA PROJECTION (highest to lowest):
 ${playerLines}
 
-IMPORTANT: Players marked ⚠️ LOW SAMPLE have fewer than 3 games of data — treat their projections as estimates only. If the top candidate has low sample, weight the secondary candidate more heavily or flag confidence as medium/low.
-
-Provide a thorough analysis covering:
-1. Your top PRA candidate and why
-2. How confident you are based on floor consistency, variance, and trends
-3. Any risk factors that could derail them
-4. A secondary candidate if the top pick has significant risk
+IMPORTANT: Players marked ⚠️ LOW SAMPLE have fewer than 3 games of data — treat their projections as estimates only.
 
 Return ONLY valid JSON, no markdown:
 {
@@ -980,15 +816,13 @@ Return ONLY valid JSON, no markdown:
   "top_pick_pra_projection": 42.1,
   "confidence": "high" | "medium" | "low",
   "confidence_rating": 4,
-  "analysis": "3-4 sentence deep analysis of why this player is the best PRA candidate tonight",
+  "analysis": "3-4 sentence deep analysis",
   "key_strengths": ["strength 1", "strength 2", "strength 3"],
   "risk_factors": ["risk 1"] or [],
   "secondary_pick": "Full Name or null",
   "secondary_pick_team": "ABV or null",
   "secondary_analysis": "1-2 sentences on secondary or null",
-  "rankings": [
-    { "rank": 1, "player": "Full Name", "team": "ABV", "pra": 42.1, "pts": 28.1, "reb": 9.2, "ast": 4.8 }
-  ]
+  "rankings": [{ "rank": 1, "player": "Full Name", "team": "ABV", "pra": 42.1, "pts": 28.1, "reb": 9.2, "ast": 4.8 }]
 }`;
 
   const msg = await anthropic.messages.create({
@@ -998,25 +832,18 @@ Return ONLY valid JSON, no markdown:
   });
 
   let raw = msg.content[0].text.replace(/```json[\n]?/g, '').replace(/```[\n]?/g, '').trim();
-  
-  // Find the outermost JSON object — Claude sometimes adds text before/after
   const jsonStart = raw.indexOf('{');
   const jsonEnd   = raw.lastIndexOf('}');
-  if (jsonStart !== -1 && jsonEnd !== -1) {
-    raw = raw.substring(jsonStart, jsonEnd + 1);
-  }
+  if (jsonStart !== -1 && jsonEnd !== -1) raw = raw.substring(jsonStart, jsonEnd + 1);
 
   let result;
   try {
     result = JSON.parse(raw);
   } catch (parseErr) {
     console.error('[pregame/PRA] JSON parse error:', parseErr.message);
-    console.error('[pregame/PRA] Raw (first 500):', raw.substring(0, 500));
-    console.error('[pregame/PRA] Raw (around error pos 3681):', raw.substring(3600, 3750));
     throw new Error(`Claude response JSON parse failed: ${parseErr.message}`);
   }
 
-  // Attach full ranking from our math (not just Claude's top picks)
   result.full_rankings = praPlayers.map(p => ({
     player: p.name, team: p.team, isHome: p.isHome,
     pra: p.pra, pts: p.pts, reb: p.reb, ast: p.ast,
@@ -1084,29 +911,21 @@ ${playerLines}
 
 HOW TO USE THESE PROJECTIONS:
 
-SPORTSBOOK LINE LOGIC (when available):
-- The "SPORTSBOOK LINE" is the actual betting number from DraftKings/FanDuel — this is what you're recommending bettors wager on
-- "proj edge vs line" = your projection minus the sportsbook line — positive means the projection is ABOVE the book line (Over value)
-- If proj edge vs line >= 2.0: strong Over candidate — meaningful gap between projection and market
-- If proj edge vs line is 0.5–1.9: marginal edge — only recommend if other factors align (trend up, below floor, good rest)
-- If proj edge vs line <= 0: skip this prop — projection doesn't clear the book's number
-- When a real line is available, use it as the threshold in your pick (not the suggested threshold)
-- When no real line is available, fall back to the suggested threshold
-
-THRESHOLD LOGIC (fallback when no real line):
+THRESHOLD LOGIC:
 - "Suggested threshold" = blended projection minus variance cushion
 - A larger cushion means higher variance player — threshold is conservative on purpose
 - "BELOW 10-GAME FLOOR" = extremely strong pick — player hasn't gone this low in 10 games
 - "Edge" = how many units of cushion between projection and threshold
+- Since no sportsbook lines are available, always use the suggested threshold
 
-MINIMUM SPORTSBOOK THRESHOLDS (never recommend below these — no sportsbook offers lower):
+MINIMUM SPORTSBOOK THRESHOLDS (never recommend below these):
 - Points: minimum 10.5
 - Rebounds: minimum 3.5
 - Assists: minimum 2.5
-- Steals: minimum 0.5 (presented as Over 0.5 = needs 1+)
-- Blocks: minimum 0.5 (presented as Over 0.5 = needs 1+)
+- Steals: minimum 0.5
+- Blocks: minimum 0.5
 
-If the suggested threshold from the data falls below these minimums, round UP to the minimum.
+If the suggested threshold falls below these minimums, round UP to the minimum.
 If even at the minimum the projection doesn't offer meaningful edge, skip that pick entirely.
 
 RATING FRAMEWORK (1-5 stars):
@@ -1123,18 +942,18 @@ FACTORS TO WEIGH:
 - Below floor (🔒): extremely strong signal — raise rating, mention explicitly in rationale
 - Trend up (📈) + good rest (3+ days): strong combination
 - High std dev with small edge: risky — mention in risk_flags
-- Away game for a player with significant home/away split: note explicitly
 - If L5 avg is significantly above L10: player is hot, weight threshold closer to L5
+- Consider ALL stat types equally — points, rebounds, assists, steals, blocks are all valid picks
 
 For each pick provide:
 - player: exact full name
 - team: team abbreviation
 - stat: one of "Points", "Rebounds", "Assists", "Steals", "Blocks"
-- direction: always "Over" for pre-game recommendations (we back players to perform)
-- threshold: the exact number to bet Over on (use the suggested threshold from the data)
+- direction: always "Over"
+- threshold: the exact number to bet Over on
 - projection: the blended projection number
 - edge: cushion between projection and threshold
-- rationale: 2-3 sentences citing SPECIFIC numbers — projection, threshold, trend, rest
+- rationale: 2-3 sentences citing SPECIFIC numbers
 - rating: 1-5 stars
 - rating_reason: one sentence explaining the rating
 - risk_flags: array of concern strings (empty if clean)
@@ -1159,7 +978,7 @@ Return ONLY valid JSON, no markdown:
   ]
 }
 
-Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad with weak picks. Prioritize picks where multiple factors align — below-floor flags, clean rest, positive trend, and meaningful edge all pointing the same direction.`;
+Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad with weak picks. Consider all stat categories equally — do not favour rebounds or assists over points. Prioritize picks where multiple factors align.`;
 
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
@@ -1174,17 +993,14 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
   try {
     return JSON.parse(raw);
   } catch (parseErr) {
-    console.error('[pregame/picks] JSON parse error at pos', parseErr.message);
+    console.error('[pregame/picks] JSON parse error:', parseErr.message);
     console.error('[pregame/picks] Raw snippet:', raw.substring(0, 300));
     throw new Error(`Claude response JSON parse failed: ${parseErr.message}`);
   }
 }
 
-// ─── Odds attachment ─────────────────────────────────────────────────────────
+// ─── Odds attachment ──────────────────────────────────────────────────────────
 
-// Attaches real sportsbook lines to an array of picks.
-// Adds: realLine, overOdds, underOdds, book, hasRealLine fields.
-// Falls back gracefully — if no line found, pick is unchanged.
 function attachOdds(picks, oddsMap) {
   if (!oddsMap || !picks?.length) return picks;
   return picks.map(pick => {
@@ -1198,7 +1014,6 @@ function attachOdds(picks, oddsMap) {
       overOdds:    entry.overOdds,
       underOdds:   entry.underOdds,
       book:        entry.book,
-      // If real line differs from our calculated threshold, note the gap
       lineGap: Math.round((pick.projection - entry.line) * 10) / 10,
     };
   });
@@ -1218,13 +1033,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    console.log(`[pregame/analyze] Analyzing ${gameId} (${league.toUpperCase()})`);
+    console.log(`[pregame/analyze] Analyzing ${gameId} (${league.toUpperCase()}) mode=${mode}`);
 
-    // Step 1: Get rosters for both teams
-    console.log(`[pregame/analyze] homeTeam:`, JSON.stringify(homeTeam));
-    console.log(`[pregame/analyze] awayTeam:`, JSON.stringify(awayTeam));
-
-    // If team IDs are missing, try to find them via the teams endpoint
     const resolvedHomeId = homeTeam?.id || await findTeamId(sport, league, homeTeam?.abbreviation);
     const resolvedAwayId = awayTeam?.id || await findTeamId(sport, league, awayTeam?.abbreviation);
 
@@ -1237,70 +1047,45 @@ export default async function handler(req, res) {
 
     console.log(`[pregame/analyze] homeRoster: ${homeRoster.length}, awayRoster: ${awayRoster.length}`);
 
-    // Tag players with home/away and limit to likely rotation players
-    // Cap at 8 per team (16 total) to stay within time budget
-    // Take full roster (up to 13 per team = full NBA rotation)
-    // Roster comes back alphabetical from ESPN so we need all of them to get stars like Jokic (J)
     const homePlayers = homeRoster.slice(0, 13).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
     const awayPlayers = awayRoster.slice(0, 13).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation || 'AWY' }));
     const allPlayers  = [...homePlayers, ...awayPlayers];
 
-    console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players (up to 13 per team)`);
+    console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players`);
 
-    // Step 2: Fetch gamelogs + standings in parallel
-    // Each player's gamelog gives us BOTH form data AND season averages in one call
-    console.log(`[pregame/analyze] Fetching gamelogs + standings...`);
     const [gamelogResults, standingsMap] = await Promise.all([
       Promise.all(allPlayers.map(p =>
         getPlayerGamelog(sport, league, p.id).catch(() => null)
       )),
       getTeamStandings(sport, league),
     ]);
-    // oddsMap passed in from scan — no per-game fetch needed
 
     const matchupContext = buildMatchupContext(resolvedHomeId, resolvedAwayId, standingsMap);
-    console.log(`[pregame/analyze] Matchup context: blowout risk=${matchupContext?.blowoutRisk || 'unknown'}, margin=${matchupContext?.expectedMargin || '?'}`);
+    console.log(`[pregame/analyze] Matchup context: blowout risk=${matchupContext?.blowoutRisk || 'unknown'}`);
     console.log(`[pregame/analyze] Gamelogs: ${gamelogResults.filter(Boolean).length}/${allPlayers.length} fetched`);
 
-    // Step 3: Build form + season averages from gamelogs (already fetched above)
-    const formResults = gamelogResults.map(gl => {
-      if (!gl || gl.allGames.length === 0) return null;
-      return buildFormDataFromGamelog(gl);
-    });
-
+    const formResults  = gamelogResults.map(gl => gl?.allGames?.length ? buildFormDataFromGamelog(gl) : null);
     const seasonResults = gamelogResults.map(gl => gl?.seasonAvg || null);
 
     console.log(`[pregame/analyze] Form: ${formResults.filter(Boolean).length}/${allPlayers.length} | Season: ${seasonResults.filter(Boolean).length}/${allPlayers.length}`);
-    allPlayers.forEach((p, i) => {
-      const games = gamelogResults[i]?.allGames?.length || 0;
-      if (games > 0) console.log(`  ${p.name}: ${games} games, season avg pts=${seasonResults[i]?.points ?? '?'}`);
-    });
 
-    // Step 4: Build projections, filter to players with enough data
     const playerData = allPlayers.map((p, i) => {
       const form   = formResults[i];
       const season = seasonResults[i];
       if (!form && !season) return null;
 
-      // Opponent is the other team
       const opponentContext = p.isHome
         ? matchupContext?.away?.asOpponent
         : matchupContext?.home?.asOpponent;
       const projections = buildPreGameProjection(p, season, form, p.isHome, opponentContext, matchupContext);
       if (Object.keys(projections).length === 0) return null;
 
-      // Use team from gamelog if available (more accurate than roster for traded players)
       const actualTeam = gamelogResults[i]?.currentTeam || p.teamAbbrev;
 
       return {
-        id:          p.id,
-        name:        p.name,
-        position:    p.position,
-        team:        actualTeam,
-        isHome:      p.isHome,
-        projections,
-        form,
-        season,
+        id: p.id, name: p.name, position: p.position,
+        team: actualTeam, isHome: p.isHome,
+        projections, form, season,
       };
     }).filter(Boolean);
 
@@ -1310,39 +1095,43 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Could not build projections for any players in this game' });
     }
 
-    // Step 5: Claude analysis
+    // PRA mode
     if (mode === 'pra') {
-      const analysis = await generatePRARanking(
-        { homeTeam, awayTeam, gameDate },
-        playerData,
-        matchupContext,
-      );
+      const analysis = await generatePRARanking({ homeTeam, awayTeam, gameDate }, playerData, matchupContext);
       return res.status(200).json({
-        success: true,
-        gameId,
+        success: true, gameId,
         game: { homeTeam, awayTeam, sport, league, gameDate },
-        mode: 'pra',
-        ...analysis,
+        mode: 'pra', ...analysis,
         player_count: playerData.length,
         analyzed_at: new Date().toISOString(),
       });
     }
 
+    // Daily card mode — route through Claude with legCount=2, no sportsbook lines
     if (mode === 'daily') {
-      // Daily card mode — return top picks for this game without Claude call
-      // Just run projections and return raw ranked data for the UI to aggregate
-      const dailyPicks = buildDailyCardPicks(playerData, matchupContext, gameId, homeTeam, awayTeam);
-      const dailyPicksWithOdds = attachOdds(dailyPicks, oddsMap);
+      console.log(`[pregame/analyze] Daily card mode — routing through Claude (legCount=2)`);
+      const dailyResult = await generatePreGamePicks(
+        { homeTeam, awayTeam, gameDate },
+        playerData,
+        [],
+        2,
+        matchupContext,
+        {},
+      );
+      const dailyPicksWithOdds = dailyResult.picks
+        ? { ...dailyResult, picks: attachOdds(dailyResult.picks, {}) }
+        : dailyResult;
       return res.status(200).json({
-        success: true,
-        gameId,
+        success: true, gameId,
         game: { homeTeam, awayTeam, sport, league, gameDate },
         mode: 'daily',
-        picks: dailyPicksWithOdds,
+        ...dailyPicksWithOdds,
+        player_count: playerData.length,
         analyzed_at: new Date().toISOString(),
       });
     }
 
+    // Standard pregame picks mode
     const picks = await generatePreGamePicks(
       { homeTeam, awayTeam, gameDate },
       playerData,
@@ -1354,8 +1143,7 @@ export default async function handler(req, res) {
 
     const picksWithOdds = picks.picks ? { ...picks, picks: attachOdds(picks.picks, oddsMap) } : picks;
     return res.status(200).json({
-      success: true,
-      gameId,
+      success: true, gameId,
       game: { homeTeam, awayTeam, sport, league, gameDate },
       ...picksWithOdds,
       player_count: playerData.length,
