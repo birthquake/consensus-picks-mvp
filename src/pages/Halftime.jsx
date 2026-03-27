@@ -877,15 +877,8 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
   }, [game, mode, analysisMode, legCount]);
 
   const savePicks = async (analysisData) => {
-    // Build projection map keyed by player name for storage
-    const projections = {};
-    analysisData.picks?.forEach(pick => {
-      // We don't have the raw projection object here — store what Claude used
-      projections[pick.player] = {
-        blended:    null, // projection math is in analyze.js, not returned to UI
-        rationale:  pick.rationale,
-      };
-    });
+    // Use the projections returned directly from the API (keyed by player name)
+    const projections = analysisData.projections || {};
     await fetch('/api/halftime/save-picks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
