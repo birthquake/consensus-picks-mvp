@@ -191,17 +191,7 @@ function DailyCard({ legCount }) {
   const [picks, setPicks] = useState([]);
   const [selectedLegs, setSelectedLegs] = useState([]);
   const [copied, setCopied] = useState(false);
-  const [bankroll, setBankroll] = useState(() => {
-    try { return parseFloat(localStorage.getItem('paigrade_bankroll') || '100'); } catch { return 100; }
-  });
-  const [showBankroll, setShowBankroll] = useState(false);
 
-  // Stakes scale with bankroll: 5★=2%, 4★=1.5%, 3★=1%
-  const STAKE_BY_RATING = {
-    5: Math.round(bankroll * 0.02 * 100) / 100,
-    4: Math.round(bankroll * 0.015 * 100) / 100,
-    3: Math.round(bankroll * 0.01 * 100) / 100,
-  };
 
   const load = async () => {
     setState('loading');
@@ -278,85 +268,12 @@ function DailyCard({ legCount }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const saveBankroll = (val) => {
-    const n = parseFloat(val);
-    if (!isNaN(n) && n > 0) {
-      setBankroll(n);
-      try { localStorage.setItem('paigrade_bankroll', String(n)); } catch {}
-    }
-  };
-
-  const totalStake = selectedLegs.reduce((s, l) => s + (STAKE_BY_RATING[l.rating] || 0.50), 0);
   const ratingColor = (r) => r >= 4 ? '#4ade80' : r >= 3 ? '#fbbf24' : '#f87171';
 
   return (
     <div style={{ paddingBottom: selectedLegs.length > 0 ? '180px' : '24px' }}>
 
-      {/* Header */}
-      <div style={{ marginBottom: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <h2 style={{ margin: '0 0 4px', fontSize: '20px', fontWeight: '800', color: 'var(--text-primary, #fff)' }}>
-              Daily Card
-            </h2>
-            <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)' }}>
-              Top picks across today's slate — ranked by confidence
-            </p>
-          </div>
-          <button
-            onClick={() => setShowBankroll(b => !b)}
-            style={{
-              background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)',
-              borderRadius: '8px', padding: '8px 12px', cursor: 'pointer',
-              fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary, #888)',
-            }}
-          >
-            Bankroll
-          </button>
-        </div>
 
-        {/* Bankroll tracker */}
-        {showBankroll && (
-          <div style={{
-            marginTop: '12px', padding: '14px 16px',
-            background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)',
-            borderRadius: '10px',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-              <span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)', fontWeight: '600' }}>Starting bankroll</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>$</span>
-                <input
-                  type="number"
-                  defaultValue={bankroll}
-                  onBlur={e => saveBankroll(e.target.value)}
-                  style={{
-                    width: '80px', padding: '6px 8px', borderRadius: '6px',
-                    border: '1px solid var(--border-color, #333)',
-                    background: 'transparent', color: 'var(--text-primary, #fff)',
-                    fontSize: '13px', fontWeight: '700',
-                  }}
-                />
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-              {[
-                { label: '5★ stake', val: `$${STAKE_BY_RATING[5].toFixed(2)}` },
-                { label: '4★ stake', val: `$${STAKE_BY_RATING[4].toFixed(2)}` },
-                { label: '3★ stake', val: `$${STAKE_BY_RATING[3].toFixed(2)}` },
-              ].map(item => (
-                <div key={item.label} style={{
-                  background: 'var(--bg-primary, #000)', borderRadius: '8px',
-                  padding: '8px', textAlign: 'center',
-                }}>
-                  <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-primary, #fff)' }}>{item.val}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', marginTop: '2px' }}>{item.label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* Load button */}
       {state === 'idle' && (
@@ -442,8 +359,6 @@ function DailyCard({ legCount }) {
           {picks.map((pick, i) => {
             const key = `${pick.player}:${pick.stat}`;
             const isSelected = selectedLegs.some(l => l.key === key);
-            const stake = STAKE_BY_RATING[pick.rating] || 0.50;
-
             return (
               <div key={key} style={{
                 background: isSelected ? 'rgba(74,222,128,0.06)' : 'var(--bg-secondary, #111)',
@@ -503,11 +418,8 @@ function DailyCard({ legCount }) {
                   </div>
                 </div>
 
-                {/* Stake + Add */}
+                {/* Add button */}
                 <div style={{ flexShrink: 0, textAlign: 'right' }}>
-                  <div style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', marginBottom: '6px' }}>
-                    ${stake.toFixed(2)}
-                  </div>
                   <button
                     onClick={() => toggleLeg(pick)}
                     style={{
@@ -540,9 +452,6 @@ function DailyCard({ legCount }) {
             <span style={{ fontWeight: '800', fontSize: '14px', color: '#fff' }}>
               Parlay ({selectedLegs.length} leg{selectedLegs.length !== 1 ? 's' : ''})
             </span>
-            <span style={{ fontSize: '12px', color: '#4ade80', fontWeight: '700' }}>
-              Total stake: ${totalStake.toFixed(2)}
-            </span>
           </div>
           {selectedLegs.map(leg => (
             <div key={leg.key} style={{
@@ -555,7 +464,6 @@ function DailyCard({ legCount }) {
               </span>
               <span style={{ flex: 1, fontSize: '12px', color: '#e2e8f0', fontWeight: '600' }}>{leg.player}</span>
               <span style={{ fontSize: '11px', color: '#60a5fa' }}>Over {leg.threshold} {leg.stat}</span>
-              <span style={{ fontSize: '11px', color: 'var(--text-secondary, #666)' }}>${(STAKE_BY_RATING[leg.rating] || 0.50).toFixed(2)}</span>
               <button onClick={() => toggleLeg(leg)} style={{
                 background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '13px',
               }}>✕</button>
