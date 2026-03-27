@@ -196,7 +196,12 @@ function DailyCard({ legCount }) {
   });
   const [showBankroll, setShowBankroll] = useState(false);
 
-  const STAKE_BY_RATING = { 5: 1.00, 4: 0.75, 3: 0.50 };
+  // Stakes scale with bankroll: 5★=2%, 4★=1.5%, 3★=1%
+  const STAKE_BY_RATING = {
+    5: Math.round(bankroll * 0.02 * 100) / 100,
+    4: Math.round(bankroll * 0.015 * 100) / 100,
+    3: Math.round(bankroll * 0.01 * 100) / 100,
+  };
 
   const load = async () => {
     setState('loading');
