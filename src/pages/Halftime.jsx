@@ -50,6 +50,37 @@ const Icon = {
       <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
     </svg>
   ),
+  Target: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>
+    </svg>
+  ),
+  BarChart: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+    </svg>
+  ),
+  TrendUp: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>
+    </svg>
+  ),
+  TrendDown: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/>
+    </svg>
+  ),
+  TrendFlat: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <line x1="5" y1="12" x2="19" y2="12"/><polyline points="15 8 19 12 15 16"/>
+    </svg>
+  ),
+  Lock: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+    </svg>
+  ),
 };
 
 // ── Star Rating ───────────────────────────────────────────────────────────────
@@ -412,18 +443,18 @@ function DailyCard({ legCount }) {
                   </div>
                   <div style={{ marginTop: '3px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     {pick.belowFloor && (
-                      <span style={{ fontSize: '10px', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 6px', borderRadius: '10px' }}>
-                        below floor
+                      <span style={{ fontSize: '10px', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                        <Icon.Lock /> below floor
                       </span>
                     )}
                     {pick.trend === 'up' && (
-                      <span style={{ fontSize: '10px', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', padding: '1px 6px', borderRadius: '10px' }}>
-                        trending up
+                      <span style={{ fontSize: '10px', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                        <Icon.TrendUp /> trending up
                       </span>
                     )}
                     {pick.isBackToBack && (
-                      <span style={{ fontSize: '10px', color: '#fbbf24', background: 'rgba(251,191,36,0.1)', padding: '1px 6px', borderRadius: '10px' }}>
-                        b2b
+                      <span style={{ fontSize: '10px', color: '#fbbf24', background: 'rgba(251,191,36,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                        <Icon.Warning /> b2b
                       </span>
                     )}
                   </div>
@@ -860,7 +891,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
             })()}
             {game.scoreDiff >= 20 && (
               <span style={{ color: '#fbbf24', marginLeft: '8px', fontWeight: '600' }}>
-                ⚠️ Large lead
+                <Icon.Warning /> Large lead
               </span>
             )}
           </div>
@@ -884,21 +915,22 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
             padding: '4px', borderRadius: '8px',
           }}>
             {[
-              { id: 'picks', label: '🎯 Prop Picks' },
-              { id: 'pra',   label: '📊 PRA Leader' },
+              { id: 'picks', label: 'Prop Picks', icon: Icon.Target },
+              { id: 'pra',   label: 'PRA Leader', icon: Icon.BarChart },
             ].map(m => (
               <button
                 key={m.id}
                 onClick={() => { setAnalysisMode(m.id); setState('idle'); setAnalysis(null); }}
                 style={{
                   flex: 1, padding: '7px', borderRadius: '6px', border: 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
                   background: analysisMode === m.id ? '#6366f1' : 'transparent',
                   color: analysisMode === m.id ? '#fff' : 'var(--text-secondary, #888)',
                   fontWeight: '600', fontSize: '12px', cursor: 'pointer',
                   transition: 'all 0.15s',
                 }}
               >
-                {m.label}
+                <m.icon />{m.label}
               </button>
             ))}
           </div>
@@ -1432,7 +1464,11 @@ export default function Halftime() {
       {/* Empty */}
       {mode !== 'performance' && mode !== 'daily' && scanState === 'empty' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
-          <div style={{ fontSize: '40px', marginBottom: '12px' }}>🏁</div>
+          <div style={{ marginBottom: '12px', color: 'var(--text-secondary, #555)' }}>
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
           <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '700' }}>
             No halftime games right now
           </h3>
