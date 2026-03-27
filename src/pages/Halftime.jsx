@@ -81,7 +81,27 @@ const Icon = {
       <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
     </svg>
   ),
-  StarFilled: () => (
+  Sun: () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="5"/>
+      <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+      <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+    </svg>
+  ),
+  Moon: () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+  ),
+  LogOut: () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+      <polyline points="16 17 21 12 16 7"/>
+      <line x1="21" y1="12" x2="9" y2="12"/>
+    </svg>
+  ),
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2">
       <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
     </svg>
@@ -252,8 +272,6 @@ function DailyCard({ legCount }) {
   const FILTERS = [
     { id: 'fivestar', label: '5-star only', icon: <Icon.StarFilled /> },
     { id: 'trending', label: 'Trending up', icon: <Icon.TrendUp /> },
-    { id: 'points',   label: 'Points',      icon: <Icon.Target /> },
-    { id: 'rebounds', label: 'Rebounds',    icon: <Icon.Rebound /> },
   ];
 
   const applyFilters = (picks, filters) => {
@@ -441,7 +459,7 @@ function DailyCard({ legCount }) {
           <p style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', margin: '0 0 10px', fontWeight: '500' }}>
             Quick filters
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px', maxWidth: '320px' }}>
             {FILTERS.map(f => {
               const active = activeFilters.has(f.id);
               return (
@@ -930,7 +948,18 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
         <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: '500', fontSize: '16px', color: 'var(--text-primary, #fff)' }}>
-            {game.awayTeam.abbreviation} {game.awayTeam.score} – {game.homeTeam.score} {game.homeTeam.abbreviation}
+            {game.state === 'pre' ? (
+              <>
+                {game.awayTeam.abbreviation} vs {game.homeTeam.abbreviation}
+                {game.startTime && (
+                  <span style={{ fontSize: '13px', fontWeight: '400', color: '#a78bfa', marginLeft: '8px' }}>
+                    {new Date(game.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}
+                  </span>
+                )}
+              </>
+            ) : (
+              <>{game.awayTeam.abbreviation} {game.awayTeam.score} – {game.homeTeam.score} {game.homeTeam.abbreviation}</>
+            )}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', marginTop: '2px' }}>
             {game.label} · {game.statusDescription}
@@ -1207,7 +1236,7 @@ function ParlayBuilder({ legs, onRemove }) {
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
-export default function Halftime() {
+export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const [mode, setMode] = useState('daily');
   const [scanState, setScanState] = useState('idle');
   const [games, setGames] = useState([]);
@@ -1278,16 +1307,36 @@ export default function Halftime() {
               {mode === 'daily' ? "Top picks across today's full slate" : mode === 'pregame' ? 'Pre-game prop picks from historical projections' : mode === 'halftime' ? 'Live prop picks built from first-half data + recent form' : 'Pick accuracy and projection tracking over time'}
             </p>
           </div>
-          {lastScanned && (
-            <button onClick={scan} disabled={scanState === 'scanning'} style={{
-              background: 'transparent', border: '1px solid var(--border-color, #333)',
-              borderRadius: '10px', color: 'var(--text-secondary, #888)',
-              padding: '8px 12px', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '500', flexShrink: 0,
-            }}>
-              <Icon.Refresh /> Refresh
-            </button>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginTop: '2px' }}>
+            {lastScanned && (
+              <button onClick={scan} disabled={scanState === 'scanning'} style={{
+                background: 'transparent', border: '1px solid var(--border-color, #333)',
+                borderRadius: '10px', color: 'var(--text-secondary, #888)',
+                padding: '8px 12px', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '500',
+              }}>
+                <Icon.Refresh /> Refresh
+              </button>
+            )}
+            {toggleTheme && (
+              <button onClick={toggleTheme} style={{
+                background: 'transparent', border: '1px solid var(--border-color, #333)',
+                borderRadius: '10px', color: 'var(--text-secondary, #888)',
+                padding: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center',
+              }}>
+                {isDark ? <Icon.Sun /> : <Icon.Moon />}
+              </button>
+            )}
+            {onLogout && (
+              <button onClick={onLogout} style={{
+                background: 'transparent', border: '1px solid var(--border-color, #333)',
+                borderRadius: '10px', color: 'var(--text-secondary, #888)',
+                padding: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center',
+              }}>
+                <Icon.LogOut />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tab tiles */}
