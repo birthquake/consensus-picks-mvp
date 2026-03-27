@@ -421,37 +421,147 @@ async function getSeasonAverages(sport, league, athleteId) {
 
 // ─── Opponent defensive rating ────────────────────────────────────────────────
 
-async function getOpponentDefenseRating(sport, league, opponentTeamId, stat) {
-  // Fetch opponent's team stats to see how many pts/reb/ast they allow per game
-  // We compare to league average to get a rating
+// Fetches standings data for both teams — used for blowout probability
+// and opponent defensive context
+async function getTeamStandings(sport, league) {
   try {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams/${opponentTeamId}`;
-    const data = await fetchWithTimeout(url, 4000);
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/standings`;
+    const data = await fetchWithTimeout(url, 5000);
     if (!data) return null;
 
-    // Also fetch standings which has defensive ratings
-    const standingsUrl = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/standings`;
-    const standings = await fetchWithTimeout(standingsUrl, 4000);
+    // ESPN standings shape: data.children[].standings.entries[]
+    const entries = [];
+    const groups = data.children || data.groups || [];
+    for (const group of groups) {
+      const groupEntries = group.standings?.entries || group.entries || [];
+      entries.push(...groupEntries);
+    }
 
-    // For now return a qualitative rating based on team record
-    // A future enhancement would pull actual defensive stats per position
-    const team = data.team;
-    if (!team) return null;
+    // Build a map of teamId → standing data
+    const standingsMap = {};
+    for (const entry of entries) {
+      const teamId = entry.team?.id;
+      if (!teamId) continue;
 
-    return {
-      teamName: team.displayName,
-      teamAbbrev: team.abbreviation,
-      // Placeholder — real defensive ratings need a separate stats endpoint
-      available: false,
-    };
+      // Extract wins, losses, point differential from stats array
+      const stats = entry.stats || [];
+      const getStat = name => {
+        const s = stats.find(s => s.name === name || s.abbreviation === name);
+        return s ? parseFloat(s.value ?? s.displayValue) : null;
+      };
+
+      standingsMap[teamId] = {
+        teamId,
+        teamName:  entry.team?.displayName,
+        abbrev:    entry.team?.abbreviation,
+        wins:      getStat('wins')   ?? getStat('w')  ?? null,
+        losses:    getStat('losses') ?? getStat('l')  ?? null,
+        winPct:    getStat('winPercent') ?? getStat('pct') ?? null,
+        pointDiff: getStat('pointDifferential') ?? getStat('diff') ?? null,
+        ppg:       getStat('pointsFor')  ?? getStat('ppg')  ?? null,
+        oppPpg:    getStat('pointsAgainst') ?? getStat('oppg') ?? null,
+      };
+    }
+
+    return standingsMap;
   } catch {
     return null;
   }
 }
 
+// Calculates blowout probability and opponent defensive context
+// Returns structured context used in projections and Claude prompt
+function buildMatchupContext(homeTeamId, awayTeamId, standingsMap) {
+  if (!standingsMap) return null;
+
+  const home = standingsMap[String(homeTeamId)];
+  const away = standingsMap[String(awayTeamId)];
+
+  if (!home || !away) return null;
+
+  // Win percentage differential — proxy for talent gap
+  const homeWinPct = home.winPct || (home.wins / ((home.wins || 0) + (home.losses || 1)));
+  const awayWinPct = away.winPct || (away.wins / ((away.wins || 0) + (away.losses || 1)));
+  const winPctDiff = Math.abs(homeWinPct - awayWinPct);
+  const favoredTeam = homeWinPct >= awayWinPct ? 'home' : 'away';
+
+  // Point differential proxy for expected margin
+  const homeDiff = home.pointDiff || 0;
+  const awayDiff = away.pointDiff || 0;
+  const expectedMargin = Math.abs(homeDiff - awayDiff) * 0.4; // rough game margin estimate
+
+  // Blowout risk tiers
+  let blowoutRisk = 'low';
+  let blowoutNote = null;
+  if (winPctDiff > 0.25 || expectedMargin > 12) {
+    blowoutRisk = 'high';
+    blowoutNote = `Large talent gap — ${favoredTeam === 'home' ? home.abbrev : away.abbrev} favored heavily, starters may get fewer 4Q minutes`;
+  } else if (winPctDiff > 0.15 || expectedMargin > 7) {
+    blowoutRisk = 'medium';
+    blowoutNote = `Moderate mismatch — possible garbage time for weaker team`;
+  }
+
+  // Defensive ratings (points allowed per game — lower = better defense)
+  const homeOppPpg = home.oppPpg;
+  const awayOppPpg = away.oppPpg;
+  
+  // League avg NBA ~113 ppg allowed — classify defense
+  const classifyDefense = (oppPpg) => {
+    if (!oppPpg) return 'unknown';
+    if (oppPpg < 109) return 'elite';
+    if (oppPpg < 112) return 'good';
+    if (oppPpg < 115) return 'average';
+    if (oppPpg < 118) return 'poor';
+    return 'bottom-tier';
+  };
+
+  return {
+    home: {
+      teamId: homeTeamId,
+      abbrev: home.abbrev,
+      wins: home.wins, losses: home.losses,
+      winPct: Math.round((homeWinPct || 0) * 1000) / 10,
+      pointDiff: home.pointDiff,
+      oppPpg: homeOppPpg,
+      defenseRating: classifyDefense(homeOppPpg),
+      // For away players: home team is their opponent
+      asOpponent: {
+        defenseRating: classifyDefense(homeOppPpg),
+        oppPpg: homeOppPpg,
+        note: homeOppPpg ? `${home.abbrev} allows ~${homeOppPpg.toFixed(1)} ppg (${classifyDefense(homeOppPpg)} defense)` : null,
+      },
+    },
+    away: {
+      teamId: awayTeamId,
+      abbrev: away.abbrev,
+      wins: away.wins, losses: away.losses,
+      winPct: Math.round((awayWinPct || 0) * 1000) / 10,
+      pointDiff: away.pointDiff,
+      oppPpg: awayOppPpg,
+      defenseRating: classifyDefense(awayOppPpg),
+      // For home players: away team is their opponent
+      asOpponent: {
+        defenseRating: classifyDefense(awayOppPpg),
+        oppPpg: awayOppPpg,
+        note: awayOppPpg ? `${away.abbrev} allows ~${awayOppPpg.toFixed(1)} ppg (${classifyDefense(awayOppPpg)} defense)` : null,
+      },
+    },
+    blowoutRisk,
+    blowoutNote,
+    expectedMargin: Math.round(expectedMargin * 10) / 10,
+    favoredTeam,
+    winPctDiff: Math.round(winPctDiff * 1000) / 10,
+  };
+}
+
+async function getOpponentDefenseRating(sport, league, opponentTeamId, stat) {
+  // Now handled by getTeamStandings + buildMatchupContext
+  return null;
+}
+
 // ─── Projection engine ────────────────────────────────────────────────────────
 
-function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, opponentRating) {
+function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, opponentContext, matchupContext) {
   const projections = {};
 
   for (const stat of STAT_KEYS) {
@@ -509,6 +619,35 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
       else                                  cushion = cushionConfig.high[2];
     }
 
+    // Opponent defense adjustment (points-focused)
+    let defenseAdj = 0;
+    if (stat === 'points' && opponentContext?.defenseRating) {
+      if (opponentContext.defenseRating === 'elite')       defenseAdj = -(blended * 0.08);
+      else if (opponentContext.defenseRating === 'good')   defenseAdj = -(blended * 0.04);
+      else if (opponentContext.defenseRating === 'poor')   defenseAdj =  (blended * 0.04);
+      else if (opponentContext.defenseRating === 'bottom-tier') defenseAdj = (blended * 0.08);
+    }
+
+    // Blowout risk adjustment — reduce projection for likely garbage time team
+    let blowoutAdj = 0;
+    if (matchupContext?.blowoutRisk === 'high') {
+      const playerOnFavoredTeam = matchupContext.favoredTeam === (isHome ? 'home' : 'away');
+      if (!playerOnFavoredTeam) {
+        // Player is on the likely losing team — may play more desperate minutes
+        // but efficiency often drops chasing a big lead
+        blowoutAdj = -(blended * 0.05);
+      } else {
+        // Player is on the likely winning team — starters pulled in 4th
+        blowoutAdj = -(blended * 0.08);
+        cushion += 1.5; // extra cushion since minutes are uncertain
+      }
+    } else if (matchupContext?.blowoutRisk === 'medium') {
+      const playerOnFavoredTeam = matchupContext.favoredTeam === (isHome ? 'home' : 'away');
+      if (playerOnFavoredTeam) blowoutAdj = -(blended * 0.04);
+    }
+
+    const adjustedBlended = Math.round((blended + defenseAdj + blowoutAdj) * 10) / 10;
+
     // Additional cushion adjustments
     if (isBackToBack) cushion += 1;          // more uncertainty on B2B
     if (trend === 'up') cushion -= 0.5;      // trending hot → tighter cushion OK
@@ -519,13 +658,16 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
       points: 10.5, rebounds: 3.5, assists: 2.5, steals: 0.5, blocks: 0.5,
     };
 
+    // Use adjusted blended (accounts for defense + blowout)
+    const finalBlended = adjustedBlended;
+
     // Suggested threshold (round to nearest 0.5, enforce minimum)
-    const rawThreshold = blended - cushion;
+    const rawThreshold = finalBlended - cushion;
     const rounded = Math.round(rawThreshold * 2) / 2;
     const threshold = Math.max(rounded, SPORTSBOOK_MINIMUMS[stat] || 0.5);
 
     // Edge: how far above threshold the projection sits
-    const edge = Math.round((blended - threshold) * 10) / 10;
+    const edge = Math.round((finalBlended - threshold) * 10) / 10;
 
     // Floor check: is suggested threshold below their worst game in last 10?
     const belowFloor = floor != null && threshold <= floor;
@@ -536,7 +678,8 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
 
     projections[stat] = {
       last5, last10, season,
-      blended,
+      blended: finalBlended,
+      rawBlended: blended,
       threshold,
       cushion: Math.round(cushion * 10) / 10,
       edge,
@@ -546,9 +689,13 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
       trend,
       isBackToBack,
       daysSinceLastGame: daysSince,
-      locationAdj: Math.round(locationAdj * 10) / 10,
-      restAdj:     Math.round(restAdj * 10) / 10,
-      trendAdj:    Math.round(trendAdj * 10) / 10,
+      locationAdj:  Math.round(locationAdj * 10) / 10,
+      restAdj:      Math.round(restAdj * 10) / 10,
+      trendAdj:     Math.round(trendAdj * 10) / 10,
+      defenseAdj:   Math.round((defenseAdj || 0) * 10) / 10,
+      blowoutAdj:   Math.round((blowoutAdj || 0) * 10) / 10,
+      defenseRating: opponentContext?.defenseRating || null,
+      blowoutRisk:   matchupContext?.blowoutRisk || 'low',
       belowFloor,
       isHome,
       sampleSize,
@@ -561,7 +708,7 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
 
 // ─── Claude prompt ────────────────────────────────────────────────────────────
 
-async function generatePRARanking(game, playerData) {
+async function generatePRARanking(game, playerData, matchupContext = null) {
   // Build PRA projections for each player
   const praPlayers = playerData.map(p => {
     const proj = p.projections;
@@ -647,9 +794,18 @@ async function generatePRARanking(game, playerData) {
    Flags: ${flags}`;
   }).join('\n\n');
 
+  const praMatchupBlock = matchupContext ? `
+MATCHUP CONTEXT:
+- Blowout risk: ${matchupContext.blowoutRisk.toUpperCase()}${matchupContext.blowoutNote ? ' — ' + matchupContext.blowoutNote : ''}
+- Expected margin: ~${matchupContext.expectedMargin} pts | Favored: ${matchupContext.favoredTeam} team
+- ${matchupContext.home.abbrev}: ${matchupContext.home.wins}-${matchupContext.home.losses} | Defense: ${matchupContext.home.defenseRating}
+- ${matchupContext.away.abbrev}: ${matchupContext.away.wins}-${matchupContext.away.losses} | Defense: ${matchupContext.away.defenseRating}
+NOTE: If blowout risk is HIGH, the favored team's star may play fewer 4th quarter minutes — factor this into PRA ceiling.` : '';
+
   const prompt = `You are an expert sports bettor. A user wants to bet on which player will have the highest PRA (Points + Rebounds + Assists) tonight in this game. Analyze the projections and identify the single strongest candidate.
 
 GAME: ${game.awayTeam?.name ?? 'Away'} @ ${game.homeTeam?.name ?? 'Home'}
+${praMatchupBlock}
 
 PLAYERS RANKED BY PRA PROJECTION (highest to lowest):
 ${playerLines}
@@ -716,7 +872,7 @@ Return ONLY valid JSON, no markdown:
   return result;
 }
 
-async function generatePreGamePicks(game, playerData, existingLegs, legCount) {
+async function generatePreGamePicks(game, playerData, existingLegs, legCount, matchupContext = null) {
   const playerLines = playerData.map(p => {
     const proj = p.projections;
     if (!proj || Object.keys(proj).length === 0) return null;
@@ -749,10 +905,18 @@ async function generatePreGamePicks(game, playerData, existingLegs, legCount) {
     ? `\nEXISTING LEGS (exclude these players):\n${existingLegs.map((l, i) => `${i + 1}. ${l.player} - ${l.stat}`).join('\n')}\n`
     : '';
 
-  const prompt = `You are an expert sports bettor generating pre-game prop pick recommendations. You have detailed historical projections for each player including variance-adjusted thresholds, trend data, rest factors, and home/away splits.
+  const matchupBlock = matchupContext ? `
+MATCHUP CONTEXT:
+- Blowout risk: ${matchupContext.blowoutRisk.toUpperCase()}${matchupContext.blowoutNote ? ' — ' + matchupContext.blowoutNote : ''}
+- Expected margin: ~${matchupContext.expectedMargin} points (favors ${matchupContext.favoredTeam} team)
+- ${matchupContext.home.abbrev} record: ${matchupContext.home.wins}-${matchupContext.home.losses} (${matchupContext.home.winPct}%) | Defense: ${matchupContext.home.defenseRating} (${matchupContext.home.oppPpg ? matchupContext.home.oppPpg.toFixed(1) + ' ppg allowed' : 'unknown'})
+- ${matchupContext.away.abbrev} record: ${matchupContext.away.wins}-${matchupContext.away.losses} (${matchupContext.away.winPct}%) | Defense: ${matchupContext.away.defenseRating} (${matchupContext.away.oppPpg ? matchupContext.away.oppPpg.toFixed(1) + ' ppg allowed' : 'unknown'})` : '';
+
+  const prompt = `You are an expert sports bettor generating pre-game prop pick recommendations. You have detailed historical projections for each player including variance-adjusted thresholds, trend data, rest factors, home/away splits, opponent defensive ratings, and blowout probability.
 
 GAME: ${game.awayTeam?.name ?? 'Away'} @ ${game.homeTeam?.name ?? 'Home'}
 TIPOFF: ${game.gameDate}
+${matchupBlock}
 ${existingLegsText}
 
 PLAYER PROJECTIONS (pre-game, no live box score available):
@@ -777,11 +941,13 @@ If the suggested threshold from the data falls below these minimums, round UP to
 If even at the minimum the projection doesn't offer meaningful edge, skip that pick entirely.
 
 RATING FRAMEWORK (1-5 stars):
-5 stars: projection well above threshold + trending up + good rest + below floor flag
+5 stars: projection well above threshold + trending up + good rest + below floor flag + favorable defense
 4 stars: projection above threshold + at least 2 positive factors aligned
 3 stars: projection above threshold + mixed signals
-2 stars: projection above threshold but back-to-back OR high variance OR trending down
+2 stars: projection above threshold but back-to-back OR high variance OR trending down OR high blowout risk
 1 star: only marginal edge or significant risk flags
+DEDUCT 1 star for: high blowout risk for player on favored team, elite opposing defense, low sample size (<3 games)
+ADD 0.5 stars (round up) for: poor/bottom-tier opposing defense, player on underdog team in blowout (more minutes chasing)
 
 FACTORS TO WEIGH:
 - Back-to-back (⚠️): significant risk — drop rating by 1 star minimum
@@ -888,9 +1054,15 @@ export default async function handler(req, res) {
 
     console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players (up to 13 per team)`);
 
-    // Step 2: Build player stats map from recent game summaries (fetched once for all players)
-    console.log(`[pregame/analyze] Building player stats map...`);
-    const playerStatsMap = await buildPlayerStatsMap(sport, league, gameDate);
+    // Step 2: Build player stats map + fetch standings in parallel
+    console.log(`[pregame/analyze] Building player stats map + standings...`);
+    const [playerStatsMap, standingsMap] = await Promise.all([
+      buildPlayerStatsMap(sport, league, gameDate),
+      getTeamStandings(sport, league),
+    ]);
+
+    const matchupContext = buildMatchupContext(resolvedHomeId, resolvedAwayId, standingsMap);
+    console.log(`[pregame/analyze] Matchup context: blowout risk=${matchupContext?.blowoutRisk || 'unknown'}, margin=${matchupContext?.expectedMargin || '?'}`);
 
     // Step 3: Extract form from map (instant lookup) + fetch season averages in parallel
     const formResults = allPlayers.map(p => getHistoricalFormFromMap(p.id, playerStatsMap));
@@ -913,7 +1085,11 @@ export default async function handler(req, res) {
       const season = seasonResults[i];
       if (!form && !season) return null;
 
-      const projections = buildPreGameProjection(p, season, form, p.isHome, null);
+      // Opponent is the other team
+      const opponentContext = p.isHome
+        ? matchupContext?.away?.asOpponent
+        : matchupContext?.home?.asOpponent;
+      const projections = buildPreGameProjection(p, season, form, p.isHome, opponentContext, matchupContext);
       if (Object.keys(projections).length === 0) return null;
 
       return {
@@ -939,6 +1115,7 @@ export default async function handler(req, res) {
       const analysis = await generatePRARanking(
         { homeTeam, awayTeam, gameDate },
         playerData,
+        matchupContext,
       );
       return res.status(200).json({
         success: true,
@@ -956,6 +1133,7 @@ export default async function handler(req, res) {
       playerData,
       existingLegs || [],
       legCount,
+      matchupContext,
     );
 
     return res.status(200).json({
