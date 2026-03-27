@@ -1322,35 +1322,38 @@ export default function Halftime() {
         )}
 
         {/* Leg count selector — hidden on Daily Card */}
-        {mode !== 'daily' && <div style={{
-          marginTop: '14px', display: 'flex', alignItems: 'center', gap: '10px',
-          padding: '10px 14px',
-          background: 'var(--bg-secondary, #111)',
-          border: '1px solid var(--border-color, #222)',
-          borderRadius: '10px',
-        }}>
-          <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary, #888)', whiteSpace: 'nowrap' }}>
-            Legs per game
-          </span>
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {[2, 3, 4, 5, 6, 7, 8].map(n => (
-              <button
-                key={n}
-                onClick={() => setLegCount(n)}
-                style={{
-                  width: '34px', height: '34px', borderRadius: '8px',
-                  border: `1px solid ${legCount === n ? '#6366f1' : 'var(--border-color, #333)'}`,
-                  background: legCount === n ? '#6366f1' : 'transparent',
-                  color: legCount === n ? '#fff' : 'var(--text-secondary, #888)',
-                  fontWeight: '700', fontSize: '13px', cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-              >
-                {n}
-              </button>
-            ))}
+        {mode !== 'daily' && (
+          <div style={{
+            marginTop: '14px', padding: '10px 14px',
+            background: 'var(--bg-secondary, #111)',
+            border: '1px solid var(--border-color, #222)',
+            borderRadius: '10px',
+          }}>
+            <style>{`
+              .leg-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; outline: none; cursor: pointer; background: linear-gradient(to right, #6366f1 ${(legCount - 2) / 6 * 100}%, var(--border-color, #333) ${(legCount - 2) / 6 * 100}%); }
+              .leg-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #6366f1; border: 2px solid #fff; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
+              .leg-slider::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #6366f1; border: 2px solid #fff; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
+            `}</style>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary, #888)' }}>
+                Legs per game
+              </span>
+              <span style={{ fontSize: '14px', fontWeight: '800', color: '#6366f1' }}>{legCount}</span>
+            </div>
+            <input
+              type="range"
+              min={2} max={8} step={1}
+              value={legCount}
+              onChange={e => setLegCount(Number(e.target.value))}
+              className="leg-slider"
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+              {[2,3,4,5,6,7,8].map(n => (
+                <span key={n} style={{ fontSize: '10px', color: n === legCount ? '#6366f1' : 'var(--text-secondary, #555)', fontWeight: n === legCount ? '700' : '400' }}>{n}</span>
+              ))}
+            </div>
           </div>
-        </div>}
+        )}
       </div>
 
       {/* Idle state */}
