@@ -1301,7 +1301,7 @@ function ParlayBuilder({ legs, onRemove }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Halftime() {
-  const [mode, setMode] = useState('pregame'); // pregame | halftime
+  const [mode, setMode] = useState('daily'); // daily | pregame | halftime | performance
   const [scanState, setScanState] = useState('idle');
   const [games, setGames] = useState([]);
   const [lastScanned, setLastScanned] = useState(null);
@@ -1355,10 +1355,10 @@ export default function Halftime() {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
           <div>
             <h2 style={{ margin: '0 0 4px', fontSize: '22px', fontWeight: '800', color: 'var(--text-primary, #fff)' }}>
-              Halftime Picks
+              {mode === 'daily' ? 'Daily Card' : mode === 'pregame' ? 'Pre-Game Picks' : mode === 'halftime' ? 'Halftime Picks' : 'Performance'}
             </h2>
             <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.5' }}>
-              Live prop recommendations built from first-half data + recent form
+              {mode === 'daily' ? "Top picks across today\'s full slate" : mode === 'pregame' ? 'Pre-game prop recommendations from historical projections' : mode === 'halftime' ? 'Live prop recommendations built from first-half data + recent form' : 'Pick accuracy and projection tracking over time'}
             </p>
           </div>
           {lastScanned && (
@@ -1413,8 +1413,8 @@ export default function Halftime() {
           </div>
         )}
 
-        {/* Leg count selector */}
-        <div style={{
+        {/* Leg count selector — hidden on Daily Card */}
+        {mode !== 'daily' && <div style={{
           marginTop: '14px', display: 'flex', alignItems: 'center', gap: '10px',
           padding: '10px 14px',
           background: 'var(--bg-secondary, #111)',
@@ -1442,7 +1442,7 @@ export default function Halftime() {
               </button>
             ))}
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* Idle state */}
