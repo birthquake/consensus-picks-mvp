@@ -99,19 +99,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Navigation Pills */}
-        <nav className="nav-pills">
-          {navItems.map(item => (
-            <button
-              key={item.id}
-              className={`nav-pill ${activeTab === item.id ? 'active' : ''}`}
-              onClick={() => setActiveTab(item.id)}
-            >
-              <item.icon />
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
+
       </header>
 
       {/* Main Content */}
