@@ -119,6 +119,7 @@ export default async function handler(req, res) {
         { key: 'core_stats', url: `https://sports.core.api.espn.com/v2/sports/${sport}/leagues/${league}/seasons/2026/athletes/${p.id}/statistics/0` },
         { key: 'overview',   url: `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${p.id}/overview` },
         { key: 'gamelog',    url: `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${p.id}/gamelog` },
+        { key: 'gamelog_star', url: `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${p.id}/gamelog` },
       ];
 
       const endpointResults = await Promise.all(
@@ -143,6 +144,21 @@ export default async function handler(req, res) {
             })(),
             raw_100: JSON.stringify(data || {}).substring(0, 200),
             // For overview: show full statistics shape
+            gamelog_shape: key === 'gamelog' ? {
+              labels: data?.labels || [],
+              names: data?.names || [],
+              events_count: Object.keys(data?.events || {}).length,
+              first_event_keys: data?.events ? Object.keys(Object.values(data.events)[0] || {}) : [],
+              first_event_sample: JSON.stringify(Object.values(data?.events || {})[0] || {}).substring(0, 400),
+              season_types: (data?.seasonTypes || []).map(s => ({ id: s.id, name: s.name, stats: s.summary })),
+              stats_in_season_types: (data?.seasonTypes || []).map(s => ({
+                name: s.name,
+                categories: (s.categories || []).map(c => ({
+                  name: c.name,
+                  stats_sample: (c.stats || []).slice(0, 5).map(st => ({ name: st.name, val: st.displayValue }))
+                }))
+              })),
+            } : null,
             overview_stats_shape: key === 'overview' ? {
               has_labels: !!(data?.statistics?.labels),
               has_names: !!(data?.statistics?.names),
