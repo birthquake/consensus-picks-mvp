@@ -103,8 +103,6 @@ export default async function handler(req, res) {
 
     await batch.commit();
 
-    if (savedIds.length > 0) await batch.commit();
-
     console.log(`[save-picks] Saved ${savedIds.length}, skipped ${skipped} duplicates for game ${gameId}`);
 
     return res.status(200).json({
