@@ -110,10 +110,15 @@ function PickCard({ pick, isSelected, onToggle, index }) {
           </div>
           <div style={{ marginTop: '3px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '13px', color: '#60a5fa', fontWeight: '600' }}>
-              {pick.direction} {pick.threshold != null ? pick.threshold : ''} {pick.stat}
+              {pick.direction} {pick.hasRealLine ? pick.realLine : (pick.threshold != null ? pick.threshold : '')} {pick.stat}
+              {pick.hasRealLine && (
+                <span style={{ fontSize: '10px', fontWeight: '700', marginLeft: '5px', padding: '1px 5px', borderRadius: '6px', background: 'rgba(74,222,128,0.12)', color: '#4ade80' }}>
+                  {pick.book || 'live'}
+                </span>
+              )}
               {pick.projection != null && (
                 <span style={{ color: '#818cf8', fontWeight: '400', fontSize: '11px', marginLeft: '4px' }}>
-                  (proj: {pick.projection})
+                  (proj: {pick.projection}{pick.hasRealLine && pick.lineGap != null ? ` · edge ${pick.lineGap > 0 ? '+' : ''}{pick.lineGap}` : ''})
                 </span>
               )}
             </span>
@@ -219,6 +224,7 @@ function DailyCard({ legCount }) {
               awayTeam: game.awayTeam,
               gameDate: game.gameDate || game.startTime,
               mode:     'daily',
+              oddsMap:  scanData.oddsMap || {},
             }),
           })
           .then(r => r.json())
@@ -394,9 +400,14 @@ function DailyCard({ legCount }) {
                     }}>{pick.team}</span>
                   </div>
                   <div style={{ marginTop: '2px', fontSize: '12px', color: '#60a5fa', fontWeight: '600' }}>
-                    Over {pick.threshold} {pick.stat}
+                    Over {pick.hasRealLine ? pick.realLine : pick.threshold} {pick.stat}
+                    {pick.hasRealLine && (
+                      <span style={{ fontSize: '10px', fontWeight: '700', marginLeft: '5px', padding: '1px 5px', borderRadius: '6px', background: 'rgba(74,222,128,0.12)', color: '#4ade80' }}>
+                        {pick.book || 'live'}
+                      </span>
+                    )}
                     <span style={{ color: 'var(--text-secondary, #777)', fontWeight: '400', marginLeft: '6px' }}>
-                      proj {pick.projection} · {pick.game}
+                      proj {pick.projection}{pick.hasRealLine && pick.lineGap != null ? ` · edge ${pick.lineGap > 0 ? '+' : ''}${pick.lineGap}` : ''} · {pick.game}
                     </span>
                   </div>
                   <div style={{ marginTop: '3px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -746,7 +757,7 @@ function PerformanceStats() {
 }
 
 // ── Game Card ─────────────────────────────────────────────────────────────────
-function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime' }) {
+function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime', oddsMap = {} }) {
   const [state, setState] = useState('idle'); // idle | loading | done | error
   const [analysis, setAnalysis] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
@@ -772,6 +783,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
           existingLegs,
           legCount,
           mode: analysisMode,
+          oddsMap,
         }),
       });
       const data = await res.json();
@@ -1216,6 +1228,7 @@ export default function Halftime() {
   const [selectedLegs, setSelectedLegs] = useState([]);
   const [errorMsg, setErrorMsg] = useState('');
   const [legCount, setLegCount] = useState(4);
+  const [oddsMap, setOddsMap] = useState({});
 
   const scan = useCallback(async () => {
     setScanState('scanning');
@@ -1229,6 +1242,7 @@ export default function Halftime() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
       setGames(data.games);
+      setOddsMap(data.oddsMap || {});
       setLastScanned(new Date());
       setScanState(data.games.length > 0 ? 'done' : 'empty');
     } catch (err) {
@@ -1241,6 +1255,7 @@ export default function Halftime() {
     setMode(newMode);
     setScanState('idle');
     setGames([]);
+    setOddsMap({});
     setLastScanned(null);
     setErrorMsg('');
   };
@@ -1460,6 +1475,7 @@ export default function Halftime() {
               onToggleLeg={toggleLeg}
               legCount={legCount}
               mode={mode}
+              oddsMap={oddsMap}
             />
           ))}
         </div>
