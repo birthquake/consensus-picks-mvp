@@ -30,10 +30,28 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Check for existing picks for this game to avoid duplicates
+    const existingSnap = await db
+      .collection('halftime_picks')
+      .where('gameId', '==', gameId)
+      .where('status', '==', 'pending')
+      .get();
+
+    const existingKeys = new Set(
+      existingSnap.docs.map(d => `${d.data().player}:${d.data().stat}`)
+    );
+
     const batch = db.batch();
     const savedIds = [];
+    let skipped = 0;
 
     for (const pick of picks) {
+      const pickKey = `${pick.player}:${pick.stat}`;
+      if (existingKeys.has(pickKey)) {
+        skipped++;
+        continue; // already saved — skip duplicate
+      }
+
       // Look up this player's projection snapshot if available
       const playerProj = projections?.[pick.player] || null;
 
@@ -85,11 +103,14 @@ export default async function handler(req, res) {
 
     await batch.commit();
 
-    console.log(`[save-picks] Saved ${savedIds.length} picks for game ${gameId}`);
+    if (savedIds.length > 0) await batch.commit();
+
+    console.log(`[save-picks] Saved ${savedIds.length}, skipped ${skipped} duplicates for game ${gameId}`);
 
     return res.status(200).json({
       success: true,
       saved: savedIds.length,
+      skipped,
       ids: savedIds,
     });
 
