@@ -272,8 +272,7 @@ function DailyCard({ legCount }) {
   const copyParlay = () => {
     const text = selectedLegs.map(l =>
       `${l.player} Over ${l.threshold} ${l.stat} (${l.rating}★ | proj: ${l.projection})`
-    ).join('
-');
+    ).join('\n');
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
