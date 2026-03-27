@@ -144,21 +144,36 @@ export default async function handler(req, res) {
             })(),
             raw_100: JSON.stringify(data || {}).substring(0, 200),
             // For overview: show full statistics shape
-            gamelog_shape: key === 'gamelog' ? {
-              labels: data?.labels || [],
-              names: data?.names || [],
-              events_count: Object.keys(data?.events || {}).length,
-              first_event_keys: data?.events ? Object.keys(Object.values(data.events)[0] || {}) : [],
-              first_event_sample: JSON.stringify(Object.values(data?.events || {})[0] || {}).substring(0, 400),
-              season_types: (data?.seasonTypes || []).map(s => ({ id: s.id, name: s.name, stats: s.summary })),
-              stats_in_season_types: (data?.seasonTypes || []).map(s => ({
-                name: s.name,
-                categories: (s.categories || []).map(c => ({
-                  name: c.name,
-                  stats_sample: (c.stats || []).slice(0, 5).map(st => ({ name: st.name, val: st.displayValue }))
-                }))
-              })),
-            } : null,
+            gamelog_shape: key === 'gamelog' ? (() => {
+              const events = data?.events || {};
+              const eventList = Object.values(events);
+              const firstEvent = eventList[0] || {};
+              // Stats are likely in the event directly as an array matching the names/labels
+              const statsKey = Object.keys(firstEvent).find(k =>
+                Array.isArray(firstEvent[k]) && firstEvent[k].length > 5
+              );
+              // seasonTypes structure
+              const st0 = data?.seasonTypes?.[0] || {};
+              const st0cats = st0.categories || [];
+              return {
+                labels: data?.labels || [],
+                names: data?.names || [],
+                events_count: eventList.length,
+                first_event_all_keys: Object.keys(firstEvent),
+                first_event_stats_key: statsKey || 'not found',
+                first_event_stats_values: statsKey ? firstEvent[statsKey] : null,
+                first_event_full: JSON.stringify(firstEvent).substring(0, 800),
+                season_type_0_keys: Object.keys(st0),
+                season_type_0_cats: st0cats.map(c => ({
+                  name: c.name, displayName: c.displayName,
+                  stats: (c.stats || c.values || []).slice(0, 6).map(s => ({
+                    name: s.name || s.abbreviation,
+                    val: s.displayValue ?? s.value,
+                    abbr: s.abbreviation,
+                  }))
+                })),
+              };
+            })() : null,
             overview_stats_shape: key === 'overview' ? {
               has_labels: !!(data?.statistics?.labels),
               has_names: !!(data?.statistics?.names),
