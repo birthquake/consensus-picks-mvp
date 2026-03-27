@@ -181,9 +181,23 @@ export default async function handler(req, res) {
               labels: data?.statistics?.labels || [],
               names: data?.statistics?.names || [],
               values: data?.statistics?.values || [],
+              // Parsed season averages attempt
+              parsed_averages: (() => {
+                const s = data?.statistics;
+                if (!s?.names || !s?.values?.length) return 'no values array';
+                const result = {};
+                s.names.forEach((name, i) => {
+                  const val = parseFloat(s.values[i]);
+                  if (!isNaN(val)) result[name] = val;
+                });
+                return result;
+              })(),
               has_gamelog: !!(data?.gameLog),
-              gamelog_keys: data?.gameLog ? Object.keys(data.gameLog) : [],
-              gamelog_sample: JSON.stringify(data?.gameLog || {}).substring(0, 300),
+              gamelog_statistics_count: data?.gameLog?.statistics?.length || 0,
+              gamelog_stat0_names: data?.gameLog?.statistics?.[0]?.names || [],
+              gamelog_stat0_values: data?.gameLog?.statistics?.[0]?.values || [],
+              gamelog_stat0_athletes_count: data?.gameLog?.statistics?.[0]?.athletes?.length || 0,
+              gamelog_events_count: data?.gameLog?.events ? Object.keys(data.gameLog.events).length : 0,
             } : null,
           };
         })
