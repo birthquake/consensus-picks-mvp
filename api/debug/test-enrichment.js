@@ -209,6 +209,69 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, mode: 'pregame', steps });
   }
 
+  // ── Duplicate pick cleanup ───────────────────────────────────────────────
+  if (mode === 'cleanup') {
+    // Finds and removes duplicate halftime_picks (same gameId + player + stat)
+    // Keeps the most recently created pick, removes older duplicates
+    const { initializeApp, cert, getApp } = await import('firebase-admin/app');
+    const { getFirestore } = await import('firebase-admin/firestore');
+
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{}');
+    let app;
+    try { app = getApp(); } catch {
+      app = initializeApp({ credential: cert(serviceAccount) });
+    }
+    const db = getFirestore(app);
+
+    const snapshot = await db.collection('halftime_picks').get();
+    const all = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // Group by gameId + player + stat
+    const groups = {};
+    for (const pick of all) {
+      const key = `${pick.gameId}:${pick.player}:${pick.stat}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(pick);
+    }
+
+    // Find duplicates — groups with more than one entry
+    const toDelete = [];
+    for (const [key, picks] of Object.entries(groups)) {
+      if (picks.length <= 1) continue;
+      // Sort by created_at descending — keep newest, delete rest
+      picks.sort((a, b) => {
+        const aTime = a.created_at?.seconds || 0;
+        const bTime = b.created_at?.seconds || 0;
+        return bTime - aTime;
+      });
+      // Keep picks[0], delete the rest
+      for (const dupe of picks.slice(1)) {
+        toDelete.push(dupe.id);
+      }
+    }
+
+    // Delete in batches
+    let deleted = 0;
+    const BATCH_SIZE = 400;
+    for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+      const batch = db.batch();
+      for (const id of toDelete.slice(i, i + BATCH_SIZE)) {
+        batch.delete(db.collection('halftime_picks').doc(id));
+      }
+      await batch.commit();
+      deleted += Math.min(BATCH_SIZE, toDelete.length - i);
+    }
+
+    return res.status(200).json({
+      success: true,
+      mode: 'cleanup',
+      total_picks: all.length,
+      unique_picks: Object.keys(groups).length,
+      duplicates_found: toDelete.length,
+      deleted,
+    });
+  }
+
   // ── Enrichment debug (original) ──────────────────────────────────────────
   const { player, stat, sport, date, line } = req.query;
 
