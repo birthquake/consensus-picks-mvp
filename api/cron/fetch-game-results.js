@@ -152,6 +152,36 @@ async function gradeHalftimePicks() {
         if (result.gameStatus !== 'final') { results.skipped++; continue; }
 
         const actualValue = result.value;
+
+        // Void if player DNP — 0 across all counting stats suggests no minutes
+        // Check minutes played if available, otherwise check if all main stats are 0
+        if (result.minutes !== undefined && result.minutes === 0) {
+          await doc.ref.update({
+            status: 'void',
+            actual_value: 0,
+            graded_at: new Date(),
+            grade_note: 'DNP — 0 minutes played',
+          });
+          results.graded++;
+          console.log(`⚪ Halftime pick voided (DNP): ${pick.player} ${pick.stat}`);
+          continue;
+        }
+
+        // Also void if the stat value is suspiciously 0 for a starter-level player
+        // who had a projection > 5 (suggests DNP or injury scratch)
+        const projection = pick.projection?.blended || pick.projection?.conservative || 0;
+        if (actualValue === 0 && projection > 8) {
+          await doc.ref.update({
+            status: 'void',
+            actual_value: 0,
+            graded_at: new Date(),
+            grade_note: 'Likely DNP — 0 actual vs high projection suggests scratch',
+          });
+          results.graded++;
+          console.log(`⚪ Halftime pick voided (likely DNP): ${pick.player} ${pick.stat} (proj: ${projection})`);
+          continue;
+        }
+
         const hit = pick.direction === 'Over'
           ? actualValue > (pick.projection?.blended || 0)
           : actualValue < (pick.projection?.blended || Infinity);
