@@ -472,6 +472,14 @@ async function getPlayerGamelog(sport, league, athleteId) {
   // Games come back oldest-first from ESPN — reverse to get newest first
   allGames.reverse();
 
+  // Extract player's current team from seasonType displayTeam
+  // Format: "LAC/IND" for traded players, "LAC" for stable players
+  // The last team listed is their current team
+  const displayTeam = seasonType?.displayTeam || '';
+  const currentTeam = displayTeam.includes('/')
+    ? displayTeam.split('/').pop()
+    : displayTeam || null;
+
   // Compute averages
   const avg = (games, stat) => {
     const vals = games.map(g => g.stats[stat]).filter(v => v != null && !isNaN(v));
@@ -493,7 +501,7 @@ async function getPlayerGamelog(sport, league, athleteId) {
     fgPct:    avg(season, 'fgPct'),
   };
 
-  return { allGames, last5, last10, seasonAvg, gamesPlayed: allGames.length };
+  return { allGames, last5, last10, seasonAvg, gamesPlayed: allGames.length, currentTeam };
 }
 
 async function getSeasonAverages(sport, league, athleteId) {
@@ -1018,8 +1026,8 @@ MINIMUM SPORTSBOOK THRESHOLDS (never recommend below these — no sportsbook off
 - Points: minimum 10.5
 - Rebounds: minimum 3.5
 - Assists: minimum 2.5
-- Steals: minimum 0.5 (but prefer 1.5+)
-- Blocks: minimum 0.5 (but prefer 1.5+)
+- Steals: minimum 0.5 (presented as Over 0.5 = needs 1+)
+- Blocks: minimum 0.5 (presented as Over 0.5 = needs 1+)
 
 If the suggested threshold from the data falls below these minimums, round UP to the minimum.
 If even at the minimum the projection doesn't offer meaningful edge, skip that pick entirely.
@@ -1179,11 +1187,14 @@ export default async function handler(req, res) {
       const projections = buildPreGameProjection(p, season, form, p.isHome, opponentContext, matchupContext);
       if (Object.keys(projections).length === 0) return null;
 
+      // Use team from gamelog if available (more accurate than roster for traded players)
+      const actualTeam = gamelogResults[i]?.currentTeam || p.teamAbbrev;
+
       return {
         id:          p.id,
         name:        p.name,
         position:    p.position,
-        team:        p.teamAbbrev,
+        team:        actualTeam,
         isHome:      p.isHome,
         projections,
         form,
