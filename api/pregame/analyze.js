@@ -392,31 +392,76 @@ async function extractPlayerGameLine(sport, league, gameId, athleteId, date) {
 // ─── Season averages ──────────────────────────────────────────────────────────
 
 async function getSeasonAverages(sport, league, athleteId) {
+  // The overview endpoint returns season averages in statistics.names/values arrays
+  // AND recent game log in gameLog.statistics[0] with per-game values
   const url = `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${athleteId}/overview`;
   const data = await fetchWithTimeout(url, 4000);
   if (!data) return null;
 
-  const stats = data.athlete?.statistics || data.statistics;
-  if (!stats) return null;
-
   const result = {};
-  const splits = stats.splits?.categories || stats.categories || [];
-  for (const cat of splits) {
-    for (const s of (cat.stats || [])) {
-      const name  = s.name?.toLowerCase();
-      const abbr  = s.abbreviation?.toLowerCase();
-      const val   = parseFloat(s.displayValue ?? s.value);
-      if (isNaN(val)) continue;
-      if (name === 'avgpoints'   || abbr === 'ppg') result.points   = val;
-      if (name === 'avgrebounds' || abbr === 'rpg') result.rebounds = val;
-      if (name === 'avgassists'  || abbr === 'apg') result.assists  = val;
-      if (name === 'avgminutes'  || abbr === 'mpg') result.minutes  = val;
-      if (name === 'fieldgoalspct' || abbr === 'fg%') result.fgPct  = val;
-      if (name === 'avgsteals'   || abbr === 'spg') result.steals   = val;
-      if (name === 'avgblocks'   || abbr === 'bpg') result.blocks   = val;
+
+  // Parse season averages from overview statistics
+  // Shape: { statistics: { names: [...], values: [...] } }
+  const stats = data.statistics;
+  if (stats?.names && stats?.values && stats.values.length > 0) {
+    stats.names.forEach((name, i) => {
+      const val = parseFloat(stats.values[i]);
+      if (isNaN(val)) return;
+      const n = name.toLowerCase();
+      if (n === 'avgpoints')    result.points   = val;
+      if (n === 'avgrebounds')  result.rebounds = val;
+      if (n === 'avgassists')   result.assists  = val;
+      if (n === 'avgminutes')   result.minutes  = val;
+      if (n === 'fieldgoalpct') result.fgPct    = val;
+      if (n === 'avgsteals')    result.steals   = val;
+      if (n === 'avgblocks')    result.blocks   = val;
+    });
+  }
+
+  // Also try to extract from gameLog.statistics (recent game totals block)
+  // Shape: { gameLog: { statistics: [{ names: [...], values: [...] }] } }
+  if (Object.keys(result).length === 0) {
+    const gameLogStats = data.gameLog?.statistics;
+    if (Array.isArray(gameLogStats)) {
+      for (const block of gameLogStats) {
+        const names  = block.names  || [];
+        const values = block.values || [];
+        if (!values.length) continue;
+        names.forEach((name, i) => {
+          const val = parseFloat(values[i]);
+          if (isNaN(val)) return;
+          const n = name.toLowerCase();
+          if (n === 'avgpoints' || n === 'points')     result.points   = val;
+          if (n === 'avgrebounds' || n === 'totalrebounds') result.rebounds = val;
+          if (n === 'avgassists' || n === 'assists')   result.assists  = val;
+          if (n === 'avgminutes' || n === 'minutes')   result.minutes  = val;
+          if (n === 'fieldgoalpct')                    result.fgPct    = val;
+          if (n === 'avgsteals' || n === 'steals')     result.steals   = val;
+          if (n === 'avgblocks' || n === 'blocks')     result.blocks   = val;
+        });
+        if (Object.keys(result).length > 0) break;
+      }
     }
   }
-  return Object.keys(result).length > 0 ? result : null;
+
+  // Also extract per-game form data from gameLog.events for use as form data
+  // Each event in gameLog has an id and the values are in a parallel array
+  // stored in gameLog.statistics[0].athletes (if present) or we skip
+  result._gameLogData = null;
+  const gameLogEvents = data.gameLog?.events;
+  const gameLogStatBlock = data.gameLog?.statistics?.[0];
+  if (gameLogEvents && gameLogStatBlock) {
+    const names  = gameLogStatBlock.names  || [];
+    // events is keyed by event ID, values may be on the event or in a values array
+    // For now just store raw for future use
+    result._rawGameLog = {
+      names,
+      events: gameLogEvents,
+      valuesBlock: gameLogStatBlock,
+    };
+  }
+
+  return Object.keys(result).filter(k => !k.startsWith('_')).length > 0 ? result : null;
 }
 
 // ─── Opponent defensive rating ────────────────────────────────────────────────
