@@ -599,6 +599,14 @@ export default async function handler(req, res) {
 
     console.log(`[halftime/analyze] Built projections for ${Object.keys(projections).length} players`);
 
+    // Build a name-keyed version of projections for save-picks.js lookup
+    const projectionsByName = {};
+    for (const p of playersToAnalyze) {
+      if (projections[p.id]) {
+        projectionsByName[p.name] = projections[p.id];
+      }
+    }
+
     // Step 5: Claude analysis
     const gameData = {
       game: { gameId, sport, league, homeTeam, awayTeam },
@@ -615,6 +623,7 @@ export default async function handler(req, res) {
       gameId,
       game: { homeTeam, awayTeam, sport, league },
       ...picks,
+      projections: projectionsByName,
       analyzed_at: new Date().toISOString(),
     });
 
