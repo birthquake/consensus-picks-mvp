@@ -146,32 +146,32 @@ export default async function handler(req, res) {
             // For overview: show full statistics shape
             gamelog_shape: key === 'gamelog' ? (() => {
               const events = data?.events || {};
-              const eventList = Object.values(events);
-              const firstEvent = eventList[0] || {};
-              // Stats are likely in the event directly as an array matching the names/labels
-              const statsKey = Object.keys(firstEvent).find(k =>
-                Array.isArray(firstEvent[k]) && firstEvent[k].length > 5
-              );
-              // seasonTypes structure
-              const st0 = data?.seasonTypes?.[0] || {};
-              const st0cats = st0.categories || [];
+              const eventKeys = Object.keys(events);
+              const firstEventId = eventKeys[0];
+              const firstEvent = events[firstEventId] || {};
+              // Check if stats are stored as parallel arrays under data.statistics
+              // or inside each event
+              const topLevelStats = data?.statistics || [];
+              const firstStatBlock = topLevelStats[0] || {};
               return {
                 labels: data?.labels || [],
                 names: data?.names || [],
-                events_count: eventList.length,
-                first_event_all_keys: Object.keys(firstEvent),
-                first_event_stats_key: statsKey || 'not found',
-                first_event_stats_values: statsKey ? firstEvent[statsKey] : null,
-                first_event_full: JSON.stringify(firstEvent).substring(0, 800),
-                season_type_0_keys: Object.keys(st0),
-                season_type_0_cats: st0cats.map(c => ({
-                  name: c.name, displayName: c.displayName,
-                  stats: (c.stats || c.values || []).slice(0, 6).map(s => ({
-                    name: s.name || s.abbreviation,
-                    val: s.displayValue ?? s.value,
-                    abbr: s.abbreviation,
-                  }))
-                })),
+                events_count: eventKeys.length,
+                first_event_id: firstEventId,
+                first_event_keys: Object.keys(firstEvent),
+                first_event_full: JSON.stringify(firstEvent).substring(0, 600),
+                // Check top-level statistics array (parallel to events)
+                top_level_stats_count: topLevelStats.length,
+                first_stat_block_keys: Object.keys(firstStatBlock),
+                first_stat_block_sample: JSON.stringify(firstStatBlock).substring(0, 400),
+                // Check if data has a 'values' or 'rows' parallel to events
+                has_values: !!(data?.values),
+                has_rows: !!(data?.rows),
+                values_sample: data?.values ? JSON.stringify(data.values).substring(0, 200) : null,
+                // seasonTypes full structure
+                season_types_full: JSON.stringify(data?.seasonTypes || []).substring(0, 600),
+                // Check glossary for clues
+                glossary_sample: JSON.stringify(data?.glossary || {}).substring(0, 200),
               };
             })() : null,
             overview_stats_shape: key === 'overview' ? {
