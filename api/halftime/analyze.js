@@ -502,10 +502,16 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
   });
 
   const raw = msg.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  const jsonStart = raw.indexOf('{');
-  const jsonEnd   = raw.lastIndexOf('}');
-  const cleaned   = jsonStart !== -1 && jsonEnd !== -1 ? raw.substring(jsonStart, jsonEnd + 1) : raw;
+const jsonStart = raw.indexOf('{');
+const jsonEnd   = raw.lastIndexOf('}');
+const cleaned   = jsonStart !== -1 && jsonEnd !== -1 ? raw.substring(jsonStart, jsonEnd + 1) : raw;
+try {
   return JSON.parse(cleaned);
+} catch (parseErr) {
+  console.error('[halftime/analyze] JSON parse error:', parseErr.message);
+  console.error('[halftime/analyze] Raw around position 7680:', cleaned.substring(7600, 7750));
+  throw new Error(`Claude response JSON parse failed: ${parseErr.message}`);
+}
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
