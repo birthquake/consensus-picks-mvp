@@ -496,7 +496,7 @@ Return ONLY valid JSON, no markdown:
 Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad -- quality over quantity. Consider all stat types equally.`;
 
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5-20251001',
     max_tokens: 2500,
     messages: [{ role: 'user', content: prompt }],
   });
