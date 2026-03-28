@@ -95,6 +95,7 @@ async function getTeamRoster(sport, league, teamId) {
         name: p.displayName || p.fullName,
         position: p.position?.abbreviation,
         jersey: p.jersey,
+        status: p.status?.type?.description || p.status?.description || p.status || null,
       });
     }
   } else {
@@ -107,6 +108,7 @@ async function getTeamRoster(sport, league, teamId) {
           name: p.displayName || p.fullName,
           position: p.position?.abbreviation,
           jersey: p.jersey,
+          status: p.status?.type?.description || p.status?.description || p.status || null,
         });
       }
     }
@@ -1061,6 +1063,13 @@ export default async function handler(req, res) {
       const gamesPlayed = gamelogResults[i]?.gamesPlayed || 0;
       if (gamesPlayed < 3) {
         console.log(`[pregame/analyze] Skipping ${p.name} -- ${gamesPlayed} games played (inactive)`);
+        return null;
+      }
+
+      // Skip players with an injury/out status from ESPN roster
+      const status = (p.status || '').toLowerCase();
+      if (status.includes('out') || status.includes('injur') || status.includes('reserve')) {
+        console.log(`[pregame/analyze] Skipping ${p.name} -- status: ${p.status}`);
         return null;
       }
 
