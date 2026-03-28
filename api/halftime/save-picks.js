@@ -75,7 +75,8 @@ export default async function handler(req, res) {
         rationale: pick.rationale,
         rating_reason: pick.rating_reason,
         risk_flags: pick.risk_flags || [],
-
+        model:     pick.model || null,
+        
         // Projection snapshot at time of recommendation
         projection: playerProj ? {
           conservative:              playerProj.conservative              || null,
