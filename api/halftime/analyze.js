@@ -25,13 +25,10 @@ const BOX_KEY_MAP = {
   fieldGoalsMade:'fieldGoalsMade-fieldGoalsAttempted',
 };
 
-// Stats where regression toward mean is meaningful to model
 const REGRESSION_STATS = ['points', 'rebounds', 'assists'];
 
-// Regression weight: how much to pull current rate toward season rate
-// Points regress most (shooting variance), rebounds/assists less
 const REGRESSION_WEIGHT = {
-  points:   0.45, // blend 55% current pace, 45% season rate
+  points:   0.45,
   rebounds: 0.30,
   assists:  0.30,
 };
@@ -53,19 +50,14 @@ async function fetchWithTimeout(url, ms = 5000) {
 // ─── Season averages ──────────────────────────────────────────────────────────
 
 async function getSeasonAverages(sport, league, athleteId) {
-  // The site API athlete overview returns season stats inline
   const url = `https://site.web.api.espn.com/apis/common/v3/sports/${sport}/${league}/athletes/${athleteId}/overview`;
   const data = await fetchWithTimeout(url, 4000);
   if (!data) return null;
 
-  // Try to find season stats in the response
-  // Shape varies — look for statistics.splits or statistics.categories
   const stats = data.athlete?.statistics || data.statistics;
   if (!stats) return null;
 
   const result = {};
-
-  // Navigate splits to find "perGame" or "avg" type
   const splits = stats.splits?.categories || stats.categories || [];
   for (const cat of splits) {
     const statsArr = cat.stats || cat.values || [];
@@ -75,22 +67,13 @@ async function getSeasonAverages(sport, league, athleteId) {
       const val  = parseFloat(s.displayValue ?? s.value);
       if (isNaN(val)) continue;
 
-      if (name === 'avgpoints'        || abbr === 'ppg'  || name === 'points')    result.points    = val;
-      if (name === 'avgrebounds'      || abbr === 'rpg'  || name === 'rebounds')  result.rebounds  = val;
-      if (name === 'avgassists'       || abbr === 'apg'  || name === 'assists')   result.assists   = val;
-      if (name === 'avgminutes'       || abbr === 'mpg'  || name === 'minutes')   result.minutes   = val;
-      if (name === 'fieldgoalspct'    || abbr === 'fg%'  || name === 'fgpct')     result.fgPct     = val;
-      if (name === 'avgsteals'        || abbr === 'spg'  || name === 'steals')    result.steals    = val;
-      if (name === 'avgblocks'        || abbr === 'bpg'  || name === 'blocks')    result.blocks    = val;
-    }
-  }
-
-  // If overview didn't give us minutes, fall back to the core athlete endpoint
-  if (!result.minutes) {
-    const coreUrl = `https://sports.core.api.espn.com/v2/sports/${sport}/leagues/${league}/athletes/${athleteId}`;
-    const coreData = await fetchWithTimeout(coreUrl, 3000);
-    if (coreData?.statistics?.$ref) {
-      // Don't follow the ref — too slow. Just note it's missing.
+      if (name === 'avgpoints'     || abbr === 'ppg' || name === 'points')   result.points   = val;
+      if (name === 'avgrebounds'   || abbr === 'rpg' || name === 'rebounds') result.rebounds = val;
+      if (name === 'avgassists'    || abbr === 'apg' || name === 'assists')  result.assists  = val;
+      if (name === 'avgminutes'    || abbr === 'mpg' || name === 'minutes')  result.minutes  = val;
+      if (name === 'fieldgoalspct' || abbr === 'fg%' || name === 'fgpct')   result.fgPct    = val;
+      if (name === 'avgsteals'     || abbr === 'spg' || name === 'steals')  result.steals   = val;
+      if (name === 'avgblocks'     || abbr === 'bpg' || name === 'blocks')  result.blocks   = val;
     }
   }
 
@@ -105,20 +88,15 @@ function buildProjection(player, seasonAvg, historicalForm, gameContext) {
 
   if (firstHalfMinutes < 5) return null;
 
-  // Projected remaining minutes
-  // Base: season avg minutes - first half minutes
-  // Adjusted down for foul trouble, blowout risk
-  const seasonMinutes = seasonAvg?.minutes || 28; // fallback if unavailable
+  const seasonMinutes = seasonAvg?.minutes || 28;
   let projectedRemainingMinutes = Math.max(0, seasonMinutes - firstHalfMinutes);
 
-  // Foul trouble reduction
   const fouls = s.fouls || 0;
-  if (fouls >= 3) projectedRemainingMinutes *= 0.55; // major reduction
+  if (fouls >= 3)      projectedRemainingMinutes *= 0.55;
   else if (fouls === 2) projectedRemainingMinutes *= 0.80;
 
-  // Blowout adjustment (winning team gets benched, losing team may play more)
   const scoreDiff = gameContext.scoreDiff || 0;
-  if (scoreDiff >= 25) projectedRemainingMinutes *= 0.65;
+  if (scoreDiff >= 25)      projectedRemainingMinutes *= 0.65;
   else if (scoreDiff >= 15) projectedRemainingMinutes *= 0.85;
 
   projectedRemainingMinutes = Math.round(projectedRemainingMinutes * 10) / 10;
@@ -129,43 +107,31 @@ function buildProjection(player, seasonAvg, historicalForm, gameContext) {
     const firstHalfValue = s[stat] ?? 0;
     if (firstHalfMinutes === 0) continue;
 
-    // Current per-minute rate this half
     const currentRate = firstHalfValue / firstHalfMinutes;
-
-    // Season per-minute rate (fallback to last10 avg if no season avg)
     const seasonTotal = seasonAvg?.[stat]
       || historicalForm?.averages?.last10?.[stat]
       || historicalForm?.averages?.last5?.[stat];
 
     const seasonRate = seasonTotal && seasonMinutes > 0
       ? seasonTotal / seasonMinutes
-      : currentRate; // no baseline — use current rate as-is
+      : currentRate;
 
-    // Regression-adjusted rate
     const regWeight = REGRESSION_WEIGHT[stat] || 0.35;
     const adjustedRate = (currentRate * (1 - regWeight)) + (seasonRate * regWeight);
 
-    // Conservative projection (season rate × remaining minutes)
     const conservative = Math.round((firstHalfValue + (seasonRate * projectedRemainingMinutes)) * 10) / 10;
+    const aggressive   = Math.round((firstHalfValue + (currentRate * projectedRemainingMinutes)) * 10) / 10;
+    const blended      = Math.round((firstHalfValue + (adjustedRate * projectedRemainingMinutes)) * 10) / 10;
 
-    // Aggressive projection (current rate × remaining minutes, no regression)
-    const aggressive = Math.round((firstHalfValue + (currentRate * projectedRemainingMinutes)) * 10) / 10;
-
-    // Blended (regression-adjusted)
-    const blended = Math.round((firstHalfValue + (adjustedRate * projectedRemainingMinutes)) * 10) / 10;
-
-    // Shooting efficiency context for points
     let efficiencyNote = null;
     if (stat === 'points' && seasonAvg?.fgPct) {
       const fgMade = s.fieldGoalsMade || 0;
-      // Approximate attempts from the box stat
-      const totalFGAttempts = fgMade + (s.fieldGoalsAttempted || fgMade); // fallback
+      const totalFGAttempts = fgMade + (s.fieldGoalsAttempted || fgMade);
       const currentFgPct = totalFGAttempts > 0 ? (fgMade / totalFGAttempts) * 100 : null;
-
       if (currentFgPct !== null) {
         const pctDiff = currentFgPct - seasonAvg.fgPct;
-        if (pctDiff > 10) efficiencyNote = `shooting ${pctDiff.toFixed(0)}% above season FG% — regression likely`;
-        else if (pctDiff < -10) efficiencyNote = `shooting ${Math.abs(pctDiff).toFixed(0)}% below season FG% — positive regression possible`;
+        if (pctDiff > 10)       efficiencyNote = `shooting ${pctDiff.toFixed(0)}% above season FG% -- regression likely`;
+        else if (pctDiff < -10) efficiencyNote = `shooting ${Math.abs(pctDiff).toFixed(0)}% below season FG% -- positive regression possible`;
       }
     }
 
@@ -178,10 +144,9 @@ function buildProjection(player, seasonAvg, historicalForm, gameContext) {
       blended,
       aggressive,
       efficiencyNote,
-      // Key ratio: first-half output vs expected for this many minutes
       vsExpected: seasonRate > 0
         ? Math.round((currentRate / seasonRate) * 100)
-        : null, // % of expected rate (100 = on pace, 150 = 50% above pace)
+        : null,
     };
   }
 
@@ -206,12 +171,11 @@ function formatProjectionForPrompt(player, proj, seasonAvg) {
 
     const label = stat.charAt(0).toUpperCase() + stat.slice(1);
     const onPace = p.vsExpected != null ? ` [${p.vsExpected}% of expected pace]` : '';
-    const efficiency = p.efficiencyNote ? ` ⚠️ ${p.efficiencyNote}` : '';
+    const efficiency = p.efficiencyNote ? ` ${p.efficiencyNote}` : '';
 
     lines.push(
       `    ${label} projection: conservative=${p.conservative} | blended=${p.blended} | aggressive=${p.aggressive}${onPace}${efficiency}`
     );
-
     if (p.seasonAvg != null) {
       lines.push(`      (season avg ${p.seasonAvg} | first half: ${p.firstHalfValue})`);
     }
@@ -234,7 +198,7 @@ async function getLiveBoxScore(sport, league, gameId) {
     if (!statsBlock) continue;
 
     const keys = statsBlock.keys || [];
-    const teamId = group.team?.id;
+    const teamId     = group.team?.id;
     const teamAbbrev = group.team?.abbreviation;
 
     for (const athlete of (statsBlock.athletes || [])) {
@@ -273,7 +237,7 @@ async function getLiveBoxScore(sport, league, gameId) {
   const competition = data.header?.competitions?.[0];
   const gameContext = {
     period: competition?.status?.period,
-    clock: competition?.status?.displayClock,
+    clock:  competition?.status?.displayClock,
     homeScore: parseInt(competition?.competitors?.find(c => c.homeAway === 'home')?.score || 0),
     awayScore: parseInt(competition?.competitors?.find(c => c.homeAway === 'away')?.score || 0),
   };
@@ -281,7 +245,7 @@ async function getLiveBoxScore(sport, league, gameId) {
   const homeTeam = data.boxscore.teams?.find(t => t.homeAway === 'home');
   const awayTeam = data.boxscore.teams?.find(t => t.homeAway === 'away');
   gameContext.totalPoints = getTeamStat(homeTeam, 'points') + getTeamStat(awayTeam, 'points');
-  gameContext.scoreDiff = Math.abs(gameContext.homeScore - gameContext.awayScore);
+  gameContext.scoreDiff   = Math.abs(gameContext.homeScore - gameContext.awayScore);
 
   return { players, gameContext };
 }
@@ -357,9 +321,9 @@ async function getHistoricalForm(sport, league, athleteId, gameDate) {
     const r = calc(last3, stat);
     const o = calc(older, stat);
     if (r == null || o == null || o === 0) { formData.trends[stat] = 'neutral'; continue; }
-    if (r > o * 1.15) formData.trends[stat] = 'up';
+    if (r > o * 1.15)      formData.trends[stat] = 'up';
     else if (r < o * 0.85) formData.trends[stat] = 'down';
-    else formData.trends[stat] = 'neutral';
+    else                   formData.trends[stat] = 'neutral';
   }
 
   return formData;
@@ -414,10 +378,9 @@ async function generatePicks(gameData, existingLegs = [], legCount = 4) {
     const proj   = projections[p.id];
     const s      = p.stats;
 
-    const foulWarning = s.fouls >= 3 ? ' ⚠️ FOUL TROUBLE (3 fouls)' : s.fouls === 2 ? ' ⚡ 2 fouls' : '';
+    const foulWarning = s.fouls >= 3 ? ' FOUL TROUBLE (3 fouls)' : s.fouls === 2 ? ' 2 fouls' : '';
     const minNote     = s.minutes < 8 ? ' (limited minutes)' : '';
 
-    // First half stat line
     const statLine = [
       `${s.minutes}min`,
       `${s.points ?? 0}pts`,
@@ -428,22 +391,20 @@ async function generatePicks(gameData, existingLegs = [], legCount = 4) {
       s.plusMinus != null ? `${s.plusMinus > 0 ? '+' : ''}${s.plusMinus} +/-` : '',
     ].filter(Boolean).join(', ');
 
-    // Historical context
     let histLine = 'History: unavailable';
     if (form) {
       const p5  = form.averages.last5;
       const p10 = form.averages.last10;
       const trendPts = form.trends.points !== 'neutral'
-        ? ` (${form.trends.points === 'up' ? '📈' : '📉'})`
+        ? ` (${form.trends.points === 'up' ? 'TRENDING UP' : 'TRENDING DOWN'})`
         : '';
       histLine = `History: PTS L5=${p5.points ?? '?'} L10=${p10.points ?? '?'}${trendPts} | REB L5=${p5.rebounds ?? '?'} | AST L5=${p5.assists ?? '?'}`;
       if (p5.points != null && p10.points != null) {
-        if (p5.points > p10.points * 1.2) histLine += ' 🔥 HOT STRETCH';
-        if (p5.points < p10.points * 0.8) histLine += ' 🧊 COLD STRETCH';
+        if (p5.points > p10.points * 1.2) histLine += ' HOT STRETCH';
+        if (p5.points < p10.points * 0.8) histLine += ' COLD STRETCH';
       }
     }
 
-    // Projection block
     const projLine = proj
       ? formatProjectionForPrompt(p, proj, season)
       : '    Projections: insufficient data';
@@ -462,26 +423,31 @@ ${projLine}`;
 
 GAME: ${game.awayTeam?.name ?? 'Away'} @ ${game.homeTeam?.name ?? 'Home'}
 HALFTIME SCORE: ${game.awayTeam?.abbreviation ?? 'AWY'} ${boxScore.gameContext.awayScore} - ${boxScore.gameContext.homeScore} ${game.homeTeam?.abbreviation ?? 'HME'}
-SCORE DIFFERENTIAL: ${boxScore.gameContext.scoreDiff}${isBlowout ? ' ⚠️ BLOWOUT — starter pull risk' : ''}
+SCORE DIFFERENTIAL: ${boxScore.gameContext.scoreDiff}${isBlowout ? ' BLOWOUT -- starter pull risk' : ''}
 FIRST HALF PACE: ${paceLabel} (${totalPts} combined pts)
 ${existingLegsText}
 PLAYER DATA (first half stats + historical form + projections):
 ${playerLines}
 
-PROJECTION METHODOLOGY (explain this to yourself before making picks):
-- "conservative" projection = first half value + (season per-min rate × projected remaining minutes)
+PROJECTION METHODOLOGY:
+- "conservative" projection = first half value + (season per-min rate x projected remaining minutes)
 - "blended" projection = regression-adjusted (weights current pace 55-70%, season rate 30-45%)
-- "aggressive" projection = first half value + (current pace × projected remaining minutes)
+- "aggressive" projection = first half value + (current pace x projected remaining minutes)
 - Projections already account for foul trouble and blowout minute reductions
 - "vsExpected%" shows how their current pace compares to season norm (100% = exactly on pace)
 
 HOW TO USE PROJECTIONS FOR PICKS:
-- If blended projection is well above a typical prop line for that player → strong Over candidate
-- If blended projection is well below → Under candidate or avoid
-- A player at 180% of expected pace likely regresses → prefer conservative projection
-- A player at 75% of expected pace may rebound → aggressive projection more credible
-- High FG% vs season average → regression risk on points, discount aggressive projection
-- Low FG% vs season average → positive regression likely, weight aggressive more
+- If blended projection is well above a typical prop line for that player -- strong Over candidate
+- If blended projection is well below -- Under candidate or avoid
+- A player at 180% of expected pace likely regresses -- prefer conservative projection
+- A player at 75% of expected pace may rebound -- aggressive projection more credible
+- High FG% vs season average -- regression risk on points, discount aggressive projection
+- Low FG% vs season average -- positive regression likely, weight aggressive more
+
+STAT SELECTION:
+- Consider ALL stat types equally -- Points, Rebounds, Assists, Steals, Blocks are all valid picks
+- Do not favour rebounds or assists over points -- if a player's blended points projection is strong, pick points
+- Pick the stat where the projection offers the clearest edge over a typical sportsbook line
 
 ADDITIONAL FACTORS:
 - Foul trouble (3 fouls) = reduced minutes, strong risk flag
@@ -489,15 +455,22 @@ ADDITIONAL FACTORS:
 - High pace = counting stats inflated, verify the player is driving pace not just benefiting
 - Players with 2 fouls in first half may play tentatively in 3rd quarter
 
-For each recommended leg, provide:
+THRESHOLD GUIDANCE (typical sportsbook lines for reference):
+- Points: stars average 20-30, role players 8-15
+- Rebounds: bigs average 8-12, wings 4-7
+- Assists: playmakers average 6-10, wings 2-5
+
+For each recommended pick provide:
 - player: exact full name
-- team: team abbreviation  
+- team: team abbreviation
 - stat: one of "Points", "Rebounds", "Assists", "Steals", "Blocks"
 - direction: "Over" or "Under"
-- rationale: 2-3 sentences grounded in the SPECIFIC projection numbers above — cite the blended projection and compare it to what a typical line would be
+- threshold: the number you are recommending betting Over/Under (based on blended projection minus a cushion for Over, or plus a cushion for Under)
+- projection: the blended projection number for that stat
+- rationale: 2-3 sentences grounded in the SPECIFIC projection numbers -- cite the blended projection
 - rating: 1-5 stars (5 = projections align across all windows, no risk flags, clear edge)
 - rating_reason: one sentence referencing the projection math
-- risk_flags: array of concern strings
+- risk_flags: array of concern strings (empty if clean)
 
 Return ONLY valid JSON, no markdown:
 {
@@ -510,6 +483,8 @@ Return ONLY valid JSON, no markdown:
       "team": "ABV",
       "stat": "Points",
       "direction": "Over",
+      "threshold": 18.5,
+      "projection": 22.4,
       "rationale": "...",
       "rating": 4,
       "rating_reason": "...",
@@ -518,7 +493,7 @@ Return ONLY valid JSON, no markdown:
   ]
 }
 
-Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad — quality over quantity. A 2-star rating means real uncertainty.`;
+Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad -- quality over quantity. Consider all stat types equally.`;
 
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
@@ -527,7 +502,10 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
   });
 
   const raw = msg.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  return JSON.parse(raw);
+  const jsonStart = raw.indexOf('{');
+  const jsonEnd   = raw.lastIndexOf('}');
+  const cleaned   = jsonStart !== -1 && jsonEnd !== -1 ? raw.substring(jsonStart, jsonEnd + 1) : raw;
+  return JSON.parse(cleaned);
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
@@ -561,8 +539,7 @@ export default async function handler(req, res) {
     boxScoreData.players = playersToAnalyze;
     console.log(`[halftime/analyze] Analyzing ${playersToAnalyze.length} players`);
 
-    // Step 3: Fetch historical form + season averages in parallel per player
-    // Season averages and historical form run simultaneously for each player
+    // Step 3: Fetch historical form + season averages in parallel
     const [formResults, seasonResults] = await Promise.all([
       Promise.all(
         playersToAnalyze.map(p =>
@@ -579,13 +556,13 @@ export default async function handler(req, res) {
     const historicalForms = {};
     const seasonAverages  = {};
     playersToAnalyze.forEach((p, i) => {
-      if (formResults[i])  historicalForms[p.id] = formResults[i];
+      if (formResults[i])   historicalForms[p.id] = formResults[i];
       if (seasonResults[i]) seasonAverages[p.id]  = seasonResults[i];
     });
 
     console.log(`[halftime/analyze] Form: ${Object.keys(historicalForms).length}/${playersToAnalyze.length} | Season: ${Object.keys(seasonAverages).length}/${playersToAnalyze.length}`);
 
-    // Step 4: Build projections for each player
+    // Step 4: Build projections
     const projections = {};
     for (const p of playersToAnalyze) {
       const proj = buildProjection(
@@ -599,12 +576,10 @@ export default async function handler(req, res) {
 
     console.log(`[halftime/analyze] Built projections for ${Object.keys(projections).length} players`);
 
-    // Build a name-keyed version of projections for save-picks.js lookup
+    // Build name-keyed projections for save-picks.js
     const projectionsByName = {};
     for (const p of playersToAnalyze) {
-      if (projections[p.id]) {
-        projectionsByName[p.name] = projections[p.id];
-      }
+      if (projections[p.id]) projectionsByName[p.name] = projections[p.id];
     }
 
     // Step 5: Claude analysis
@@ -618,11 +593,26 @@ export default async function handler(req, res) {
 
     const picks = await generatePicks(gameData, existingLegs || [], legCount);
 
+    // Attach projection numbers to each pick for the UI
+    const picksWithProjections = (picks.picks || []).map(pick => {
+      const player = playersToAnalyze.find(p => p.name === pick.player);
+      const proj   = player ? projections[player.id] : null;
+      const statKey = pick.stat?.toLowerCase();
+      const blended = proj?.projections?.[statKey]?.blended ?? null;
+      return {
+        ...pick,
+        projection: pick.projection ?? blended,
+        threshold:  pick.threshold  ?? null,
+        hasRealLine: false,
+      };
+    });
+
     return res.status(200).json({
       success: true,
       gameId,
       game: { homeTeam, awayTeam, sport, league },
       ...picks,
+      picks: picksWithProjections,
       projections: projectionsByName,
       analyzed_at: new Date().toISOString(),
     });
