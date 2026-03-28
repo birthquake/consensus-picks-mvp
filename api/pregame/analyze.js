@@ -811,7 +811,7 @@ Return ONLY valid JSON, no markdown:
 }`;
 
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5-20251001',
     max_tokens: 3000,
     messages: [{ role: 'user', content: prompt }],
   });
@@ -966,7 +966,7 @@ Return ONLY valid JSON, no markdown:
 Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad with weak picks. Consider all stat categories equally -- do not favour rebounds or assists over points. Prioritize picks where multiple factors align.`;
 
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5-20251001',
     max_tokens: 2500,
     messages: [{ role: 'user', content: prompt }],
   });
