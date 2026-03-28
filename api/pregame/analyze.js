@@ -1117,8 +1117,9 @@ export default async function handler(req, res) {
         matchupContext,
         {},
       );
+      const taggedDailyPicks = (dailyResult.picks || []).map(p => ({ ...p, model: 'claude-haiku-4-5-20251001' }));
       const dailyPicksWithOdds = dailyResult.picks
-        ? { ...dailyResult, picks: attachOdds(dailyResult.picks, {}) }
+        ? { ...dailyResult, picks: attachOdds(taggedDailyPicks, {}) }
         : dailyResult;
       return res.status(200).json({
         success: true, gameId,
@@ -1140,8 +1141,9 @@ export default async function handler(req, res) {
       oddsMap,
     );
 
-    const picksWithOdds = picks.picks ? { ...picks, picks: attachOdds(picks.picks, oddsMap) } : picks;
-    return res.status(200).json({
+      const taggedPicks = (picks.picks || []).map(p => ({ ...p, model: 'claude-haiku-4-5-20251001' }));
+      const picksWithOdds = picks.picks ? { ...picks, picks: attachOdds(taggedPicks, oddsMap) } : picks;    
+      return res.status(200).json({
       success: true, gameId,
       game: { homeTeam, awayTeam, sport, league, gameDate },
       ...picksWithOdds,
