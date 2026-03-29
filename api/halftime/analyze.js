@@ -1,10 +1,11 @@
 // FILE LOCATION: api/halftime/analyze.js
-// Given a live halftime game ID, pulls:
-//   - Full first-half box score (points, minutes, FG, rebounds, assists, fouls, +/-)
+// Given a live in-game ID, pulls:
+//   - Full box score so far (points, minutes, FG, rebounds, assists, fouls, +/-)
 //   - Season averages for key stats + minutes (for projection math)
 //   - Last 5 + last 10 game averages (trend windows)
-//   - Per-player projections: rate-based second-half output with regression adjustment
+//   - Per-player projections: rate-based remaining output with regression adjustment
 // Then runs Claude to generate rated pick recommendations.
+// Works for any quarter/period, not just halftime.
 
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -371,6 +372,33 @@ async function generatePicks(gameData, existingLegs = [], legCount = 4) {
   const isBlowout = boxScore.gameContext.scoreDiff >= 25;
   const totalPts  = boxScore.gameContext.totalPoints;
   const paceLabel = totalPts >= 60 ? 'HIGH pace' : totalPts >= 45 ? 'MEDIUM pace' : 'LOW pace (defensive)';
+  const period    = boxScore.gameContext.period || 2;
+  const clock     = boxScore.gameContext.clock || '';
+
+  // Human-readable game phase for Claude
+  const gamePhase = (() => {
+    const desc = (boxScore.gameContext.statusDescription || '').toLowerCase();
+    if (desc.includes('halftime')) return 'HALFTIME (between Q2 and Q3)';
+    if (period === 1) return `Q1 -- ${clock} remaining`;
+    if (period === 2) return `Q2 -- ${clock} remaining`;
+    if (period === 3) return `Q3 -- ${clock} remaining`;
+    if (period === 4) return `Q4 -- ${clock} remaining`;
+    if (period > 4)   return `OT${period - 4} -- ${clock} remaining`;
+    return `Period ${period}`;
+  })();
+
+  // Approximate minutes remaining in the game
+  const parseClockMinutes = (clockStr) => {
+    if (!clockStr) return null;
+    const parts = clockStr.split(':');
+    if (parts.length === 2) return parseFloat(parts[0]) + parseFloat(parts[1]) / 60;
+    return null;
+  };
+  const clockMins = parseClockMinutes(clock);
+  const quartersRemaining = Math.max(0, 4 - period);
+  const approxMinsRemaining = clockMins != null
+    ? Math.round((quartersRemaining * 12 + clockMins) * 10) / 10
+    : quartersRemaining * 12;
 
   const playerLines = boxScore.players.map(p => {
     const form   = historicalForms[p.id];
@@ -410,7 +438,7 @@ async function generatePicks(gameData, existingLegs = [], legCount = 4) {
       : '    Projections: insufficient data';
 
     return `  ${p.teamAbbrev} | ${p.name} (${p.position ?? '?'})${foulWarning}${minNote}
-    1st half: ${statLine}
+    Stats so far: ${statLine}
     ${histLine}
 ${projLine}`;
   }).join('\n\n');
@@ -419,14 +447,23 @@ ${projLine}`;
     ? `\nEXISTING LEGS (exclude these players):\n${existingLegs.map((l, i) => `${i + 1}. ${l.player} - ${l.stat}`).join('\n')}\n`
     : '';
 
-  const prompt = `You are an expert sports bettor specializing in live halftime prop analysis. You have access to first-half box scores, historical trends, AND mathematical rate-based projections for each player. Use all three layers to identify the strongest second-half props.
+  const prompt = `You are an expert sports bettor specializing in live in-game prop analysis. You have access to the current box score, historical trends, AND mathematical rate-based projections for each player. Use all three layers to identify the strongest remaining-game props.
 
 GAME: ${game.awayTeam?.name ?? 'Away'} @ ${game.homeTeam?.name ?? 'Home'}
-HALFTIME SCORE: ${game.awayTeam?.abbreviation ?? 'AWY'} ${boxScore.gameContext.awayScore} - ${boxScore.gameContext.homeScore} ${game.homeTeam?.abbreviation ?? 'HME'}
+CURRENT SCORE: ${game.awayTeam?.abbreviation ?? 'AWY'} ${boxScore.gameContext.awayScore} - ${boxScore.gameContext.homeScore} ${game.homeTeam?.abbreviation ?? 'HME'}
+GAME PHASE: ${gamePhase}
+APPROX MINUTES REMAINING: ~${approxMinsRemaining}
 SCORE DIFFERENTIAL: ${boxScore.gameContext.scoreDiff}${isBlowout ? ' BLOWOUT -- starter pull risk' : ''}
-FIRST HALF PACE: ${paceLabel} (${totalPts} combined pts)
+PACE SO FAR: ${paceLabel} (${totalPts} combined pts)
 ${existingLegsText}
-PLAYER DATA (first half stats + historical form + projections):
+IMPORTANT -- GAME PHASE CONTEXT:
+- If it is Q1 or early Q2: projections have high uncertainty -- large sample of remaining minutes so regression matters more, weight conservative projection heavily
+- If it is Q2 or Halftime: standard projection confidence -- blended projection is most reliable
+- If it is Q3: projections are tighter -- less time remaining means current pace is more predictive, weight aggressive projection slightly more
+- If it is Q4 or OT: very few minutes remain -- only recommend picks where the player already has a strong base and needs relatively few more stats to clear the line. Blowout risk is highest here.
+- Players in foul trouble in Q3/Q4 face higher risk than in Q1/Q2
+
+PLAYER DATA (stats so far + historical form + projections):
 ${playerLines}
 
 PROJECTION METHODOLOGY:
@@ -496,22 +533,16 @@ Return ONLY valid JSON, no markdown:
 Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad -- quality over quantity. Consider all stat types equally.`;
 
   const msg = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model: 'claude-sonnet-4-6',
     max_tokens: 2500,
     messages: [{ role: 'user', content: prompt }],
   });
 
   const raw = msg.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-const jsonStart = raw.indexOf('{');
-const jsonEnd   = raw.lastIndexOf('}');
-const cleaned   = jsonStart !== -1 && jsonEnd !== -1 ? raw.substring(jsonStart, jsonEnd + 1) : raw;
-try {
+  const jsonStart = raw.indexOf('{');
+  const jsonEnd   = raw.lastIndexOf('}');
+  const cleaned   = jsonStart !== -1 && jsonEnd !== -1 ? raw.substring(jsonStart, jsonEnd + 1) : raw;
   return JSON.parse(cleaned);
-} catch (parseErr) {
-  console.error('[halftime/analyze] JSON parse error:', parseErr.message);
-  console.error('[halftime/analyze] Raw around position 7680:', cleaned.substring(7600, 7750));
-  throw new Error(`Claude response JSON parse failed: ${parseErr.message}`);
-}
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
@@ -610,7 +641,6 @@ export default async function handler(req, res) {
         projection: pick.projection ?? blended,
         threshold:  pick.threshold  ?? null,
         hasRealLine: false,
-        model: 'claude-haiku-4-5-20251001',
       };
     });
 
