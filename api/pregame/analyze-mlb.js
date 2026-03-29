@@ -23,25 +23,6 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const BATTER_STATS  = ['hits', 'totalBases', 'homeRuns', 'rbi', 'runs', 'hra'];
 const PITCHER_STATS = ['strikeouts', 'outsRecorded', 'walks'];
-const ALL_STATS     = [...BATTER_STATS, ...PITCHER_STATS];
-
-// ESPN gamelog column name → our stat key
-const BATTER_STAT_MAP = {
-  hits:       ['hits', 'H'],
-  totalBases: ['totalBases', 'TB'],
-  homeRuns:   ['homeRuns', 'HR'],
-  rbi:        ['RBI', 'rbi'],
-  runs:       ['runs', 'R'],
-  // HRA is computed, not fetched directly
-};
-
-const PITCHER_STAT_MAP = {
-  strikeouts:   ['strikeouts', 'K', 'SO'],
-  outsRecorded: ['pitchingOuts', 'outsRecorded', 'OUTSrecorded'],
-  walks:        ['baseOnBalls', 'BB', 'walks'],
-  inningsPitched: ['inningsPitched', 'IP'],
-  earnedRuns:   ['earnedRuns', 'ER'],
-};
 
 const SPORTSBOOK_MINIMUMS = {
   hits:         0.5,
@@ -67,7 +48,6 @@ const VARIANCE_CUSHION = {
   walks:        { low: [0, 0.8, 0.5], mid: [0.8, 1.5, 1.0], high: [1.5, 999, 1.5] },
 };
 
-// Pitcher positions
 const PITCHER_POSITIONS = new Set(['SP', 'RP', 'P', 'LHP', 'RHP']);
 const STARTER_POSITIONS = new Set(['SP', 'LHP', 'RHP', 'P']);
 
@@ -87,13 +67,6 @@ async function fetchWithTimeout(url, ms = 6000) {
   }
 }
 
-function formatDate(d) {
-  const yyyy = d.getFullYear();
-  const mm   = String(d.getMonth() + 1).padStart(2, '0');
-  const dd   = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}${mm}${dd}`;
-}
-
 function avg(vals) {
   const v = vals.filter(x => x != null && !isNaN(x));
   if (!v.length) return null;
@@ -108,7 +81,6 @@ function stdDev(vals) {
 }
 
 function parseInnings(ip) {
-  // ESPN stores innings as e.g. "5.2" meaning 5 full innings + 2 outs = 5.667 innings
   if (ip == null) return null;
   const n = parseFloat(ip);
   if (isNaN(n)) return null;
@@ -138,9 +110,7 @@ async function findTeamId(league, abbreviation) {
 async function getTeamRoster(league, teamId) {
   const url = `https://site.api.espn.com/apis/site/v2/sports/baseball/${league}/teams/${teamId}/roster`;
   const data = await fetchWithTimeout(url, 5000);
-if (!data) return null;
-  console.log(`[analyze-mlb] gamelog ${athleteId} names:`, JSON.stringify(data.names?.slice(0,5)), 'seasonTypes:', data.seasonTypes?.length, 'events:', data.seasonTypes?.[0]?.categories?.[0]?.events?.length);
-  
+  if (!data) return []; // always return array, never null
 
   const players = [];
   const athletes = data.athletes || [];
@@ -177,13 +147,15 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
   const data = await fetchWithTimeout(url, 5000);
   if (!data) return null;
 
+  // DEBUG — log raw ESPN response shape so we can verify the structure
+  console.log(`[analyze-mlb] gamelog ${athleteId} names:`, JSON.stringify(data.names?.slice(0, 5)), 'seasonTypes:', data.seasonTypes?.length, 'events:', data.seasonTypes?.[0]?.categories?.[0]?.events?.length);
+
   const names = data.names || [];
   if (!names.length) return null;
 
   const seasonType = data.seasonTypes?.[0];
   const categories = seasonType?.categories || [];
 
-  // Helper to find column index
   const colIdx = (...candidates) => {
     for (const c of candidates) {
       const i = names.findIndex(n => n === c || n.toLowerCase() === c.toLowerCase());
@@ -203,17 +175,17 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
   const allGames = [];
 
   if (isPitcher) {
-    const IP_I  = colIdx('inningsPitched', 'IP');
-    const K_I   = colIdx('strikeouts', 'SO', 'K');
-    const BB_I  = colIdx('baseOnBalls', 'BB');
-    const ER_I  = colIdx('earnedRuns', 'ER');
+    const IP_I   = colIdx('inningsPitched', 'IP');
+    const K_I    = colIdx('strikeouts', 'SO', 'K');
+    const BB_I   = colIdx('baseOnBalls', 'BB');
+    const ER_I   = colIdx('earnedRuns', 'ER');
     const OUTS_I = colIdx('pitchingOuts', 'outsRecorded');
 
     for (const cat of categories) {
       for (const event of (cat.events || [])) {
         const stats = event.stats || [];
         const ip = parseInnings(parseS(stats, IP_I));
-        if (ip == null || ip < 1) continue; // skip non-starts / very short outings
+        if (ip == null || ip < 1) continue;
 
         const outs = OUTS_I >= 0 ? parseS(stats, OUTS_I) : (ip != null ? Math.round(ip * 3) : null);
 
@@ -230,18 +202,18 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
       }
     }
   } else {
-    const H_I  = colIdx('hits', 'H');
-    const TB_I = colIdx('totalBases', 'TB');
-    const HR_I = colIdx('homeRuns', 'HR');
+    const H_I   = colIdx('hits', 'H');
+    const TB_I  = colIdx('totalBases', 'TB');
+    const HR_I  = colIdx('homeRuns', 'HR');
     const RBI_I = colIdx('RBI', 'rbi');
-    const R_I  = colIdx('runs', 'R');
-    const AB_I = colIdx('atBats', 'AB');
+    const R_I   = colIdx('runs', 'R');
+    const AB_I  = colIdx('atBats', 'AB');
 
     for (const cat of categories) {
       for (const event of (cat.events || [])) {
         const stats = event.stats || [];
         const ab = parseS(stats, AB_I);
-        if (ab === 0 && parseS(stats, H_I) === 0) continue; // skip DNP
+        if (ab === 0 && parseS(stats, H_I) === 0) continue;
 
         const h   = parseS(stats, H_I)   ?? 0;
         const r   = parseS(stats, R_I)   ?? 0;
@@ -251,7 +223,7 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
           eventId: event.eventId,
           stats: {
             hits:       h,
-            totalBases: parseS(stats, TB_I) ?? h, // fallback: hits if TB unavailable
+            totalBases: parseS(stats, TB_I) ?? h,
             homeRuns:   parseS(stats, HR_I) ?? 0,
             rbi,
             runs:       r,
@@ -262,8 +234,10 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
     }
   }
 
+  console.log(`[analyze-mlb] gamelog ${athleteId} allGames parsed: ${allGames.length}`);
+
   if (!allGames.length) return null;
-  allGames.reverse(); // most recent first
+  allGames.reverse();
 
   return { allGames, gamesPlayed: allGames.length };
 }
@@ -274,18 +248,16 @@ function buildBatterProjection(gamelog) {
   if (!gamelog || gamelog.allGames.length < 1) return null;
   console.log(`[analyze-mlb] buildBatter allGames: ${gamelog.allGames.length}`);
 
-  const games   = gamelog.allGames;
-  const last5   = games.slice(0, 5);
-  const season  = games;
-
+  const games  = gamelog.allGames;
+  const last5  = games.slice(0, 5);
+  const season = games;
   const projections = {};
 
   for (const stat of BATTER_STATS) {
-    if (stat === 'hra') continue; // computed below
+    if (stat === 'hra') continue;
 
     const seasonVals = season.map(g => g.stats[stat]).filter(v => v != null);
     const last5Vals  = last5.map(g => g.stats[stat]).filter(v => v != null);
-
     if (!seasonVals.length) continue;
 
     const seasonAvg = avg(seasonVals);
@@ -294,7 +266,6 @@ function buildBatterProjection(gamelog) {
     const floor     = Math.min(...seasonVals);
     const ceiling   = Math.max(...seasonVals);
 
-    // Blended: 60% recent, 40% season
     const blended = last5Avg != null
       ? Math.round((last5Avg * 0.6 + seasonAvg * 0.4) * 100) / 100
       : seasonAvg;
@@ -310,7 +281,6 @@ function buildBatterProjection(gamelog) {
       else if (sd < cushionConfig.mid[1])  cushion = cushionConfig.mid[2];
       else                                  cushion = cushionConfig.high[2];
     }
-
     if (trend === 'up')   cushion -= 0.25;
     if (trend === 'down') cushion += 0.25;
 
@@ -320,16 +290,9 @@ function buildBatterProjection(gamelog) {
     const edge         = Math.round((blended - threshold) * 100) / 100;
 
     projections[stat] = {
-      seasonAvg,
-      last5Avg,
-      blended,
-      threshold,
+      seasonAvg, last5Avg, blended, threshold,
       cushion: Math.round(cushion * 100) / 100,
-      edge,
-      stdDev: sd,
-      floor,
-      ceiling,
-      trend,
+      edge, stdDev: sd, floor, ceiling, trend,
       sampleSize: seasonVals.length,
     };
   }
@@ -361,15 +324,9 @@ function buildBatterProjection(gamelog) {
       ? projections.hits.trend : 'neutral';
 
     projections.hra = {
-      seasonAvg:  hraSeasonAvg,
-      last5Avg:   hraLast5,
-      blended:    hraBlended,
-      threshold:  hraThreshold,
-      cushion:    hraCushion,
-      edge:       hraEdge,
-      stdDev:     hraSd,
-      trend:      hraTrend,
-      sampleSize: gamelog.allGames.length,
+      seasonAvg: hraSeasonAvg, last5Avg: hraLast5, blended: hraBlended,
+      threshold: hraThreshold, cushion: hraCushion, edge: hraEdge,
+      stdDev: hraSd, trend: hraTrend, sampleSize: gamelog.allGames.length,
       isComposite: true,
     };
   }
@@ -378,18 +335,16 @@ function buildBatterProjection(gamelog) {
 }
 
 function buildPitcherProjection(gamelog) {
-  if (!gamelog || gamelog.allGames.length < 2) return null;
+  if (!gamelog || gamelog.allGames.length < 1) return null;
 
   const games  = gamelog.allGames;
   const last5  = games.slice(0, 5);
   const season = games;
-
   const projections = {};
 
   for (const stat of PITCHER_STATS) {
     const seasonVals = season.map(g => g.stats[stat]).filter(v => v != null);
     const last5Vals  = last5.map(g => g.stats[stat]).filter(v => v != null);
-
     if (!seasonVals.length) continue;
 
     const seasonAvg = avg(seasonVals);
@@ -413,7 +368,6 @@ function buildPitcherProjection(gamelog) {
       else if (sd < cushionConfig.mid[1])  cushion = cushionConfig.mid[2];
       else                                  cushion = cushionConfig.high[2];
     }
-
     if (trend === 'up')   cushion -= 0.5;
     if (trend === 'down') cushion += 0.5;
 
@@ -423,24 +377,16 @@ function buildPitcherProjection(gamelog) {
     const edge         = Math.round((blended - threshold) * 100) / 100;
 
     projections[stat] = {
-      seasonAvg,
-      last5Avg,
-      blended,
-      threshold,
+      seasonAvg, last5Avg, blended, threshold,
       cushion: Math.round(cushion * 100) / 100,
-      edge,
-      stdDev: sd,
-      floor,
-      ceiling,
-      trend,
+      edge, stdDev: sd, floor, ceiling, trend,
       sampleSize: seasonVals.length,
     };
   }
 
-  // Also store avg innings pitched for context
   const ipVals = season.map(g => g.stats.inningsPitched).filter(v => v != null);
   if (ipVals.length) {
-    projections._avgInnings = Math.round(avg(ipVals) * 10) / 10;
+    projections._avgInnings   = Math.round(avg(ipVals) * 10) / 10;
     projections._last5Innings = Math.round(avg(last5.map(g => g.stats.inningsPitched).filter(v => v != null)) * 10) / 10;
   }
 
@@ -620,7 +566,6 @@ export default async function handler(req, res) {
 
     console.log(`[analyze-mlb] homeRoster: ${homeRoster.length}, awayRoster: ${awayRoster.length}`);
 
-    // For batters take top 9, for pitchers only starting pitchers
     const homeBatters  = homeRoster.filter(p => !p.isPitcher).slice(0, 9).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
     const awayBatters  = awayRoster.filter(p => !p.isPitcher).slice(0, 9).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation || 'AWY' }));
     const homePitchers = homeRoster.filter(p => p.isStarter).slice(0, 1).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
@@ -629,7 +574,6 @@ export default async function handler(req, res) {
 
     console.log(`[analyze-mlb] Analyzing ${allPlayers.length} players (${homePitchers.length + awayPitchers.length} pitchers, ${homeBatters.length + awayBatters.length} batters)`);
 
-    // Fetch gamelogs for all players in parallel
     const gamelogResults = await Promise.all(
       allPlayers.map(p =>
         getPlayerGamelog(league, p.id, p.isPitcher).catch(() => null)
@@ -638,10 +582,10 @@ export default async function handler(req, res) {
 
     console.log(`[analyze-mlb] Gamelogs: ${gamelogResults.filter(Boolean).length}/${allPlayers.length} fetched`);
 
-    // Build projections
     const playerData = allPlayers.map((p, i) => {
       const gamelog = gamelogResults[i];
       if (!gamelog || gamelog.gamesPlayed < 1) return null;
+
       const projections = p.isPitcher
         ? buildPitcherProjection(gamelog)
         : buildBatterProjection(gamelog);
@@ -657,7 +601,6 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Could not build projections for any players in this game' });
     }
 
-    // Daily mode — 2 picks
     const targetLegCount = mode === 'daily' ? 2 : legCount;
     const picks = await generateMLBPicks(
       { homeTeam, awayTeam, gameDate },
