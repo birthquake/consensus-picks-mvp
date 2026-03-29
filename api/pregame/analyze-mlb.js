@@ -638,8 +638,7 @@ export default async function handler(req, res) {
     // Build projections
     const playerData = allPlayers.map((p, i) => {
       const gamelog = gamelogResults[i];
-      if (!gamelog || gamelog.gamesPlayed < (p.isPitcher ? 2 : 3)) return null;
-
+      if (!gamelog || gamelog.gamesPlayed < 1) return null;
       const projections = p.isPitcher
         ? buildPitcherProjection(gamelog)
         : buildBatterProjection(gamelog);
