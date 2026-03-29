@@ -138,7 +138,9 @@ async function findTeamId(league, abbreviation) {
 async function getTeamRoster(league, teamId) {
   const url = `https://site.api.espn.com/apis/site/v2/sports/baseball/${league}/teams/${teamId}/roster`;
   const data = await fetchWithTimeout(url, 5000);
-  if (!data) return [];
+if (!data) return null;
+  console.log(`[analyze-mlb] gamelog ${athleteId} names:`, JSON.stringify(data.names?.slice(0,5)), 'seasonTypes:', data.seasonTypes?.length, 'events:', data.seasonTypes?.[0]?.categories?.[0]?.events?.length);
+  
 
   const players = [];
   const athletes = data.athletes || [];
@@ -269,7 +271,8 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
 // ─── Projection engine ────────────────────────────────────────────────────────
 
 function buildBatterProjection(gamelog) {
-  if (!gamelog || gamelog.allGames.length < 3) return null;
+  if (!gamelog || gamelog.allGames.length < 1) return null;
+  console.log(`[analyze-mlb] buildBatter allGames: ${gamelog.allGames.length}`);
 
   const games   = gamelog.allGames;
   const last5   = games.slice(0, 5);
