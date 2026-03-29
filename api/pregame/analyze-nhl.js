@@ -83,40 +83,43 @@ async function getTeamRoster(teamId) {
 
 // Get opponent defensive stats: shots allowed/game and goals allowed/game
 // Used to build a multiplier vs league average
+// ESPN statistics endpoint returns season TOTALS — must divide by gamesPlayed
 async function getTeamDefenseStats(teamId) {
-  const data = await fetchJSON(
-    `https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/${teamId}`
-  );
-  // ESPN team endpoint includes season stats
-  const stats = data?.team?.record?.items ?? [];
-  // Fallback: use team scoreboard stats
-  // Try the stats endpoint
   const statsData = await fetchJSON(
     `https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/${teamId}/statistics`
   );
   if (!statsData) return null;
 
   const categories = statsData?.results?.stats?.categories ?? [];
-  let shotsAgainstPG = null;
-  let goalsAgainstPG = null;
-  let savesPG = null;
+  let shotsAgainstTotal = null;
+  let goalsAgainstTotal = null;
+  let savesTotal        = null;
+  let gamesPlayed       = null;
 
   for (const cat of categories) {
     for (const stat of cat?.stats ?? []) {
       const name = stat.name?.toLowerCase();
-      if (name === 'shotsagainstpergame' || name === 'shotsagainst') {
-        shotsAgainstPG = parseFloat(stat.value) || null;
-      }
-      if (name === 'goalsagainstpergame' || name === 'goalsagainst') {
-        goalsAgainstPG = parseFloat(stat.value) || null;
-      }
-      if (name === 'savespergame' || name === 'saves') {
-        savesPG = parseFloat(stat.value) || null;
-      }
+      const val  = parseFloat(stat.value) || null;
+      if (name === 'shotsagainst')  shotsAgainstTotal = val;
+      if (name === 'goalsagainst')  goalsAgainstTotal = val;
+      if (name === 'saves')         savesTotal        = val;
+      if (name === 'gamesplayed' || name === 'games') gamesPlayed = val;
     }
   }
 
-  return { shotsAgainstPG, goalsAgainstPG, savesPG };
+  // Fallback: NJ played ~70 games at this point in the season
+  // If gamesPlayed not found, estimate from shots total (NHL teams average ~29.5 SA/game)
+  if (!gamesPlayed && shotsAgainstTotal) {
+    gamesPlayed = Math.round(shotsAgainstTotal / 29.5);
+  }
+  if (!gamesPlayed || gamesPlayed < 1) return null;
+
+  return {
+    shotsAgainstPG: shotsAgainstTotal ? Math.round((shotsAgainstTotal / gamesPlayed) * 10) / 10 : null,
+    goalsAgainstPG: goalsAgainstTotal ? Math.round((goalsAgainstTotal / gamesPlayed) * 100) / 100 : null,
+    savesPG:        savesTotal        ? Math.round((savesTotal        / gamesPlayed) * 10) / 10 : null,
+    gamesPlayed,
+  };
 }
 
 // Get team's last game date for back-to-back detection
