@@ -194,7 +194,7 @@ function buildGoalieProjection(player, gameStats, gamesPlayed) {
 
 // ─── Pick generator ───────────────────────────────────────────────────────────
 
-async function generateNHLPicks(homeTeam, awayTeam, homeProjections, awayProjections) {
+async function generateNHLPicks(homeTeam, awayTeam, homeProjections, awayProjections, legCount) {
   function skaterLine(p, proj) {
     if (proj.skipped) return null;
     return (
@@ -243,7 +243,7 @@ AVAILABLE PROPS AND TYPICAL LINES:
 - saves (goalies only): line usually 20.5–27.5
 
 INSTRUCTIONS:
-- Pick 4–8 highest-confidence props across all players
+- Pick exactly ${legCount} highest-confidence props across all players
 - Prioritize shots and points for skaters (most liquid markets)
 - Prioritize saves for goalies
 - Only recommend OVER when projection clearly clears the typical line
@@ -315,7 +315,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { homeTeam, awayTeam, homeTeamId, awayTeamId } = req.body;
+  const { homeTeam, awayTeam, homeTeamId, awayTeamId, legCount = 4 } = req.body;
 
   if (!homeTeam || !awayTeam) {
     return res.status(400).json({ error: "homeTeam and awayTeam required" });
@@ -364,7 +364,7 @@ export default async function handler(req, res) {
       fetchProjections(awayPlayers),
     ]);
 
-    const picks = await generateNHLPicks(homeTeam, awayTeam, homeProjections, awayProjections);
+    const picks = await generateNHLPicks(homeTeam, awayTeam, homeProjections, awayProjections, legCount);
 
     const projectionsMap = {};
     for (const { player, proj } of [...homeProjections, ...awayProjections]) {
