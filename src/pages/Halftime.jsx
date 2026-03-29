@@ -865,7 +865,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const TABS = [
     { id: 'daily',       label: 'Daily',    icon: <Icon.Zap /> },
     { id: 'pregame',     label: 'Pre-Game', icon: <Icon.Clock /> },
-    { id: 'halftime',    label: 'Halftime', icon: <Icon.Activity /> },
+    { id: 'halftime',    label: 'Live',     icon: <Icon.Activity /> },
     { id: 'performance', label: 'Stats',    icon: <Icon.BarChart /> },
   ];
 
@@ -880,10 +880,10 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
               <span style={{ fontSize: '12px', color: '#a78bfa', fontWeight: '500' }}>PaiGrade</span>
             </div>
             <h2 style={{ margin: '0 0 4px', fontSize: '22px', fontWeight: '500', color: 'var(--text-primary, #fff)' }}>
-              {mode === 'daily' ? 'Daily Card' : mode === 'pregame' ? 'Pre-Game Picks' : mode === 'halftime' ? 'Halftime Picks' : 'Performance'}
+              {mode === 'daily' ? 'Daily Card' : mode === 'pregame' ? 'Pre-Game Picks' : mode === 'halftime' ? 'Live Picks' : 'Performance'}
             </h2>
             <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.5' }}>
-              {mode === 'daily' ? "Top picks across today's full slate" : mode === 'pregame' ? 'Pre-game prop picks from historical projections' : mode === 'halftime' ? 'Live prop picks built from first-half data + recent form' : 'Pick accuracy and projection tracking over time'}
+              {mode === 'daily' ? "Top picks across today's full slate" : mode === 'pregame' ? 'Pre-game prop picks from historical projections' : mode === 'halftime' ? 'In-game prop picks built from live box scores + recent form' : 'Pick accuracy and projection tracking over time'}
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginTop: '2px' }}>
@@ -946,9 +946,9 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ width: '64px', height: '64px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}><Icon.Basketball /></div>
           <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>Ready to scan</h3>
-          <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px', lineHeight: '1.6' }}>{mode === 'halftime' ? 'Scan for NBA games currently at halftime.' : "Load today's NBA games and get pre-game prop recommendations."}</p>
+          <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px', lineHeight: '1.6' }}>{mode === 'halftime' ? 'Scan for NBA games currently in progress.' : "Load today's NBA games and get pre-game prop recommendations."}</p>
           <button onClick={scan} style={{ padding: '14px 32px', borderRadius: '14px', background: '#7c3aed', border: 'none', color: '#fff', fontWeight: '500', fontSize: '15px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-            <Icon.Zap /> {mode === 'halftime' ? 'Scan for Halftime Games' : "Find Today's Games"}
+            <Icon.Zap /> {mode === 'halftime' ? 'Scan for Live Games' : "Find Today's Games"}
           </button>
         </div>
       )}
@@ -973,7 +973,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       {mode !== 'performance' && mode !== 'daily' && scanState === 'empty' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>No games right now</h3>
-          <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px' }}>{mode === 'halftime' ? 'Check back when NBA games are at halftime.' : 'No NBA games scheduled for today.'}</p>
+          <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px' }}>{mode === 'halftime' ? 'Check back when NBA games are in progress.' : 'No NBA games scheduled for today.'}</p>
           <button onClick={scan} style={{ padding: '10px 24px', borderRadius: '10px', background: 'transparent', border: '1px solid var(--border-color, #333)', color: 'var(--text-secondary, #888)', cursor: 'pointer', fontWeight: '500', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
             <Icon.Refresh /> Scan Again
           </button>
@@ -996,7 +996,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>
             <div style={{ width: '8px', height: '8px', background: '#4ade80', borderRadius: '50%' }}/>
-            {games.length} game{games.length !== 1 ? 's' : ''} {mode === 'halftime' ? 'at halftime' : 'today'}
+            {games.length} game{games.length !== 1 ? 's' : ''} {mode === 'halftime' ? 'live' : 'today'}
           </div>
           {games.map(game => (
             <GameCard
