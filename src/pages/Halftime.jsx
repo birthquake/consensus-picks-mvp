@@ -53,6 +53,20 @@ const Icon = {
       <path d="M5 12c2 2 4 3 7 3s5-1 7-3"/>
     </svg>
   ),
+  Hockey: () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <ellipse cx="12" cy="19" rx="8" ry="2.5"/>
+      <path d="M6 19V9l6-6 6 6v10"/>
+      <path d="M9 19v-6l3-3 3 3v6"/>
+    </svg>
+  ),
+  HockeySmall: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <ellipse cx="12" cy="19" rx="8" ry="2.5"/>
+      <path d="M6 19V9l6-6 6 6v10"/>
+      <path d="M9 19v-6l3-3 3 3v6"/>
+    </svg>
+  ),
   Zap: () => (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
@@ -156,6 +170,7 @@ function PickCard({ pick, isSelected, onToggle, index }) {
             <span style={{ fontWeight: '500', fontSize: '15px', color: 'var(--text-primary, #fff)' }}>{pick.player}</span>
             <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', borderRadius: '20px', letterSpacing: '0.5px' }}>{pick.team}</span>
             {pick.sport === 'mlb' && <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 6px', background: 'rgba(251,146,60,0.15)', color: '#fb923c', borderRadius: '20px' }}>MLB</span>}
+            {pick.sport === 'nhl' && <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 6px', background: 'rgba(29,78,216,0.2)', color: '#60a5fa', borderRadius: '20px' }}>NHL</span>}
           </div>
           <div style={{ marginTop: '3px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '13px', color: '#60a5fa', fontWeight: '500' }}>
@@ -203,29 +218,34 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
   const state    = cache?.state    || 'idle';
   const nbaPicks = cache?.nbaPicks || [];
   const mlbPicks = cache?.mlbPicks || [];
+  const nhlPicks = cache?.nhlPicks || [];
   const [dailySport, setDailySport] = useState('nba');
 
   const setState    = (v) => onCacheUpdate(c => ({ ...c, state: v }));
   const setNbaPicks = (v) => onCacheUpdate(c => ({ ...c, nbaPicks: v }));
   const setMlbPicks = (v) => onCacheUpdate(c => ({ ...c, mlbPicks: v }));
+  const setNhlPicks = (v) => onCacheUpdate(c => ({ ...c, nhlPicks: v }));
 
-  const activePicks = dailySport === 'nba' ? nbaPicks : mlbPicks;
-  const totalPicks  = nbaPicks.length + mlbPicks.length;
+  const activePicks = dailySport === 'nba' ? nbaPicks : dailySport === 'mlb' ? mlbPicks : nhlPicks;
+  const totalPicks  = nbaPicks.length + mlbPicks.length + nhlPicks.length;
 
   const load = async () => {
     setState('loading');
     setNbaPicks([]);
     setMlbPicks([]);
+    setNhlPicks([]);
     try {
-      const [nbaScan, mlbScan] = await Promise.all([
+      const [nbaScan, mlbScan, nhlScan] = await Promise.all([
         fetch('/api/pregame/scan?sport=nba').then(r => r.json()).catch(() => null),
         fetch('/api/pregame/scan?sport=mlb').then(r => r.json()).catch(() => null),
+        fetch('/api/pregame/scan?sport=nhl').then(r => r.json()).catch(() => null),
       ]);
 
       const nbaGames = nbaScan?.success ? nbaScan.games || [] : [];
       const mlbGames = mlbScan?.success ? mlbScan.games || [] : [];
+      const nhlGames = nhlScan?.success ? nhlScan.games || [] : [];
 
-      const [nbaResults, mlbResults] = await Promise.all([
+      const [nbaResults, mlbResults, nhlResults] = await Promise.all([
         Promise.all(nbaGames.map(game =>
           fetch('/api/pregame/analyze', {
             method: 'POST',
@@ -245,6 +265,18 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
             body: JSON.stringify({
               gameId: game.id, league: game.league,
               homeTeam: game.homeTeam, awayTeam: game.awayTeam,
+              gameDate: game.gameDate || game.startTime,
+              mode: 'daily',
+            }),
+          }).then(r => r.json()).catch(() => null)
+        )),
+        Promise.all(nhlGames.map(game =>
+          fetch('/api/pregame/analyze-nhl', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              gameId: game.id, league: game.league,
+              homeTeam: game.homeTeam.abbreviation, awayTeam: game.awayTeam.abbreviation,
               gameDate: game.gameDate || game.startTime,
               mode: 'daily',
             }),
@@ -270,9 +302,11 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
 
       const nba = collectPicks(nbaResults, 'nba');
       const mlb = collectPicks(mlbResults, 'mlb');
+      const nhl = collectPicks(nhlResults, 'nhl');
       setNbaPicks(nba);
       setMlbPicks(mlb);
-      setState(nba.length > 0 || mlb.length > 0 ? 'done' : 'empty');
+      setNhlPicks(nhl);
+      setState(nba.length > 0 || mlb.length > 0 || nhl.length > 0 ? 'done' : 'empty');
     } catch (err) {
       console.error('[DailyCard]', err);
       setState('error');
@@ -280,8 +314,8 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
   };
 
   const ratingColor = (r) => r >= 4 ? '#4ade80' : r >= 3 ? '#fbbf24' : '#f87171';
-  const topRating   = totalPicks ? Math.max(...[...nbaPicks, ...mlbPicks].map(p => p.rating)) : 0;
-  const avgRating   = totalPicks ? ([...nbaPicks, ...mlbPicks].reduce((s, p) => s + p.rating, 0) / totalPicks).toFixed(1) : '0';
+  const topRating   = totalPicks ? Math.max(...[...nbaPicks, ...mlbPicks, ...nhlPicks].map(p => p.rating)) : 0;
+  const avgRating   = totalPicks ? ([...nbaPicks, ...mlbPicks, ...nhlPicks].reduce((s, p) => s + p.rating, 0) / totalPicks).toFixed(1) : '0';
 
   const renderPickRow = (pick, i) => {
     const key        = `${pick.player}:${pick.stat}`;
@@ -329,7 +363,7 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ width: '36px', height: '36px', margin: '0 auto 14px', border: '3px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-          <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>Analyzing today's full slate — NBA + MLB...</p>
+          <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>Analyzing today's full slate — NBA + MLB + NHL...</p>
           <p style={{ color: 'var(--text-secondary, #555)', fontSize: '11px', marginTop: '6px' }}>This takes 20–30 seconds for all games</p>
         </div>
       )}
@@ -363,11 +397,12 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
             </div>
           </div>
 
-          {/* Sport selector — NBA / MLB tabs */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+          {/* Sport selector — NBA / MLB / NHL tabs */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '16px' }}>
             {[
               { id: 'nba', label: 'NBA', icon: <Icon.Basketball />, count: nbaPicks.length },
               { id: 'mlb', label: 'MLB', icon: <Icon.Baseball />,   count: mlbPicks.length },
+              { id: 'nhl', label: 'NHL', icon: <Icon.Hockey />,     count: nhlPicks.length },
             ].map(s => (
               <button
                 key={s.id}
@@ -551,6 +586,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
   const [collapsed, setCollapsed]       = useState(false);
 
   const isMLB = game.league === 'mlb';
+  const isNHL = game.league === 'nhl';
 
   const analyze = useCallback(async (existingLegs = []) => {
     setState('loading');
@@ -564,6 +600,9 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
       } else if (isMLB) {
         endpoint = '/api/pregame/analyze-mlb';
         body = { gameId: game.id, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount };
+      } else if (isNHL) {
+        endpoint = '/api/pregame/analyze-nhl';
+        body = { gameId: game.id, league: game.league, homeTeam: game.homeTeam.abbreviation, awayTeam: game.awayTeam.abbreviation, gameDate: game.gameDate || game.startTime, existingLegs, legCount };
       } else {
         endpoint = '/api/pregame/analyze';
         body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount, mode: analysisMode, oddsMap };
@@ -580,7 +619,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
       setErrorMsg(err.message);
       setState('error');
     }
-  }, [game, mode, analysisMode, legCount, isMLB]);
+  }, [game, mode, analysisMode, legCount, isMLB, isNHL]);
 
   const savePicks = async (analysisData) => {
     await fetch('/api/halftime/save-picks', {
@@ -596,8 +635,8 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
   };
 
   const gameLegs  = selectedLegs.filter(l => l.gameId === game.id);
-  const modeLabel = mode === 'halftime' ? 'LIVE' : isMLB ? 'MLB' : 'PRE-GAME';
-  const modeBg    = mode === 'halftime' ? '#ef4444' : isMLB ? '#fb923c' : '#7c3aed';
+  const modeLabel = mode === 'halftime' ? 'LIVE' : isMLB ? 'MLB' : isNHL ? 'NHL' : 'PRE-GAME';
+  const modeBg    = mode === 'halftime' ? '#ef4444' : isMLB ? '#fb923c' : isNHL ? '#1d4ed8' : '#7c3aed';
 
   return (
     <div style={{ background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '16px', overflow: 'hidden', marginBottom: '16px' }}>
@@ -633,7 +672,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
 
       {!collapsed && (
         <div style={{ padding: '16px 20px' }}>
-          {mode === 'pregame' && !isMLB && (
+          {mode === 'pregame' && !isMLB && !isNHL && (
             <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', background: 'var(--bg-tertiary, #0a0a0a)', padding: '4px', borderRadius: '10px' }}>
               {[{ id: 'picks', label: 'Prop Picks', icon: Icon.Target }, { id: 'pra', label: 'PRA Leader', icon: Icon.BarChart }].map(m => (
                 <button key={m.id} onClick={() => { setAnalysisMode(m.id); setState('idle'); setAnalysis(null); if (onAnalysisUpdate) onAnalysisUpdate(game.id, null); }} style={{ flex: 1, padding: '7px', borderRadius: '8px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', background: analysisMode === m.id ? '#7c3aed' : 'transparent', color: analysisMode === m.id ? '#fff' : 'var(--text-secondary, #888)', fontWeight: '500', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s' }}>
@@ -653,7 +692,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
             <div style={{ textAlign: 'center', padding: '24px 0' }}>
               <div style={{ width: '36px', height: '36px', margin: '0 auto 12px', border: '3px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
               <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>
-                {mode === 'halftime' ? 'Pulling live box scores + player history...' : isMLB ? 'Pulling MLB gamelogs + pitcher data...' : 'Pulling player history + projections...'}
+                {mode === 'halftime' ? 'Pulling live box scores + player history...' : isMLB ? 'Pulling MLB gamelogs + pitcher data...' : isNHL ? 'Pulling NHL gamelogs + skater data...' : 'Pulling player history + projections...'}
               </p>
             </div>
           )}
@@ -786,7 +825,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const [mode, setMode]                 = useState('daily');
   const [pregameSport, setPregameSport] = useState('nba');
 
-  // ── Split scan state — NBA and MLB persist independently ──────────────────
+  // ── Split scan state — NBA, MLB, and NHL persist independently ─────────────
   const [nbaGames, setNbaGames]             = useState([]);
   const [nbaScanState, setNbaScanState]     = useState('idle');
   const [nbaLastScanned, setNbaLastScanned] = useState(null);
@@ -796,15 +835,19 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const [mlbScanState, setMlbScanState]     = useState('idle');
   const [mlbLastScanned, setMlbLastScanned] = useState(null);
 
+  const [nhlGames, setNhlGames]             = useState([]);
+  const [nhlScanState, setNhlScanState]     = useState('idle');
+  const [nhlLastScanned, setNhlLastScanned] = useState(null);
+
   // ── Live scan state ────────────────────────────────────────────────────────
   const [liveGames, setLiveGames]         = useState([]);
   const [liveScanState, setLiveScanState] = useState('idle');
   const [liveLastScanned, setLiveLast]    = useState(null);
 
   // ── Derived from active sport ──────────────────────────────────────────────
-  const games       = mode === 'halftime' ? liveGames       : pregameSport === 'nba' ? nbaGames       : mlbGames;
-  const scanState   = mode === 'halftime' ? liveScanState   : pregameSport === 'nba' ? nbaScanState   : mlbScanState;
-  const lastScanned = mode === 'halftime' ? liveLastScanned : pregameSport === 'nba' ? nbaLastScanned : mlbLastScanned;
+  const games       = mode === 'halftime' ? liveGames       : pregameSport === 'nba' ? nbaGames       : pregameSport === 'mlb' ? mlbGames       : nhlGames;
+  const scanState   = mode === 'halftime' ? liveScanState   : pregameSport === 'nba' ? nbaScanState   : pregameSport === 'mlb' ? mlbScanState   : nhlScanState;
+  const lastScanned = mode === 'halftime' ? liveLastScanned : pregameSport === 'nba' ? nbaLastScanned : pregameSport === 'mlb' ? mlbLastScanned : nhlLastScanned;
   const oddsMap     = pregameSport === 'nba' ? nbaOddsMap : {};
 
   const [selectedLegs, setSelectedLegs] = useState([]);
@@ -812,7 +855,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const [legCount, setLegCount]         = useState(4);
 
   // ── Persistent caches ──────────────────────────────────────────────────────
-  const [dailyCache, setDailyCache]     = useState({ state: 'idle', nbaPicks: [], mlbPicks: [] });
+  const [dailyCache, setDailyCache]     = useState({ state: 'idle', nbaPicks: [], mlbPicks: [], nhlPicks: [] });
   const [pregameCache, setPregameCache] = useState({});
 
   const updatePregameCache = useCallback((gameId, data) => {
@@ -854,7 +897,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
         setErrorMsg(err.message);
         setNbaScanState('error');
       }
-    } else {
+    } else if (pregameSport === 'mlb') {
       setMlbScanState('scanning');
       setErrorMsg('');
       setMlbGames([]);
@@ -868,6 +911,21 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       } catch (err) {
         setErrorMsg(err.message);
         setMlbScanState('error');
+      }
+    } else {
+      setNhlScanState('scanning');
+      setErrorMsg('');
+      setNhlGames([]);
+      try {
+        const res  = await fetch('/api/pregame/scan?sport=nhl');
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
+        setNhlGames(data.games);
+        setNhlLastScanned(new Date());
+        setNhlScanState(data.games.length > 0 ? 'done' : 'empty');
+      } catch (err) {
+        setErrorMsg(err.message);
+        setNhlScanState('error');
       }
     }
   }, [mode, pregameSport]);
@@ -914,7 +972,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
               {mode === 'daily' ? 'Daily Card' : mode === 'pregame' ? 'Pre-Game Picks' : mode === 'halftime' ? 'Live Picks' : 'Performance'}
             </h2>
             <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.5' }}>
-              {mode === 'daily' ? "Top picks across today's full slate — NBA + MLB"
+              {mode === 'daily' ? "Top picks across today's full slate — NBA + MLB + NHL"
                 : mode === 'pregame' ? 'Pre-game prop picks from historical projections'
                 : mode === 'halftime' ? 'In-game prop picks built from live box scores + recent form'
                 : 'Pick accuracy and projection tracking over time'}
@@ -957,10 +1015,11 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
 
         {/* Pre-game sport selector */}
         {mode === 'pregame' && (
-          <div style={{ marginTop: '14px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+          <div style={{ marginTop: '14px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
             {[
               { id: 'nba', label: 'NBA', icon: <Icon.Basketball />, scanned: nbaLastScanned },
               { id: 'mlb', label: 'MLB', icon: <Icon.Baseball />,   scanned: mlbLastScanned },
+              { id: 'nhl', label: 'NHL', icon: <Icon.Hockey />,     scanned: nhlLastScanned },
             ].map(s => (
               <button key={s.id} onClick={() => switchPregameSport(s.id)} style={{ padding: '10px', borderRadius: '12px', border: `1px solid ${pregameSport === s.id ? '#7c3aed' : 'var(--border-color, #222)'}`, background: pregameSport === s.id ? 'rgba(124,58,237,0.15)' : 'var(--bg-secondary, #111)', color: pregameSport === s.id ? '#a78bfa' : 'var(--text-secondary, #888)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: '500', fontSize: '13px', transition: 'all 0.15s' }}>
                 {s.icon} {s.label}
@@ -994,17 +1053,18 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       {mode !== 'performance' && mode !== 'daily' && scanState === 'idle' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ width: '64px', height: '64px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}>
-            {mode === 'pregame' && pregameSport === 'mlb' ? <Icon.BaseballLg /> : <Icon.Basketball />}
+            {pregameSport === 'mlb' ? <Icon.BaseballLg /> : pregameSport === 'nhl' ? <Icon.Hockey /> : <Icon.Basketball />}
           </div>
           <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>Ready to scan</h3>
           <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px', lineHeight: '1.6' }}>
             {mode === 'halftime' ? 'Scan for games currently in progress.'
               : pregameSport === 'mlb' ? "Load today's MLB games and get prop recommendations."
+              : pregameSport === 'nhl' ? "Load today's NHL games and get prop recommendations."
               : "Load today's NBA games and get pre-game prop recommendations."}
           </p>
           <button onClick={scan} style={{ padding: '14px 32px', borderRadius: '14px', background: '#7c3aed', border: 'none', color: '#fff', fontWeight: '500', fontSize: '15px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
             <Icon.Zap />
-            {mode === 'halftime' ? 'Scan for Live Games' : pregameSport === 'mlb' ? 'Find MLB Games' : 'Find NBA Games'}
+            {mode === 'halftime' ? 'Scan for Live Games' : pregameSport === 'mlb' ? 'Find MLB Games' : pregameSport === 'nhl' ? 'Find NHL Games' : 'Find NBA Games'}
           </button>
         </div>
       )}
@@ -1014,7 +1074,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ width: '40px', height: '40px', margin: '0 auto 16px', border: '3px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
           <p style={{ color: 'var(--text-secondary, #888)', fontSize: '14px', margin: 0 }}>
-            {mode === 'halftime' ? 'Scanning for live games...' : pregameSport === 'mlb' ? 'Loading MLB games...' : 'Loading NBA games...'}
+            {mode === 'halftime' ? 'Scanning for live games...' : pregameSport === 'mlb' ? 'Loading MLB games...' : pregameSport === 'nhl' ? 'Loading NHL games...' : 'Loading NBA games...'}
           </p>
         </div>
       )}
@@ -1034,6 +1094,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
           <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px' }}>
             {mode === 'halftime' ? 'Check back when games are in progress.'
               : pregameSport === 'mlb' ? 'No MLB games scheduled for today.'
+              : pregameSport === 'nhl' ? 'No NHL games scheduled for today.'
               : 'No NBA games scheduled for today.'}
           </p>
           <button onClick={scan} style={{ padding: '10px 24px', borderRadius: '10px', background: 'transparent', border: '1px solid var(--border-color, #333)', color: 'var(--text-secondary, #888)', cursor: 'pointer', fontWeight: '500', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
