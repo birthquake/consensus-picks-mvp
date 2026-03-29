@@ -1,34 +1,35 @@
 // api/pregame/analyze-nhl.js
-// NHL pregame pick generator — mirrors analyze-mlb.js architecture
-// Skaters: shots on goal, points, goals, assists, hits, blocked shots
-// Goalies: saves
-// Position detection: G = goalie, everything else = skater
-// TOI used as a proxy for "is this player getting real ice time?"
+// NHL pregame pick generator
+//
+// ESPN gamelog structure (confirmed from logs):
+//   data.names[]  — column names at TOP LEVEL (not inside category)
+//   data.labels[] — abbreviations at top level
+//   category.events[].stats[] — parallel array of values
+//
+// Skater columns: goals, assists, points, plusMinus, penaltyMinutes,
+//   shotsTotal, shootingPct, powerPlayGoals, powerPlayAssists,
+//   shortHandedGoals, shortHandedAssists, gameWinningGoals,
+//   timeOnIcePerGame, production
+//
+// Goalie columns: gameStarted, timeOnIcePerGame, wins, losses, ties,
+//   overtimeLosses, goalsAgainst, avgGoalsAgainst, shotsAgainst,
+//   saves, savePct, shutouts
+//
+// NOTE: ESPN does not provide hits or blockedShots in the gamelog endpoint.
+// shotsTotal is used as the shots prop (total shot attempts).
 
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic();
 
-// ─── Sportsbook minimums ────────────────────────────────────────────────────
-const SPORTSBOOK_MINIMUMS = {
-  shotsOnGoal: 0.5,
-  points: 0.5,
-  goals: 0.5,
-  assists: 0.5,
-  hits: 0.5,
-  blockedShots: 0.5,
-  saves: 10.5,
-};
-
 // ─── ESPN helpers ────────────────────────────────────────────────────────────
 
 async function findTeamId(abbreviation) {
-  const url =
-    "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams";
+  const url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams";
   const res = await fetch(url);
   const data = await res.json();
-  const sports = data?.sports?.[0]?.leagues?.[0]?.teams ?? [];
-  const match = sports.find(
+  const teams = data?.sports?.[0]?.leagues?.[0]?.teams ?? [];
+  const match = teams.find(
     (t) => t.team.abbreviation?.toUpperCase() === abbreviation?.toUpperCase()
   );
   return match?.team?.id ?? null;
@@ -40,26 +41,21 @@ async function getTeamRoster(teamId) {
   const data = await res.json();
 
   const players = [];
-  const positionGroups = data?.athletes ?? [];
-
-  for (const group of positionGroups) {
-    const items = group?.items ?? [];
-    for (const p of items) {
+  for (const group of data?.athletes ?? []) {
+    for (const p of group?.items ?? []) {
       const posAbbr = p?.position?.abbreviation?.toUpperCase() ?? "";
       players.push({
         id: p.id,
         name: p.fullName,
         position: posAbbr,
         isGoalie: posAbbr === "G",
-        jersey: p.jersey,
       });
     }
   }
-
   return players;
 }
 
-// Parse TOI string "MM:SS" → decimal minutes
+// Parse "MM:SS" → decimal minutes
 function parseTOI(toiStr) {
   if (!toiStr || toiStr === "--") return 0;
   const parts = String(toiStr).split(":");
@@ -69,107 +65,56 @@ function parseTOI(toiStr) {
   return parseFloat(toiStr) || 0;
 }
 
-async function getPlayerGamelog(playerId, playerName) {
+async function getPlayerGamelog(playerId) {
   const url = `https://site.web.api.espn.com/apis/common/v3/sports/hockey/nhl/athletes/${playerId}/gamelog`;
   const res = await fetch(url);
   if (!res.ok) return null;
   const data = await res.json();
 
-  // Find regular season category
-  const seasonTypes = data?.seasonTypes ?? [];
+  // Column names live at TOP LEVEL of the response (not inside category)
+  const colNames = data.names ?? [];
+  if (colNames.length === 0) return null;
+
+  // Find first category with events
   let category = null;
-  for (const st of seasonTypes) {
-    const cats = st?.categories ?? [];
-    for (const c of cats) {
-      if (
-        c.type === "regularSeason" ||
-        c.name?.toLowerCase().includes("regular")
-      ) {
+  for (const st of data?.seasonTypes ?? []) {
+    for (const c of st?.categories ?? []) {
+      if ((c?.events ?? []).length > 0) {
         category = c;
         break;
       }
     }
     if (category) break;
   }
-  if (!category) {
-    // Fallback: use first category with events
-    for (const st of seasonTypes) {
-      for (const c of st?.categories ?? []) {
-        if ((c?.events ?? []).length > 0) {
-          category = c;
-          break;
-        }
-      }
-      if (category) break;
-    }
-  }
   if (!category) return null;
 
-  // DEBUG: find where column names live in NHL gamelog response
-  // TODO: remove once NHL column names are confirmed
-  const colNames = [];
-  if (playerName === 'Nikita Kucherov' || playerName === 'Andrei Vasilevskiy') {
-    console.log(`[analyze-nhl] TOP-LEVEL keys for ${playerName}:`, Object.keys(data));
-    console.log(`[analyze-nhl] data.labels:`, data.labels);
-    console.log(`[analyze-nhl] data.names:`, data.names);
-    console.log(`[analyze-nhl] data.abbreviations:`, data.abbreviations);
-    console.log(`[analyze-nhl] category.totals:`, JSON.stringify(category.totals)?.slice(0, 300));
-    // Check seasonTypes top level
-    const st0 = data.seasonTypes?.[0];
-    if (st0) {
-      console.log(`[analyze-nhl] seasonTypes[0] keys:`, Object.keys(st0));
-      console.log(`[analyze-nhl] seasonTypes[0].displayName:`, st0.displayName);
-      const cat0 = st0.categories?.[0];
-      if (cat0) {
-        console.log(`[analyze-nhl] categories[0] keys:`, Object.keys(cat0));
-        console.log(`[analyze-nhl] categories[0].totals sample:`, JSON.stringify(cat0.totals)?.slice(0, 200));
-      }
-    }
-    // Log full first event
-    const firstEvent = (category.events ?? [])[0];
-    if (firstEvent) {
-      console.log(`[analyze-nhl] first event full:`, JSON.stringify(firstEvent));
-    }
-  }
-
-  const events = category?.events ?? [];
+  const events = category.events ?? [];
   if (events.length === 0) return null;
 
-  const gamesPlayed = events.length;
-
-  // Build a helper to get a stat value by column name (case-insensitive, abbreviation fallback)
-  function getStat(statsArr, targetName, fallbackAbbr) {
-    const idx = colNames.findIndex(
-      (n) =>
-        n?.toLowerCase() === targetName?.toLowerCase() ||
-        n?.toLowerCase() === fallbackAbbr?.toLowerCase()
-    );
+  function getStat(statsArr, name) {
+    const idx = colNames.indexOf(name);
     if (idx === -1) return 0;
     return parseFloat(statsArr[idx]) || 0;
   }
 
-  // Aggregate per-game stats
   const gameStats = events.map((ev) => {
     const s = ev?.stats ?? [];
     return {
-      shotsOnGoal: getStat(s, "shotsOnGoal", "SOG"),
-      goals: getStat(s, "goals", "G"),
-      assists: getStat(s, "assists", "A"),
-      points: getStat(s, "points", "PTS"),
-      hits: getStat(s, "hits", "HIT"),
-      blockedShots: getStat(s, "blockedShots", "BLK"),
+      // Skater stats
+      goals:        getStat(s, "goals"),
+      assists:      getStat(s, "assists"),
+      points:       getStat(s, "points"),
+      shots:        getStat(s, "shotsTotal"),
+      toi:          parseTOI(s[colNames.indexOf("timeOnIcePerGame")]),
       // Goalie stats
-      saves: getStat(s, "saves", "SV"),
-      shotsAgainst: getStat(s, "shotsAgainst", "SA"),
-      goalsAgainst: getStat(s, "goalsAgainst", "GA"),
-      // TOI as decimal minutes
-      toi: parseTOI(
-        s[colNames.findIndex((n) => n?.toLowerCase().includes("toi"))]
-      ),
+      saves:        getStat(s, "saves"),
+      shotsAgainst: getStat(s, "shotsAgainst"),
+      goalsAgainst: getStat(s, "goalsAgainst"),
+      gameStarted:  getStat(s, "gameStarted"),
     };
   });
 
-  return { gamesPlayed, gameStats };
+  return { gamesPlayed: events.length, gameStats };
 }
 
 // ─── Projection builders ─────────────────────────────────────────────────────
@@ -184,39 +129,31 @@ function buildSkaterProjection(player, gameStats, gamesPlayed) {
     return { skipped: true, reason: `Only ${gamesPlayed} games in log` };
   }
 
-  // Filter out games with 0 TOI (healthy scratches / DNPs)
   const activeGames = gameStats.filter((g) => g.toi > 0);
   if (activeGames.length < 3) {
-    return { skipped: true, reason: "Not enough active game data" };
+    return { skipped: true, reason: "Not enough active games" };
   }
 
-  const recent = activeGames.slice(-5); // last 5 games
+  const recentTOI = avg(activeGames.slice(-5), "toi");
+  if (recentTOI < 8) {
+    return { skipped: true, reason: `Low TOI (avg ${recentTOI.toFixed(1)} min)` };
+  }
+
+  const recent = activeGames.slice(-5);
   const season = activeGames;
 
-  // 60/40 blend: recent weighted higher
   function blended(key) {
-    const r = avg(recent, key);
-    const s = avg(season, key);
-    return r * 0.6 + s * 0.4;
-  }
-
-  const avgTOI = avg(recent, "toi");
-
-  // Skip if player is getting very little ice time (likely 4th liner / scratch risk)
-  if (avgTOI < 8) {
-    return { skipped: true, reason: `Low TOI (avg ${avgTOI.toFixed(1)} min)` };
+    return avg(recent, key) * 0.6 + avg(season, key) * 0.4;
   }
 
   return {
     skipped: false,
     gamesPlayed,
-    avgTOI: avgTOI.toFixed(1),
-    shotsOnGoal: blended("shotsOnGoal"),
-    goals: blended("goals"),
+    avgTOI:  recentTOI.toFixed(1),
+    shots:   blended("shots"),
+    goals:   blended("goals"),
     assists: blended("assists"),
-    points: blended("points"),
-    hits: blended("hits"),
-    blockedShots: blended("blockedShots"),
+    points:  blended("points"),
     recentGames: recent.length,
     seasonGames: season.length,
   };
@@ -227,121 +164,108 @@ function buildGoalieProjection(player, gameStats, gamesPlayed) {
     return { skipped: true, reason: `Only ${gamesPlayed} games in log` };
   }
 
-  const activeGames = gameStats.filter((g) => g.shotsAgainst > 0);
-  if (activeGames.length < 2) {
-    return { skipped: true, reason: "Not enough starts in gamelog" };
+  const starts = gameStats.filter((g) => g.gameStarted >= 1 || g.shotsAgainst > 0);
+  if (starts.length < 2) {
+    return { skipped: true, reason: "Not enough starts" };
   }
 
-  const recent = activeGames.slice(-5);
-  const season = activeGames;
+  const recent = starts.slice(-5);
+  const season = starts;
 
   function blended(key) {
-    const r = avg(recent, key);
-    const s = avg(season, key);
-    return r * 0.55 + s * 0.45;
+    return avg(recent, key) * 0.55 + avg(season, key) * 0.45;
   }
+
+  const blendedSaves = blended("saves");
+  const blendedGA    = blended("goalsAgainst");
 
   return {
     skipped: false,
     gamesPlayed,
-    saves: blended("saves"),
+    starts:       starts.length,
+    saves:        blendedSaves,
     shotsAgainst: blended("shotsAgainst"),
-    goalsAgainst: blended("goalsAgainst"),
-    savePct: blended("saves") / (blended("saves") + blended("goalsAgainst") + 0.001),
-    recentGames: recent.length,
-    seasonGames: season.length,
+    goalsAgainst: blendedGA,
+    savePct:      blendedSaves / (blendedSaves + blendedGA + 0.001),
+    recentGames:  recent.length,
+    seasonGames:  season.length,
   };
 }
 
-// ─── Main pick generator ─────────────────────────────────────────────────────
+// ─── Pick generator ───────────────────────────────────────────────────────────
 
 async function generateNHLPicks(homeTeam, awayTeam, homeProjections, awayProjections) {
-  function formatSkater(p, proj) {
-    if (proj.skipped) return null;
-    const lines = [
-      `${p.name} (${p.position}, ${proj.gamesPlayed}GP, avg TOI ${proj.avgTOI}min)`,
-      `  SOG: ${proj.shotsOnGoal.toFixed(2)} | PTS: ${proj.points.toFixed(2)} | G: ${proj.goals.toFixed(2)} | A: ${proj.assists.toFixed(2)}`,
-      `  Hits: ${proj.hits.toFixed(2)} | Blocks: ${proj.blockedShots.toFixed(2)}`,
-    ];
-    return lines.join("\n");
-  }
-
-  function formatGoalie(p, proj) {
+  function skaterLine(p, proj) {
     if (proj.skipped) return null;
     return (
-      `${p.name} (G, ${proj.gamesPlayed}GP)\n` +
+      `${p.name} (${p.position}, ${proj.gamesPlayed}GP, TOI ${proj.avgTOI}min)\n` +
+      `  Shots: ${proj.shots.toFixed(2)} | PTS: ${proj.points.toFixed(2)} | G: ${proj.goals.toFixed(2)} | A: ${proj.assists.toFixed(2)}`
+    );
+  }
+
+  function goalieLine(p, proj) {
+    if (proj.skipped) return null;
+    return (
+      `${p.name} (G, ${proj.starts} starts)\n` +
       `  Saves: ${proj.saves.toFixed(1)} | SA: ${proj.shotsAgainst.toFixed(1)} | GA: ${proj.goalsAgainst.toFixed(2)} | SV%: ${(proj.savePct * 100).toFixed(1)}%`
     );
   }
 
-  const homeSkaterLines = homeProjections
-    .filter((x) => !x.player.isGoalie && !x.proj.skipped)
-    .map((x) => formatSkater(x.player, x.proj))
-    .filter(Boolean)
-    .join("\n");
-
-  const awaySkaterLines = awayProjections
-    .filter((x) => !x.player.isGoalie && !x.proj.skipped)
-    .map((x) => formatSkater(x.player, x.proj))
-    .filter(Boolean)
-    .join("\n");
-
-  const homeGoalieLines = homeProjections
-    .filter((x) => x.player.isGoalie && !x.proj.skipped)
-    .map((x) => formatGoalie(x.player, x.proj))
-    .filter(Boolean)
-    .join("\n");
-
-  const awayGoalieLines = awayProjections
-    .filter((x) => x.player.isGoalie && !x.proj.skipped)
-    .map((x) => formatGoalie(x.player, x.proj))
-    .filter(Boolean)
-    .join("\n");
+  function section(projections, goalies) {
+    return projections
+      .filter((x) => x.player.isGoalie === goalies && !x.proj.skipped)
+      .map((x) => goalies ? goalieLine(x.player, x.proj) : skaterLine(x.player, x.proj))
+      .filter(Boolean)
+      .join("\n") || "(none qualified)";
+  }
 
   const prompt = `You are an NHL prop bet analyst. Generate player prop picks for tonight's game.
 
 GAME: ${awayTeam} @ ${homeTeam}
 
 ${awayTeam} SKATERS:
-${awaySkaterLines || "(no qualified skaters)"}
+${section(awayProjections, false)}
 
 ${awayTeam} GOALIES:
-${awayGoalieLines || "(no qualified goalies)"}
+${section(awayProjections, true)}
 
 ${homeTeam} SKATERS:
-${homeSkaterLines || "(no qualified skaters)"}
+${section(homeProjections, false)}
 
 ${homeTeam} GOALIES:
-${homeGoalieLines || "(no qualified goalies)"}
+${section(homeProjections, true)}
 
-SPORTSBOOK MINIMUMS (only recommend if projection clears this):
-Skaters — shots on goal: 0.5 | points: 0.5 | goals: 0.5 | assists: 0.5 | hits: 0.5 | blocked shots: 0.5
-Goalies — saves: 10.5
+AVAILABLE PROPS AND TYPICAL LINES:
+- shots (total shot attempts): line usually 2.5–4.5
+- points: line usually 0.5
+- goals: line usually 0.5
+- assists: line usually 0.5
+- saves (goalies only): line usually 20.5–27.5
 
 INSTRUCTIONS:
-- Select the 4–8 highest-confidence props from ALL players
-- For skaters, shots on goal and points are the most commonly available markets — prioritize these
-- For goalies, saves is the primary market
-- Only recommend OVER bets when projection clearly exceeds the minimum line
-- Provide a 1-sentence rationale citing recent trends or TOI
-- Defensemen (D) typically produce more hits/blocks and fewer points — factor this in
-- Format EXACTLY as JSON array, no markdown, no preamble:
+- Pick 4–8 highest-confidence props across all players
+- Prioritize shots and points for skaters (most liquid markets)
+- Prioritize saves for goalies
+- Only recommend OVER when projection clearly clears the typical line
+- Defensemen produce fewer points but can have shot volume
+- 1-sentence rationale citing recent form or TOI
+- Return ONLY a JSON array, no markdown, no preamble:
 
 [
   {
     "player": "Player Name",
     "team": "ABBR",
-    "position": "LW",
-    "stat": "shotsOnGoal",
+    "position": "C",
+    "stat": "shots",
     "line": 2.5,
     "pick": "OVER",
-    "projection": 3.2,
+    "projection": 3.4,
     "confidence": "high",
     "rationale": "One sentence."
   }
 ]
 
-Stat name options: shotsOnGoal, points, goals, assists, hits, blockedShots, saves`;
+Stat name options: shots, points, goals, assists, saves`;
 
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
@@ -350,41 +274,34 @@ Stat name options: shotsOnGoal, points, goals, assists, hits, blockedShots, save
   });
 
   const raw = response.content[0].text.trim();
-
-  // Resilient JSON parse
   let picks = [];
   try {
     const jsonMatch = raw.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      picks = JSON.parse(jsonMatch[0]);
-    }
+    if (jsonMatch) picks = JSON.parse(jsonMatch[0]);
   } catch (e) {
     console.error("[analyze-nhl] JSON parse error:", e.message);
-    console.error("[analyze-nhl] Raw response:", raw.substring(0, 500));
+    console.error("[analyze-nhl] Raw:", raw.substring(0, 500));
   }
-
   return picks;
 }
 
-// ─── Request handler ──────────────────────────────────────────────────────────
+// ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { homeTeam, awayTeam, gameId } = req.body;
+  const { homeTeam, awayTeam, homeTeamId, awayTeamId } = req.body;
 
   if (!homeTeam || !awayTeam) {
     return res.status(400).json({ error: "homeTeam and awayTeam required" });
   }
 
   try {
-    // Get team IDs
-    const [homeId, awayId] = await Promise.all([
-      findTeamId(homeTeam),
-      findTeamId(awayTeam),
-    ]);
+    // Prefer IDs passed from scan to avoid abbreviation mismatch
+    const homeId = homeTeamId || await findTeamId(homeTeam);
+    const awayId = awayTeamId || await findTeamId(awayTeam);
 
     if (!homeId || !awayId) {
       return res.status(404).json({
@@ -392,15 +309,11 @@ export default async function handler(req, res) {
       });
     }
 
-    // Get rosters
     const [homeRoster, awayRoster] = await Promise.all([
       getTeamRoster(homeId),
       getTeamRoster(awayId),
     ]);
 
-    // Limit to top players to keep within time budget
-    // Goalies: take first 2 (starter + backup)
-    // Skaters: take first 18 (top 6 F + top 4 D per team is ~10, grab 18 to be safe)
     function trimRoster(roster) {
       const goalies = roster.filter((p) => p.isGoalie).slice(0, 2);
       const skaters = roster.filter((p) => !p.isGoalie).slice(0, 18);
@@ -410,21 +323,17 @@ export default async function handler(req, res) {
     const homePlayers = trimRoster(homeRoster);
     const awayPlayers = trimRoster(awayRoster);
 
-    // Fetch gamelogs in parallel
     async function fetchProjections(players) {
-      const results = await Promise.all(
+      return Promise.all(
         players.map(async (p) => {
-          const log = await getPlayerGamelog(p.id, p.name);
+          const log = await getPlayerGamelog(p.id);
           if (!log) return { player: p, proj: { skipped: true, reason: "No gamelog data" } };
-
           const proj = p.isGoalie
             ? buildGoalieProjection(p, log.gameStats, log.gamesPlayed)
             : buildSkaterProjection(p, log.gameStats, log.gamesPlayed);
-
           return { player: p, proj };
         })
       );
-      return results;
     }
 
     const [homeProjections, awayProjections] = await Promise.all([
@@ -432,27 +341,18 @@ export default async function handler(req, res) {
       fetchProjections(awayPlayers),
     ]);
 
-    // Generate picks
-    const picks = await generateNHLPicks(
-      homeTeam,
-      awayTeam,
-      homeProjections,
-      awayProjections
-    );
+    const picks = await generateNHLPicks(homeTeam, awayTeam, homeProjections, awayProjections);
 
-    // Build projections map for UI display
     const projectionsMap = {};
     for (const { player, proj } of [...homeProjections, ...awayProjections]) {
       if (!proj.skipped) {
-        projectionsMap[player.name] = {
-          ...proj,
-          position: player.position,
-          isGoalie: player.isGoalie,
-        };
+        projectionsMap[player.name] = { ...proj, position: player.position, isGoalie: player.isGoalie };
       }
     }
 
+    const allProj = [...homeProjections, ...awayProjections];
     return res.status(200).json({
+      success: true,
       picks,
       projections: projectionsMap,
       meta: {
@@ -460,12 +360,8 @@ export default async function handler(req, res) {
         awayTeam,
         homeRosterSize: homePlayers.length,
         awayRosterSize: awayPlayers.length,
-        qualifiedSkaters: [...homeProjections, ...awayProjections].filter(
-          (x) => !x.player.isGoalie && !x.proj.skipped
-        ).length,
-        qualifiedGoalies: [...homeProjections, ...awayProjections].filter(
-          (x) => x.player.isGoalie && !x.proj.skipped
-        ).length,
+        qualifiedSkaters: allProj.filter((x) => !x.player.isGoalie && !x.proj.skipped).length,
+        qualifiedGoalies: allProj.filter((x) => x.player.isGoalie  && !x.proj.skipped).length,
       },
     });
   } catch (err) {
