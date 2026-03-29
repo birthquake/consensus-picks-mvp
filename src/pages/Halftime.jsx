@@ -1043,7 +1043,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
             </div>
             <input type="range" min={2} max={4} step={1} value={legCount} onChange={e => setLegCount(Number(e.target.value))} className="leg-slider" />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-              {[2,3,4,5,6,7,8].map(n => <span key={n} style={{ fontSize: '10px', color: n === legCount ? '#a78bfa' : 'var(--text-secondary, #555)', fontWeight: n === legCount ? '500' : '400' }}>{n}</span>)}
+              {[2,3,4].map(n => <span key={n} style={{ fontSize: '10px', color: n === legCount ? '#a78bfa' : 'var(--text-secondary, #555)', fontWeight: n === legCount ? '500' : '400' }}>{n}</span>)}
             </div>
           </div>
         )}
