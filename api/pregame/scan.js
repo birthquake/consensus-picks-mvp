@@ -11,6 +11,7 @@
 const SPORT_CONFIG = {
   nba: { sport: 'basketball', league: 'nba', label: 'NBA' },
   mlb: { sport: 'baseball',   league: 'mlb', label: 'MLB' },
+  nhl: { sport: 'hockey',     league: 'nhl', label: 'NHL' },
 };
 
 async function fetchWithTimeout(url, ms = 5000) {
