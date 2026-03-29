@@ -602,7 +602,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
         body = { gameId: game.id, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount };
       } else if (isNHL) {
         endpoint = '/api/pregame/analyze-nhl';
-        body = { gameId: game.id, league: game.league, homeTeam: game.homeTeam.abbreviation, awayTeam: game.awayTeam.abbreviation, gameDate: game.gameDate || game.startTime, existingLegs, legCount };
+        body = { gameId: game.id, league: game.league, homeTeam: game.homeTeam.abbreviation, awayTeam: game.awayTeam.abbreviation,homeTeamId: game.homeTeam.id, awayTeamId: game.awayTeam.id, gameDate: game.gameDate || game.startTime, existingLegs, legCount };
       } else {
         endpoint = '/api/pregame/analyze';
         body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount, mode: analysisMode, oddsMap };
