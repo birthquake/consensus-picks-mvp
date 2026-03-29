@@ -274,14 +274,37 @@ Stat name options: shots, points, goals, assists, saves`;
   });
 
   const raw = response.content[0].text.trim();
-  let picks = [];
+  let rawPicks = [];
   try {
     const jsonMatch = raw.match(/\[[\s\S]*\]/);
-    if (jsonMatch) picks = JSON.parse(jsonMatch[0]);
+    if (jsonMatch) rawPicks = JSON.parse(jsonMatch[0]);
   } catch (e) {
     console.error("[analyze-nhl] JSON parse error:", e.message);
     console.error("[analyze-nhl] Raw:", raw.substring(0, 500));
   }
+
+  // Normalize to the shape PickCard expects
+  const confidenceToRating = { high: 4, medium: 3, low: 2 };
+
+  const picks = rawPicks.map((p) => {
+    const rating = confidenceToRating[p.confidence?.toLowerCase()] ?? 3;
+    return {
+      player:        p.player,
+      team:          p.team,
+      position:      p.position,
+      stat:          p.stat,
+      direction:     p.pick === 'OVER' ? 'Over' : 'Under',
+      threshold:     p.line,
+      hasRealLine:   false,
+      projection:    p.projection != null ? Math.round(p.projection * 100) / 100 : null,
+      rating,
+      rating_reason: `${p.confidence?.toUpperCase()} confidence — proj ${p.projection} vs line ${p.line}`,
+      rationale:     p.rationale,
+      risk_flags:    [],
+      sport:         'nhl',
+    };
+  });
+
   return picks;
 }
 
