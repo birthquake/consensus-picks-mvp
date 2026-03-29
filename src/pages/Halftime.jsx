@@ -1033,7 +1033,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
         {mode !== 'daily' && mode !== 'performance' && (
           <div style={{ marginTop: '14px', padding: '10px 14px', background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '12px' }}>
             <style>{`
-              .leg-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; outline: none; cursor: pointer; background: linear-gradient(to right, #7c3aed ${(legCount - 2) / 6 * 100}%, var(--border-color, #333) ${(legCount - 2) / 6 * 100}%); }
+              .leg-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; outline: none; cursor: pointer; background: linear-gradient(to right, #7c3aed ${(legCount - 2) / 6 * 100}%, var(--border-color, #333) ${(legCount - 2) / 2 * 100}%); }
               .leg-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #7c3aed; border: 2px solid #fff; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
               .leg-slider::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #7c3aed; border: 2px solid #fff; cursor: pointer; }
             `}</style>
