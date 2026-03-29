@@ -533,7 +533,7 @@ Return ONLY valid JSON, no markdown:
 Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad -- quality over quantity. Consider all stat types equally.`;
 
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5-20251001',
     max_tokens: 2500,
     messages: [{ role: 'user', content: prompt }],
   });
@@ -542,7 +542,21 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
   const jsonStart = raw.indexOf('{');
   const jsonEnd   = raw.lastIndexOf('}');
   const cleaned   = jsonStart !== -1 && jsonEnd !== -1 ? raw.substring(jsonStart, jsonEnd + 1) : raw;
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch (parseErr) {
+    console.error('[halftime/analyze] JSON parse error:', parseErr.message);
+    console.error('[halftime/analyze] Raw around error:', cleaned.substring(Math.max(0, parseInt(parseErr.message.match(/\d+/)?.[0] || 0) - 80), parseInt(parseErr.message.match(/\d+/)?.[0] || 0) + 80));
+    // Attempt to salvage by stripping control characters and invalid escapes
+    try {
+      const sanitized = cleaned
+        .replace(/[\u0000-\u001F\u007F]/g, ' ')
+        .replace(/([^\\])\\([^"\\/bfnrtu])/g, '$1 $2');
+      return JSON.parse(sanitized);
+    } catch {
+      throw new Error(`Claude response JSON parse failed: ${parseErr.message}`);
+    }
+  }
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
@@ -641,6 +655,7 @@ export default async function handler(req, res) {
         projection: pick.projection ?? blended,
         threshold:  pick.threshold  ?? null,
         hasRealLine: false,
+        model: 'claude-haiku-4-5-20251001',
       };
     });
 
