@@ -105,21 +105,30 @@ async function getPlayerGamelog(playerId, playerName) {
   }
   if (!category) return null;
 
-  // DEBUG: log raw category keys and column fields to find correct structure
+  // DEBUG: find where column names live in NHL gamelog response
   // TODO: remove once NHL column names are confirmed
-  const colNames = category.names ?? category.labels ?? category.displayNames ?? category.abbreviations ?? [];
+  const colNames = [];
   if (playerName === 'Nikita Kucherov' || playerName === 'Andrei Vasilevskiy') {
-    console.log(`[analyze-nhl] RAW category keys for ${playerName}:`, Object.keys(category));
-    console.log(`[analyze-nhl] category.names:`, category.names);
-    console.log(`[analyze-nhl] category.labels:`, category.labels);
-    console.log(`[analyze-nhl] category.displayNames:`, category.displayNames);
-    console.log(`[analyze-nhl] category.abbreviations:`, category.abbreviations);
-    console.log(`[analyze-nhl] category.type:`, category.type);
-    console.log(`[analyze-nhl] category.name:`, category.name);
+    console.log(`[analyze-nhl] TOP-LEVEL keys for ${playerName}:`, Object.keys(data));
+    console.log(`[analyze-nhl] data.labels:`, data.labels);
+    console.log(`[analyze-nhl] data.names:`, data.names);
+    console.log(`[analyze-nhl] data.abbreviations:`, data.abbreviations);
+    console.log(`[analyze-nhl] category.totals:`, JSON.stringify(category.totals)?.slice(0, 300));
+    // Check seasonTypes top level
+    const st0 = data.seasonTypes?.[0];
+    if (st0) {
+      console.log(`[analyze-nhl] seasonTypes[0] keys:`, Object.keys(st0));
+      console.log(`[analyze-nhl] seasonTypes[0].displayName:`, st0.displayName);
+      const cat0 = st0.categories?.[0];
+      if (cat0) {
+        console.log(`[analyze-nhl] categories[0] keys:`, Object.keys(cat0));
+        console.log(`[analyze-nhl] categories[0].totals sample:`, JSON.stringify(cat0.totals)?.slice(0, 200));
+      }
+    }
+    // Log full first event
     const firstEvent = (category.events ?? [])[0];
     if (firstEvent) {
-      console.log(`[analyze-nhl] first event keys:`, Object.keys(firstEvent));
-      console.log(`[analyze-nhl] first event stats sample:`, firstEvent.stats?.slice(0, 5));
+      console.log(`[analyze-nhl] first event full:`, JSON.stringify(firstEvent));
     }
   }
 
