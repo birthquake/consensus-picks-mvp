@@ -3,7 +3,6 @@
 //
 // ESPN gamelog structure (confirmed from logs):
 //   data.names[]  — column names at TOP LEVEL (not inside category)
-//   data.labels[] — abbreviations at top level
 //   category.events[].stats[] — parallel array of values
 //
 // Skater columns: goals, assists, points, plusMinus, penaltyMinutes,
@@ -14,9 +13,6 @@
 // Goalie columns: gameStarted, timeOnIcePerGame, wins, losses, ties,
 //   overtimeLosses, goalsAgainst, avgGoalsAgainst, shotsAgainst,
 //   saves, savePct, shutouts
-//
-// NOTE: ESPN does not provide hits or blockedShots in the gamelog endpoint.
-// shotsTotal is used as the shots prop (total shot attempts).
 
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -65,7 +61,7 @@ function parseTOI(toiStr) {
   return parseFloat(toiStr) || 0;
 }
 
-async function getPlayerGamelog(playerId) {
+async function getPlayerGamelog(playerId, playerName) {
   const url = `https://site.web.api.espn.com/apis/common/v3/sports/hockey/nhl/athletes/${playerId}/gamelog`;
   const res = await fetch(url);
   if (!res.ok) return null;
@@ -100,13 +96,11 @@ async function getPlayerGamelog(playerId) {
   const gameStats = events.map((ev) => {
     const s = ev?.stats ?? [];
     return {
-      // Skater stats
       goals:        getStat(s, "goals"),
       assists:      getStat(s, "assists"),
       points:       getStat(s, "points"),
       shots:        getStat(s, "shotsTotal"),
       toi:          parseTOI(s[colNames.indexOf("timeOnIcePerGame")]),
-      // Goalie stats
       saves:        getStat(s, "saves"),
       shotsAgainst: getStat(s, "shotsAgainst"),
       goalsAgainst: getStat(s, "goalsAgainst"),
@@ -114,7 +108,7 @@ async function getPlayerGamelog(playerId) {
     };
   });
 
-  return { gamesPlayed: events.length, gameStats };
+  return { gamesPlayed: events.length, gameStats, sampleEvent: events[0] };
 }
 
 // ─── Projection builders ─────────────────────────────────────────────────────
@@ -283,11 +277,10 @@ Stat name options: shots, points, goals, assists, saves`;
     console.error("[analyze-nhl] Raw:", raw.substring(0, 500));
   }
 
-  // Normalize to the shape PickCard expects
+  // Normalize to PickCard shape + hard filter projection vs line
   const confidenceToRating = { high: 4, medium: 3, low: 2 };
 
   const picks = rawPicks
-    // Hard filter: projection must actually clear the line for OVER picks
     .filter((p) => {
       if (p.pick === 'OVER')  return p.projection != null && p.projection > p.line;
       if (p.pick === 'UNDER') return p.projection != null && p.projection < p.line;
@@ -329,7 +322,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Prefer IDs passed from scan to avoid abbreviation mismatch
     const homeId = homeTeamId || await findTeamId(homeTeam);
     const awayId = awayTeamId || await findTeamId(awayTeam);
 
@@ -356,12 +348,12 @@ export default async function handler(req, res) {
     async function fetchProjections(players) {
       return Promise.all(
         players.map(async (p) => {
-          const log = await getPlayerGamelog(p.id);
+          const log = await getPlayerGamelog(p.id, p.name);
           if (!log) return { player: p, proj: { skipped: true, reason: "No gamelog data" } };
           const proj = p.isGoalie
             ? buildGoalieProjection(p, log.gameStats, log.gamesPlayed)
             : buildSkaterProjection(p, log.gameStats, log.gamesPlayed);
-          return { player: p, proj };
+          return { player: p, proj, _sampleEvent: log.sampleEvent };
         })
       );
     }
@@ -380,6 +372,11 @@ export default async function handler(req, res) {
       }
     }
 
+    // Grab a sample event from the first qualified player for structure inspection
+    const sampleLog = [...homeProjections, ...awayProjections]
+      .find(x => !x.proj.skipped);
+    const sampleEvent = sampleLog?._sampleEvent ?? null;
+
     const allProj = [...homeProjections, ...awayProjections];
     return res.status(200).json({
       success: true,
@@ -392,6 +389,7 @@ export default async function handler(req, res) {
         awayRosterSize: awayPlayers.length,
         qualifiedSkaters: allProj.filter((x) => !x.player.isGoalie && !x.proj.skipped).length,
         qualifiedGoalies: allProj.filter((x) => x.player.isGoalie  && !x.proj.skipped).length,
+        _sampleEvent: sampleEvent,
       },
     });
   } catch (err) {
