@@ -286,24 +286,31 @@ Stat name options: shots, points, goals, assists, saves`;
   // Normalize to the shape PickCard expects
   const confidenceToRating = { high: 4, medium: 3, low: 2 };
 
-  const picks = rawPicks.map((p) => {
-    const rating = confidenceToRating[p.confidence?.toLowerCase()] ?? 3;
-    return {
-      player:        p.player,
-      team:          p.team,
-      position:      p.position,
-      stat:          p.stat,
-      direction:     p.pick === 'OVER' ? 'Over' : 'Under',
-      threshold:     p.line,
-      hasRealLine:   false,
-      projection:    p.projection != null ? Math.round(p.projection * 100) / 100 : null,
-      rating,
-      rating_reason: `${p.confidence?.toUpperCase()} confidence — proj ${p.projection} vs line ${p.line}`,
-      rationale:     p.rationale,
-      risk_flags:    [],
-      sport:         'nhl',
-    };
-  });
+  const picks = rawPicks
+    // Hard filter: projection must actually clear the line for OVER picks
+    .filter((p) => {
+      if (p.pick === 'OVER')  return p.projection != null && p.projection > p.line;
+      if (p.pick === 'UNDER') return p.projection != null && p.projection < p.line;
+      return false;
+    })
+    .map((p) => {
+      const rating = confidenceToRating[p.confidence?.toLowerCase()] ?? 3;
+      return {
+        player:        p.player,
+        team:          p.team,
+        position:      p.position,
+        stat:          p.stat,
+        direction:     p.pick === 'OVER' ? 'Over' : 'Under',
+        threshold:     p.line,
+        hasRealLine:   false,
+        projection:    p.projection != null ? Math.round(p.projection * 100) / 100 : null,
+        rating,
+        rating_reason: `${p.confidence?.toUpperCase()} confidence — proj ${p.projection} vs line ${p.line}`,
+        rationale:     p.rationale,
+        risk_flags:    [],
+        sport:         'nhl',
+      };
+    });
 
   return picks;
 }
