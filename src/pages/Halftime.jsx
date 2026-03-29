@@ -39,6 +39,20 @@ const Icon = {
       <line x1="2" y1="12" x2="22" y2="12"/>
     </svg>
   ),
+  Baseball: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <circle cx="12" cy="12" r="10"/>
+      <path d="M5 12c2-2 4-3 7-3s5 1 7 3"/>
+      <path d="M5 12c2 2 4 3 7 3s5-1 7-3"/>
+    </svg>
+  ),
+  BaseballLg: () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <circle cx="12" cy="12" r="10"/>
+      <path d="M5 12c2-2 4-3 7-3s5 1 7 3"/>
+      <path d="M5 12c2 2 4 3 7 3s5-1 7-3"/>
+    </svg>
+  ),
   Zap: () => (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
@@ -135,7 +149,6 @@ const Icon = {
     </svg>
   ),
 };
-
 // ── Star Rating ───────────────────────────────────────────────────────────────
 function StarRating({ rating }) {
   const color = rating >= 4 ? '#4ade80' : rating >= 3 ? '#fbbf24' : '#f87171';
@@ -171,6 +184,9 @@ function PickCard({ pick, isSelected, onToggle, index }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontWeight: '500', fontSize: '15px', color: 'var(--text-primary, #fff)' }}>{pick.player}</span>
             <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', borderRadius: '20px', letterSpacing: '0.5px' }}>{pick.team}</span>
+            {pick.sport === 'mlb' && (
+              <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 6px', background: 'rgba(251,146,60,0.15)', color: '#fb923c', borderRadius: '20px' }}>MLB</span>
+            )}
           </div>
           <div style={{ marginTop: '3px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '13px', color: '#60a5fa', fontWeight: '500' }}>
@@ -221,15 +237,14 @@ function PickCard({ pick, isSelected, onToggle, index }) {
 
 // ── Daily Card ────────────────────────────────────────────────────────────────
 function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }) {
-  const state        = cache?.state        || 'idle';
-  const allPicks     = cache?.allPicks     || [];
-  const filteredPicks = cache?.filteredPicks || [];
+  const state         = cache?.state         || 'idle';
+  const nbaPicks      = cache?.nbaPicks      || [];
+  const mlbPicks      = cache?.mlbPicks      || [];
   const activeFilters = cache?.activeFilters instanceof Set ? cache.activeFilters : new Set(cache?.activeFilters || []);
-  const [copied, setCopied] = useState(false);
 
-  const setState        = (v) => onCacheUpdate(c => ({ ...c, state: v }));
-  const setAllPicks     = (v) => onCacheUpdate(c => ({ ...c, allPicks: v, filteredPicks: v }));
-  const setFilteredPicks = (v) => onCacheUpdate(c => ({ ...c, filteredPicks: v }));
+  const setState         = (v) => onCacheUpdate(c => ({ ...c, state: v }));
+  const setNbaPicks      = (v) => onCacheUpdate(c => ({ ...c, nbaPicks: v }));
+  const setMlbPicks      = (v) => onCacheUpdate(c => ({ ...c, mlbPicks: v }));
   const setActiveFilters = (v) => onCacheUpdate(c => ({ ...c, activeFilters: v }));
 
   const FILTERS = [
@@ -247,26 +262,34 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
     });
   };
 
+  const filteredNba = applyFilters(nbaPicks, activeFilters);
+  const filteredMlb = applyFilters(mlbPicks, activeFilters);
+  const totalPicks  = nbaPicks.length + mlbPicks.length;
+
   const toggleFilter = (id) => {
     setActiveFilters(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
-      setFilteredPicks(applyFilters(allPicks, next));
       return next;
     });
   };
 
   const load = async () => {
     setState('loading');
-    setAllPicks([]);
+    setNbaPicks([]);
+    setMlbPicks([]);
     setActiveFilters(new Set());
     try {
-      const scanRes = await fetch('/api/pregame/scan?sport=nba');
-      const scanData = await scanRes.json();
-      if (!scanData.success || !scanData.games?.length) { setState('empty'); return; }
+      const [nbaScan, mlbScan] = await Promise.all([
+        fetch('/api/pregame/scan?sport=nba').then(r => r.json()).catch(() => null),
+        fetch('/api/pregame/scan?sport=mlb').then(r => r.json()).catch(() => null),
+      ]);
 
-      const gameResults = await Promise.all(
-        scanData.games.map(game =>
+      const nbaGames = nbaScan?.success ? nbaScan.games || [] : [];
+      const mlbGames = mlbScan?.success ? mlbScan.games || [] : [];
+
+      const [nbaResults, mlbResults] = await Promise.all([
+        Promise.all(nbaGames.map(game =>
           fetch('/api/pregame/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -274,44 +297,88 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
               gameId: game.id, sport: game.sport, league: game.league,
               homeTeam: game.homeTeam, awayTeam: game.awayTeam,
               gameDate: game.gameDate || game.startTime,
-              mode: 'daily', oddsMap: scanData.oddsMap || {},
+              mode: 'daily', oddsMap: {},
             }),
           }).then(r => r.json()).catch(() => null)
-        )
-      );
+        )),
+        Promise.all(mlbGames.map(game =>
+          fetch('/api/pregame/analyze-mlb', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              gameId: game.id, league: game.league,
+              homeTeam: game.homeTeam, awayTeam: game.awayTeam,
+              gameDate: game.gameDate || game.startTime,
+              mode: 'daily',
+            }),
+          }).then(r => r.json()).catch(() => null)
+        )),
+      ]);
 
-      const picks = [];
-      const seen = new Set();
-      for (const result of gameResults) {
-        if (!result?.success || !result.picks?.length) continue;
-        for (const pick of result.picks) {
-          const key = `${pick.player}:${pick.stat}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          picks.push(pick);
+      const collectPicks = (results, sport) => {
+        const picks = [];
+        const seen  = new Set();
+        for (const result of results) {
+          if (!result?.success || !result.picks?.length) continue;
+          for (const pick of result.picks) {
+            const key = `${pick.player}:${pick.stat}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            picks.push({ ...pick, sport });
+          }
         }
-      }
-      picks.sort((a, b) => b.rating !== a.rating ? b.rating - a.rating : b.edge - a.edge);
-      const top = picks.slice(0, Math.max(legCount * 2, 10));
-      setAllPicks(top);
-      setState(top.length > 0 ? 'done' : 'empty');
+        picks.sort((a, b) => b.rating !== a.rating ? b.rating - a.rating : (b.edge ?? 0) - (a.edge ?? 0));
+        return picks.slice(0, Math.max(legCount * 2, 10));
+      };
+
+      const nba = collectPicks(nbaResults, 'nba');
+      const mlb = collectPicks(mlbResults, 'mlb');
+      setNbaPicks(nba);
+      setMlbPicks(mlb);
+      setState(nba.length > 0 || mlb.length > 0 ? 'done' : 'empty');
     } catch (err) {
       console.error('[DailyCard]', err);
       setState('error');
     }
   };
 
-  const copyParlay = () => {
-    const legs = selectedLegs.filter(l => !l.gameId);
-    const text = legs.map(l => `${l.player} Over ${l.threshold} ${l.stat} (${l.rating}★ | proj: ${l.projection})`).join('\n');
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
   const ratingColor = (r) => r >= 4 ? '#4ade80' : r >= 3 ? '#fbbf24' : '#f87171';
-  const topRating = allPicks.length ? Math.max(...allPicks.map(p => p.rating)) : 0;
-  const avgRating = allPicks.length ? (allPicks.reduce((s, p) => s + p.rating, 0) / allPicks.length).toFixed(1) : '0';
+  const topRating   = totalPicks ? Math.max(...[...nbaPicks, ...mlbPicks].map(p => p.rating)) : 0;
+  const avgRating   = totalPicks ? ([...nbaPicks, ...mlbPicks].reduce((s, p) => s + p.rating, 0) / totalPicks).toFixed(1) : '0';
+
+  const renderPickRow = (pick, i) => {
+    const key        = `${pick.player}:${pick.stat}`;
+    const isSelected = selectedLegs.some(l => l.key === key);
+    return (
+      <div key={key} style={{ background: isSelected ? 'rgba(124,58,237,0.08)' : 'var(--bg-secondary, #111)', border: `1px solid ${isSelected ? '#7c3aed' : 'var(--border-color, #222)'}`, borderRadius: '16px', padding: '14px 16px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px', animation: `fadeUp 0.25s ease ${i * 0.04}s both` }}>
+        <div style={{ width: '42px', height: '42px', borderRadius: '12px', flexShrink: 0, background: `${ratingColor(pick.rating)}15`, border: `1px solid ${ratingColor(pick.rating)}30`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ fontSize: '17px', fontWeight: '500', color: ratingColor(pick.rating), lineHeight: 1 }}>{pick.rating}</span>
+          <span style={{ fontSize: '9px', color: ratingColor(pick.rating), opacity: 0.8 }}>★</span>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '14px', fontWeight: '500', color: 'var(--text-primary, #fff)' }}>{pick.player}</span>
+            <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '10px', background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', fontWeight: '500' }}>{pick.team}</span>
+          </div>
+          <div style={{ marginTop: '2px', fontSize: '12px', color: '#60a5fa', fontWeight: '500' }}>
+            Over {pick.hasRealLine ? pick.realLine : pick.threshold} {pick.stat}
+            {pick.hasRealLine && <span style={{ fontSize: '10px', fontWeight: '500', marginLeft: '5px', padding: '1px 5px', borderRadius: '6px', background: 'rgba(74,222,128,0.12)', color: '#4ade80' }}>{pick.book || 'live'}</span>}
+            <span style={{ color: 'var(--text-secondary, #777)', fontWeight: '400', marginLeft: '6px' }}>proj {pick.projection}</span>
+          </div>
+          <div style={{ marginTop: '3px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {pick.belowFloor && <span style={{ fontSize: '10px', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Icon.Lock /> below floor</span>}
+            {pick.trend === 'up' && <span style={{ fontSize: '10px', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Icon.TrendUp /> trending up</span>}
+            {pick.isBackToBack && <span style={{ fontSize: '10px', color: '#fbbf24', background: 'rgba(251,191,36,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Icon.Warning /> b2b</span>}
+          </div>
+        </div>
+        <div style={{ flexShrink: 0 }}>
+          <button onClick={() => onToggleLeg({ ...pick, key })} style={{ background: isSelected ? '#7c3aed' : 'transparent', border: `1px solid ${isSelected ? '#7c3aed' : 'var(--border-color, #333)'}`, borderRadius: '10px', color: isSelected ? '#fff' : 'var(--text-secondary, #888)', padding: '6px 12px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', transition: 'all 0.15s' }}>
+            {isSelected ? '✓' : '+ Add'}
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -325,8 +392,8 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ width: '36px', height: '36px', margin: '0 auto 14px', border: '3px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-          <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>Analyzing today's full slate...</p>
-          <p style={{ color: 'var(--text-secondary, #555)', fontSize: '11px', marginTop: '6px' }}>This takes 15–20 seconds for all games</p>
+          <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>Analyzing today's full slate — NBA + MLB...</p>
+          <p style={{ color: 'var(--text-secondary, #555)', fontSize: '11px', marginTop: '6px' }}>This takes 20–30 seconds for all games</p>
         </div>
       )}
 
@@ -350,10 +417,10 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
           <div style={{ background: 'linear-gradient(135deg, #4c1d95, #5b21b6)', borderRadius: '16px', padding: '16px 18px', marginBottom: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
               <div style={{ width: '7px', height: '7px', background: '#4ade80', borderRadius: '50%' }}/>
-              <span style={{ fontSize: '12px', color: '#c4b5fd', fontWeight: '500' }}>{allPicks.length} picks today</span>
+              <span style={{ fontSize: '12px', color: '#c4b5fd', fontWeight: '500' }}>{totalPicks} picks today</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }}>
-              <div><p style={{ fontSize: '11px', color: '#c4b5fd', margin: '0 0 2px' }}>Picks</p><p style={{ fontSize: '22px', fontWeight: '500', color: '#fff', margin: 0 }}>{allPicks.length}</p></div>
+              <div><p style={{ fontSize: '11px', color: '#c4b5fd', margin: '0 0 2px' }}>Picks</p><p style={{ fontSize: '22px', fontWeight: '500', color: '#fff', margin: 0 }}>{totalPicks}</p></div>
               <div><p style={{ fontSize: '11px', color: '#c4b5fd', margin: '0 0 2px' }}>Top rating</p><p style={{ fontSize: '22px', fontWeight: '500', color: '#fff', margin: 0 }}>{topRating} ★</p></div>
               <div><p style={{ fontSize: '11px', color: '#c4b5fd', margin: '0 0 2px' }}>Avg rating</p><p style={{ fontSize: '22px', fontWeight: '500', color: '#fff', margin: 0 }}>{avgRating} ★</p></div>
             </div>
@@ -374,60 +441,51 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
           </div>
 
           {/* Header row */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
             <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>
-              {filteredPicks.length} pick{filteredPicks.length !== 1 ? 's' : ''}{activeFilters.size > 0 ? ' (filtered)' : ''}
+              {filteredNba.length + filteredMlb.length} pick{filteredNba.length + filteredMlb.length !== 1 ? 's' : ''}{activeFilters.size > 0 ? ' (filtered)' : ''}
             </span>
             <button onClick={load} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <Icon.Refresh /> Refresh
             </button>
           </div>
 
-          {filteredPicks.length === 0 && (
+          {/* NBA section */}
+          {filteredNba.length > 0 && (
+            <div style={{ marginBottom: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid var(--border-color, #1a1a1a)' }}>
+                <Icon.Basketball />
+                <span style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-secondary, #888)', letterSpacing: '0.5px' }}>
+                  NBA — {filteredNba.length} pick{filteredNba.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              {filteredNba.map((pick, i) => renderPickRow(pick, i))}
+            </div>
+          )}
+
+          {/* MLB section */}
+          {filteredMlb.length > 0 && (
+            <div style={{ marginBottom: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid var(--border-color, #1a1a1a)' }}>
+                <Icon.Baseball />
+                <span style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-secondary, #888)', letterSpacing: '0.5px' }}>
+                  MLB — {filteredMlb.length} pick{filteredMlb.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              {filteredMlb.map((pick, i) => renderPickRow(pick, i))}
+            </div>
+          )}
+
+          {filteredNba.length === 0 && filteredMlb.length === 0 && (
             <div style={{ textAlign: 'center', padding: '32px 24px' }}>
               <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px' }}>No picks match the active filters.</p>
             </div>
           )}
-
-          {filteredPicks.map((pick, i) => {
-            const key = `${pick.player}:${pick.stat}`;
-            const isSelected = selectedLegs.some(l => l.key === key);
-            return (
-              <div key={key} style={{ background: isSelected ? 'rgba(124,58,237,0.08)' : 'var(--bg-secondary, #111)', border: `1px solid ${isSelected ? '#7c3aed' : 'var(--border-color, #222)'}`, borderRadius: '16px', padding: '14px 16px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px', animation: `fadeUp 0.25s ease ${i * 0.04}s both` }}>
-                <div style={{ width: '42px', height: '42px', borderRadius: '12px', flexShrink: 0, background: `${ratingColor(pick.rating)}15`, border: `1px solid ${ratingColor(pick.rating)}30`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ fontSize: '17px', fontWeight: '500', color: ratingColor(pick.rating), lineHeight: 1 }}>{pick.rating}</span>
-                  <span style={{ fontSize: '9px', color: ratingColor(pick.rating), opacity: 0.8 }}>★</span>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '14px', fontWeight: '500', color: 'var(--text-primary, #fff)' }}>{pick.player}</span>
-                    <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '10px', background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', fontWeight: '500' }}>{pick.team}</span>
-                  </div>
-                  <div style={{ marginTop: '2px', fontSize: '12px', color: '#60a5fa', fontWeight: '500' }}>
-                    Over {pick.hasRealLine ? pick.realLine : pick.threshold} {pick.stat}
-                    {pick.hasRealLine && <span style={{ fontSize: '10px', fontWeight: '500', marginLeft: '5px', padding: '1px 5px', borderRadius: '6px', background: 'rgba(74,222,128,0.12)', color: '#4ade80' }}>{pick.book || 'live'}</span>}
-                    <span style={{ color: 'var(--text-secondary, #777)', fontWeight: '400', marginLeft: '6px' }}>proj {pick.projection} · {pick.game}</span>
-                  </div>
-                  <div style={{ marginTop: '3px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    {pick.belowFloor && <span style={{ fontSize: '10px', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Icon.Lock /> below floor</span>}
-                    {pick.trend === 'up' && <span style={{ fontSize: '10px', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Icon.TrendUp /> trending up</span>}
-                    {pick.isBackToBack && <span style={{ fontSize: '10px', color: '#fbbf24', background: 'rgba(251,191,36,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Icon.Warning /> b2b</span>}
-                  </div>
-                </div>
-                <div style={{ flexShrink: 0 }}>
-                  <button onClick={() => onToggleLeg({ ...pick, key })} style={{ background: isSelected ? '#7c3aed' : 'transparent', border: `1px solid ${isSelected ? '#7c3aed' : 'var(--border-color, #333)'}`, borderRadius: '10px', color: isSelected ? '#fff' : 'var(--text-secondary, #888)', padding: '6px 12px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', transition: 'all 0.15s' }}>
-                    {isSelected ? '✓' : '+ Add'}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
         </div>
       )}
     </div>
   );
 }
-
 // ── Performance Stats ─────────────────────────────────────────────────────────
 function PerformanceStats() {
   const [stats, setStats] = useState(null);
@@ -463,26 +521,41 @@ function PerformanceStats() {
   if (!stats) return null;
 
   const { summary, by_rating, by_stat, projection_accuracy, insights } = stats;
+
   if (summary.graded === 0) return (
     <div style={{ textAlign: 'center', padding: '48px 24px' }}>
-      <div style={{ width: '48px', height: '48px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}><Icon.BarChart /></div>
+      <div style={{ width: '48px', height: '48px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}>
+        <Icon.BarChart />
+      </div>
       <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>No graded picks yet</h3>
-      <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.6' }}>Run some analyses and check back after the games finish. The cron job grades picks every 2 hours.</p>
-      <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--text-secondary, #666)' }}>{summary.pending} pick{summary.pending !== 1 ? 's' : ''} pending grading</p>
+      <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.6' }}>
+        Run some analyses and check back after the games finish. The cron job grades picks every 2 hours.
+      </p>
+      <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--text-secondary, #666)' }}>
+        {summary.pending} pick{summary.pending !== 1 ? 's' : ''} pending grading
+      </p>
     </div>
   );
 
-  const hitRateColor = (rate) => { if (rate == null) return 'var(--text-secondary, #888)'; if (rate >= 60) return '#4ade80'; if (rate >= 50) return '#fbbf24'; return '#f87171'; };
+  const hitRateColor = (rate) => {
+    if (rate == null) return 'var(--text-secondary, #888)';
+    if (rate >= 60) return '#4ade80';
+    if (rate >= 50) return '#fbbf24';
+    return '#f87171';
+  };
   const starLabel = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
 
   return (
     <div style={{ paddingBottom: '24px' }}>
       <div style={{ display: 'flex', gap: '6px', marginBottom: '20px' }}>
         {[7, 14, 30, 90].map(d => (
-          <button key={d} onClick={() => setDays(d)} style={{ padding: '6px 14px', borderRadius: '10px', border: 'none', background: days === d ? '#7c3aed' : 'var(--bg-secondary, #111)', color: days === d ? '#fff' : 'var(--text-secondary, #888)', fontWeight: '500', fontSize: '12px', cursor: 'pointer', outline: days === d ? 'none' : '1px solid var(--border-color, #222)' }}>{d}d</button>
+          <button key={d} onClick={() => setDays(d)} style={{ padding: '6px 14px', borderRadius: '10px', border: 'none', background: days === d ? '#7c3aed' : 'var(--bg-secondary, #111)', color: days === d ? '#fff' : 'var(--text-secondary, #888)', fontWeight: '500', fontSize: '12px', cursor: 'pointer', outline: days === d ? 'none' : '1px solid var(--border-color, #222)' }}>
+            {d}d
+          </button>
         ))}
         <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--text-secondary, #555)', alignSelf: 'center' }}>Last {days} days</span>
       </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '20px' }}>
         {[
           { label: 'Hit Rate', value: summary.hit_rate != null ? `${summary.hit_rate}%` : '—', color: hitRateColor(summary.hit_rate) },
@@ -495,46 +568,59 @@ function PerformanceStats() {
           </div>
         ))}
       </div>
+
       {summary.recent_streak && (
         <div style={{ background: 'rgba(124,58,237,0.06)', border: '1px solid rgba(124,58,237,0.2)', borderRadius: '12px', padding: '10px 14px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>Last 10 picks</span>
           <span style={{ fontSize: '14px', fontWeight: '500', color: '#a78bfa' }}>{summary.recent_streak}</span>
         </div>
       )}
+
       <div style={{ background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '14px', padding: '16px', marginBottom: '14px' }}>
         <div style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-secondary, #888)', marginBottom: '12px', letterSpacing: '0.5px' }}>HIT RATE BY STAR RATING</div>
         {[5,4,3,2,1].map(r => {
-          const d = by_rating?.[r]; if (!d || d.total === 0) return null;
+          const d = by_rating?.[r];
+          if (!d || d.total === 0) return null;
           const pct = d.hitRate ?? 0;
           return (
             <div key={r} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
               <span style={{ fontSize: '12px', color: '#fbbf24', width: '60px', flexShrink: 0 }}>{starLabel(r)}</span>
-              <div style={{ flex: 1, height: '6px', background: 'var(--border-color, #222)', borderRadius: '3px' }}><div style={{ height: '6px', borderRadius: '3px', width: `${pct}%`, background: hitRateColor(pct), transition: 'width 0.4s ease' }}/></div>
+              <div style={{ flex: 1, height: '6px', background: 'var(--border-color, #222)', borderRadius: '3px' }}>
+                <div style={{ height: '6px', borderRadius: '3px', width: `${pct}%`, background: hitRateColor(pct), transition: 'width 0.4s ease' }}/>
+              </div>
               <span style={{ fontSize: '13px', fontWeight: '500', color: hitRateColor(pct), width: '36px', textAlign: 'right' }}>{pct}%</span>
               <span style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', width: '32px', textAlign: 'right' }}>{d.hits}/{d.total}</span>
             </div>
           );
         })}
       </div>
+
       <div style={{ background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '14px', padding: '16px', marginBottom: '14px' }}>
         <div style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-secondary, #888)', marginBottom: '12px', letterSpacing: '0.5px' }}>HIT RATE BY STAT</div>
         {Object.entries(by_stat || {}).sort((a,b) => (b[1].hitRate||0) - (a[1].hitRate||0)).map(([stat, d]) => {
-          if (d.total === 0) return null; const pct = d.hitRate ?? 0;
+          if (d.total === 0) return null;
+          const pct = d.hitRate ?? 0;
           return (
             <div key={stat} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
               <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', width: '72px', flexShrink: 0 }}>{stat}</span>
-              <div style={{ flex: 1, height: '6px', background: 'var(--border-color, #222)', borderRadius: '3px' }}><div style={{ height: '6px', borderRadius: '3px', width: `${pct}%`, background: hitRateColor(pct), transition: 'width 0.4s ease' }}/></div>
+              <div style={{ flex: 1, height: '6px', background: 'var(--border-color, #222)', borderRadius: '3px' }}>
+                <div style={{ height: '6px', borderRadius: '3px', width: `${pct}%`, background: hitRateColor(pct), transition: 'width 0.4s ease' }}/>
+              </div>
               <span style={{ fontSize: '13px', fontWeight: '500', color: hitRateColor(pct), width: '36px', textAlign: 'right' }}>{pct}%</span>
               <span style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', width: '32px', textAlign: 'right' }}>{d.hits}/{d.total}</span>
             </div>
           );
         })}
       </div>
+
       {projection_accuracy?.picks_with_data > 0 && (
         <div style={{ background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '14px', padding: '16px', marginBottom: '14px' }}>
           <div style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-secondary, #888)', marginBottom: '12px', letterSpacing: '0.5px' }}>PROJECTION ACCURACY</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-            {[{ label: 'Avg Error', value: projection_accuracy.avg_absolute_error != null ? `±${projection_accuracy.avg_absolute_error}` : '—' }, { label: 'Avg Error %', value: projection_accuracy.avg_error_pct != null ? `±${projection_accuracy.avg_error_pct}%` : '—' }].map(item => (
+            {[
+              { label: 'Avg Error', value: projection_accuracy.avg_absolute_error != null ? `±${projection_accuracy.avg_absolute_error}` : '—' },
+              { label: 'Avg Error %', value: projection_accuracy.avg_error_pct != null ? `±${projection_accuracy.avg_error_pct}%` : '—' },
+            ].map(item => (
               <div key={item.label} style={{ background: 'var(--bg-primary, #000)', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
                 <div style={{ fontSize: '18px', fontWeight: '500', color: 'var(--text-primary, #fff)' }}>{item.value}</div>
                 <div style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', marginTop: '3px' }}>{item.label}</div>
@@ -543,43 +629,76 @@ function PerformanceStats() {
           </div>
         </div>
       )}
+
       {(insights?.best_stat || insights?.worst_stat) && (
         <div style={{ background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '14px', padding: '16px' }}>
           <div style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-secondary, #888)', marginBottom: '12px', letterSpacing: '0.5px' }}>INSIGHTS</div>
-          {insights.best_stat && <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}><span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Strongest stat category</span><span style={{ fontSize: '13px', fontWeight: '500', color: '#4ade80' }}>{insights.best_stat.stat} ({insights.best_stat.hitRate}%)</span></div>}
-          {insights.worst_stat && <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}><span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Weakest stat category</span><span style={{ fontSize: '13px', fontWeight: '500', color: '#f87171' }}>{insights.worst_stat.stat} ({insights.worst_stat.hitRate}%)</span></div>}
-          {insights.best_rating && <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Most reliable rating tier</span><span style={{ fontSize: '13px', fontWeight: '500', color: '#fbbf24' }}>{starLabel(parseInt(insights.best_rating))}</span></div>}
+          {insights.best_stat && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Strongest stat category</span>
+              <span style={{ fontSize: '13px', fontWeight: '500', color: '#4ade80' }}>{insights.best_stat.stat} ({insights.best_stat.hitRate}%)</span>
+            </div>
+          )}
+          {insights.worst_stat && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Weakest stat category</span>
+              <span style={{ fontSize: '13px', fontWeight: '500', color: '#f87171' }}>{insights.worst_stat.stat} ({insights.worst_stat.hitRate}%)</span>
+            </div>
+          )}
+          {insights.best_rating && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Most reliable rating tier</span>
+              <span style={{ fontSize: '13px', fontWeight: '500', color: '#fbbf24' }}>{starLabel(parseInt(insights.best_rating))}</span>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
-
 // ── Game Card ─────────────────────────────────────────────────────────────────
 function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime', oddsMap = {}, cachedAnalysis, onAnalysisUpdate }) {
-  // Use cached analysis if available, otherwise start idle
-  const [state, setState] = useState(cachedAnalysis ? 'done' : 'idle');
-  const [analysis, setAnalysis] = useState(cachedAnalysis || null);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [state, setState]               = useState(cachedAnalysis ? 'done' : 'idle');
+  const [analysis, setAnalysis]         = useState(cachedAnalysis || null);
+  const [errorMsg, setErrorMsg]         = useState('');
   const [analysisMode, setAnalysisMode] = useState('picks');
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed]       = useState(false);
+
+  const isMLB = game.league === 'mlb';
 
   const analyze = useCallback(async (existingLegs = []) => {
     setState('loading');
     setErrorMsg('');
     setCollapsed(false);
     try {
-      const endpoint = mode === 'halftime' ? '/api/halftime/analyze' : '/api/pregame/analyze';
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let endpoint, body;
+      if (mode === 'halftime') {
+        endpoint = '/api/halftime/analyze';
+        body = {
           gameId: game.id, sport: game.sport, league: game.league,
           homeTeam: game.homeTeam, awayTeam: game.awayTeam,
           gameDate: game.gameDate || game.startTime,
           existingLegs, legCount, mode: analysisMode, oddsMap,
-        }),
-      });
+        };
+      } else if (isMLB) {
+        endpoint = '/api/pregame/analyze-mlb';
+        body = {
+          gameId: game.id, league: game.league,
+          homeTeam: game.homeTeam, awayTeam: game.awayTeam,
+          gameDate: game.gameDate || game.startTime,
+          existingLegs, legCount,
+        };
+      } else {
+        endpoint = '/api/pregame/analyze';
+        body = {
+          gameId: game.id, sport: game.sport, league: game.league,
+          homeTeam: game.homeTeam, awayTeam: game.awayTeam,
+          gameDate: game.gameDate || game.startTime,
+          existingLegs, legCount, mode: analysisMode, oddsMap,
+        };
+      }
+
+      const res  = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Analysis failed');
       setAnalysis(data);
@@ -592,7 +711,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
       setErrorMsg(err.message);
       setState('error');
     }
-  }, [game, mode, analysisMode, legCount]);
+  }, [game, mode, analysisMode, legCount, isMLB]);
 
   const savePicks = async (analysisData) => {
     const projections = analysisData.projections || {};
@@ -608,37 +727,43 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
     });
   };
 
-  const gameLegs = selectedLegs.filter(l => l.gameId === game.id);
+  const gameLegs  = selectedLegs.filter(l => l.gameId === game.id);
+  const modeLabel = mode === 'halftime' ? 'LIVE' : isMLB ? 'MLB' : 'PRE-GAME';
+  const modeBg    = mode === 'halftime' ? '#ef4444' : isMLB ? '#fb923c' : '#7c3aed';
 
   return (
     <div style={{ background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '16px', overflow: 'hidden', marginBottom: '16px' }}>
-      {/* Game header — clickable to collapse/expand when analysis is done */}
+      {/* Game header */}
       <div
         onClick={state === 'done' ? () => setCollapsed(c => !c) : undefined}
-        style={{
-          padding: '16px 20px',
-          background: 'linear-gradient(135deg, rgba(124,58,237,0.1) 0%, rgba(59,130,246,0.05) 100%)',
-          borderBottom: collapsed ? 'none' : '1px solid var(--border-color, #222)',
-          display: 'flex', alignItems: 'center', gap: '12px',
-          cursor: state === 'done' ? 'pointer' : 'default',
-        }}
+        style={{ padding: '16px 20px', background: 'linear-gradient(135deg, rgba(124,58,237,0.1) 0%, rgba(59,130,246,0.05) 100%)', borderBottom: collapsed ? 'none' : '1px solid var(--border-color, #222)', display: 'flex', alignItems: 'center', gap: '12px', cursor: state === 'done' ? 'pointer' : 'default' }}
       >
-        <div style={{ background: mode === 'halftime' ? '#ef4444' : '#7c3aed', borderRadius: '6px', padding: '3px 8px', fontSize: '10px', fontWeight: '500', color: '#fff', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <div style={{ background: modeBg, borderRadius: '6px', padding: '3px 8px', fontSize: '10px', fontWeight: '500', color: '#fff', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '4px' }}>
           {mode === 'halftime' && <span style={{ width: '6px', height: '6px', background: '#fff', borderRadius: '50%', animation: 'pulse 1.5s ease-in-out infinite', display: 'inline-block' }}/>}
-          {mode === 'halftime' ? 'HALFTIME' : 'PRE-GAME'}
+          {modeLabel}
         </div>
         <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: '500', fontSize: '16px', color: 'var(--text-primary, #fff)' }}>
             {game.state === 'pre' ? (
-              <>{game.awayTeam.abbreviation} vs {game.homeTeam.abbreviation}{game.startTime && <span style={{ fontSize: '13px', fontWeight: '400', color: '#a78bfa', marginLeft: '8px' }}>{new Date(game.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}</span>}</>
+              <>
+                {game.awayTeam.abbreviation} vs {game.homeTeam.abbreviation}
+                {game.startTime && (
+                  <span style={{ fontSize: '13px', fontWeight: '400', color: '#a78bfa', marginLeft: '8px' }}>
+                    {new Date(game.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}
+                  </span>
+                )}
+              </>
             ) : (
               <>{game.awayTeam.abbreviation} {game.awayTeam.score} – {game.homeTeam.score} {game.homeTeam.abbreviation}</>
             )}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', marginTop: '2px' }}>
             {game.label} · {game.statusDescription}
-            {game.startTime && (() => { const d = new Date(game.startTime); return <span style={{ marginLeft: '6px' }}>· {d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} {d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}</span>; })()}
+            {game.startTime && (() => {
+              const d = new Date(game.startTime);
+              return <span style={{ marginLeft: '6px' }}>· {d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} {d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}</span>;
+            })()}
           </div>
           {state === 'done' && analysis?.picks?.length > 0 && (
             <div style={{ marginTop: '4px', fontSize: '11px', color: '#a78bfa', fontWeight: '500' }}>
@@ -654,10 +779,18 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
 
       {!collapsed && (
         <div style={{ padding: '16px 20px' }}>
-          {mode === 'pregame' && (
+          {/* Mode selector — NBA pregame only, not MLB */}
+          {mode === 'pregame' && !isMLB && (
             <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', background: 'var(--bg-tertiary, #0a0a0a)', padding: '4px', borderRadius: '10px' }}>
-              {[{ id: 'picks', label: 'Prop Picks', icon: Icon.Target }, { id: 'pra', label: 'PRA Leader', icon: Icon.BarChart }].map(m => (
-                <button key={m.id} onClick={() => { setAnalysisMode(m.id); setState('idle'); setAnalysis(null); if (onAnalysisUpdate) onAnalysisUpdate(game.id, null); }} style={{ flex: 1, padding: '7px', borderRadius: '8px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', background: analysisMode === m.id ? '#7c3aed' : 'transparent', color: analysisMode === m.id ? '#fff' : 'var(--text-secondary, #888)', fontWeight: '500', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s' }}>
+              {[
+                { id: 'picks', label: 'Prop Picks', icon: Icon.Target },
+                { id: 'pra',   label: 'PRA Leader', icon: Icon.BarChart },
+              ].map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => { setAnalysisMode(m.id); setState('idle'); setAnalysis(null); if (onAnalysisUpdate) onAnalysisUpdate(game.id, null); }}
+                  style={{ flex: 1, padding: '7px', borderRadius: '8px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', background: analysisMode === m.id ? '#7c3aed' : 'transparent', color: analysisMode === m.id ? '#fff' : 'var(--text-secondary, #888)', fontWeight: '500', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s' }}
+                >
                   <m.icon />{m.label}
                 </button>
               ))}
@@ -673,7 +806,9 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
           {state === 'loading' && (
             <div style={{ textAlign: 'center', padding: '24px 0' }}>
               <div style={{ width: '36px', height: '36px', margin: '0 auto 12px', border: '3px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
-              <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>Pulling live box scores + player history...</p>
+              <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>
+                {mode === 'halftime' ? 'Pulling live box scores + player history...' : isMLB ? 'Pulling MLB gamelogs + pitcher data...' : 'Pulling player history + projections...'}
+              </p>
             </div>
           )}
 
@@ -712,8 +847,16 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
                   </div>
                 </div>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary, #999)', lineHeight: '1.6', margin: '0 0 8px' }}>{analysis.analysis}</p>
-                {analysis.key_strengths?.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>{analysis.key_strengths.map((s, i) => <span key={i} style={{ fontSize: '11px', padding: '3px 8px', background: 'rgba(74,222,128,0.1)', color: '#4ade80', borderRadius: '20px' }}>✓ {s}</span>)}</div>}
-                {analysis.risk_factors?.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>{analysis.risk_factors.map((r, i) => <span key={i} style={{ fontSize: '11px', padding: '3px 8px', background: 'rgba(251,191,36,0.1)', color: '#fbbf24', borderRadius: '20px' }}>⚠ {r}</span>)}</div>}
+                {analysis.key_strengths?.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
+                    {analysis.key_strengths.map((s, i) => <span key={i} style={{ fontSize: '11px', padding: '3px 8px', background: 'rgba(74,222,128,0.1)', color: '#4ade80', borderRadius: '20px' }}>✓ {s}</span>)}
+                  </div>
+                )}
+                {analysis.risk_factors?.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {analysis.risk_factors.map((r, i) => <span key={i} style={{ fontSize: '11px', padding: '3px 8px', background: 'rgba(251,191,36,0.1)', color: '#fbbf24', borderRadius: '20px' }}>⚠ {r}</span>)}
+                  </div>
+                )}
               </div>
               {analysis.secondary_pick && (
                 <div style={{ background: 'rgba(124,58,237,0.06)', border: '1px solid rgba(124,58,237,0.2)', borderRadius: '12px', padding: '12px', marginBottom: '14px' }}>
@@ -731,7 +874,10 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
                   {analysis.full_rankings.map((p, i) => (
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', borderBottom: i < analysis.full_rankings.length - 1 ? '1px solid var(--border-color, #1a1a1a)' : 'none', opacity: p.lowSample ? 0.6 : 1 }}>
                       <span style={{ fontSize: '12px', color: 'var(--text-secondary, #666)', width: '16px' }}>{i + 1}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}><span style={{ fontSize: '13px', color: 'var(--text-primary, #fff)', fontWeight: i === 0 ? '500' : '400' }}>{p.player}</span>{p.lowSample && <span style={{ fontSize: '10px', color: '#fbbf24', marginLeft: '6px' }}>⚠ {p.sampleSize}g</span>}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ fontSize: '13px', color: 'var(--text-primary, #fff)', fontWeight: i === 0 ? '500' : '400' }}>{p.player}</span>
+                        {p.lowSample && <span style={{ fontSize: '10px', color: '#fbbf24', marginLeft: '6px' }}>⚠ {p.sampleSize}g</span>}
+                      </div>
                       <span style={{ fontSize: '10px', color: '#a78bfa', padding: '1px 6px', background: 'rgba(124,58,237,0.1)', borderRadius: '10px' }}>{p.team}</span>
                       <span style={{ fontSize: '13px', fontWeight: '500', color: i === 0 ? '#4ade80' : 'var(--text-primary, #fff)', minWidth: '36px', textAlign: 'right' }}>{p.pra}</span>
                       <span style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', minWidth: '80px', textAlign: 'right' }}>{p.pts}/{p.reb}/{p.ast}</span>
@@ -748,14 +894,24 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
               {analysis.pace_note && <p style={{ fontSize: '12px', color: '#60a5fa', margin: '0 0 14px', fontWeight: '500' }}>{analysis.pace_note}</p>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
                 {analysis.picks?.map((pick, i) => {
-                  const legKey = `${game.id}:${pick.player}:${pick.stat}`;
+                  const legKey     = `${game.id}:${pick.player}:${pick.stat}`;
                   const isSelected = selectedLegs.some(l => l.key === legKey);
                   return (
-                    <PickCard key={legKey} pick={pick} index={i} isSelected={isSelected} onToggle={() => onToggleLeg({ key: legKey, gameId: game.id, player: pick.player, team: pick.team, stat: pick.stat, direction: pick.direction, rating: pick.rating })} />
+                    <PickCard
+                      key={legKey} pick={pick} index={i} isSelected={isSelected}
+                      onToggle={() => onToggleLeg({
+                        key: legKey, gameId: game.id,
+                        player: pick.player, team: pick.team,
+                        stat: pick.stat, direction: pick.direction, rating: pick.rating,
+                      })}
+                    />
                   );
                 })}
               </div>
-              <button onClick={() => analyze(gameLegs.map(l => ({ player: l.player, stat: l.stat })))} style={{ width: '100%', padding: '10px', borderRadius: '10px', background: 'transparent', border: '1px solid var(--border-color, #333)', color: 'var(--text-secondary, #888)', fontWeight: '500', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <button
+                onClick={() => analyze(gameLegs.map(l => ({ player: l.player, stat: l.stat })))}
+                style={{ width: '100%', padding: '10px', borderRadius: '10px', background: 'transparent', border: '1px solid var(--border-color, #333)', color: 'var(--text-secondary, #888)', fontWeight: '500', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+              >
                 <Icon.Refresh /> Get More Leg Options
               </button>
             </div>
@@ -781,7 +937,10 @@ function ParlayBuilder({ legs, onRemove }) {
     <div style={{ position: 'fixed', bottom: '80px', left: '50%', transform: 'translateX(-50%)', width: 'min(420px, calc(100vw - 32px))', background: '#0f0f14', border: '1px solid rgba(124,58,237,0.3)', borderRadius: '16px', padding: '16px', zIndex: 100, boxShadow: '0 -4px 40px rgba(124,58,237,0.2)', animation: 'slideUp 0.3s ease' }}>
       <style>{`@keyframes slideUp { from { opacity:0; transform:translateX(-50%) translateY(20px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }`}</style>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Icon.Clipboard /><span style={{ fontWeight: '500', fontSize: '14px', color: '#fff' }}>My Parlay ({legs.length} leg{legs.length !== 1 ? 's' : ''})</span></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Icon.Clipboard />
+          <span style={{ fontWeight: '500', fontSize: '14px', color: '#fff' }}>My Parlay ({legs.length} leg{legs.length !== 1 ? 's' : ''})</span>
+        </div>
         <div style={{ fontSize: '12px', color: '#a78bfa', fontWeight: '500' }}>Avg {avgRating}★</div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
@@ -800,35 +959,36 @@ function ParlayBuilder({ legs, onRemove }) {
     </div>
   );
 }
-
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Halftime({ isDark, toggleTheme, onLogout }) {
-  const [mode, setMode] = useState('daily');
-  const [scanState, setScanState] = useState('idle');
-  const [games, setGames] = useState([]);
-  const [lastScanned, setLastScanned] = useState(null);
+  const [mode, setMode]                 = useState('daily');
+  const [pregameSport, setPregameSport] = useState('nba'); // 'nba' | 'mlb'
+  const [scanState, setScanState]       = useState('idle');
+  const [games, setGames]               = useState([]);
+  const [lastScanned, setLastScanned]   = useState(null);
   const [selectedLegs, setSelectedLegs] = useState([]);
-  const [errorMsg, setErrorMsg] = useState('');
-  const [legCount, setLegCount] = useState(4);
-  const [oddsMap, setOddsMap] = useState({});
+  const [errorMsg, setErrorMsg]         = useState('');
+  const [legCount, setLegCount]         = useState(4);
+  const [oddsMap, setOddsMap]           = useState({});
 
   // ── Persistent caches ──────────────────────────────────────────────────────
-  // Daily card cache — survives tab switches
-  const [dailyCache, setDailyCache] = useState({ state: 'idle', allPicks: [], filteredPicks: [], activeFilters: new Set() });
-  // Pre-game analysis cache — keyed by gameId
+  const [dailyCache, setDailyCache]     = useState({ state: 'idle', nbaPicks: [], mlbPicks: [], activeFilters: new Set() });
   const [pregameCache, setPregameCache] = useState({});
 
   const updatePregameCache = useCallback((gameId, data) => {
     setPregameCache(prev => ({ ...prev, [gameId]: data }));
   }, []);
 
-  const scan = useCallback(async () => {
+  const scan = useCallback(async (sportOverride) => {
+    const sport = sportOverride || pregameSport;
     setScanState('scanning');
     setErrorMsg('');
     setGames([]);
     try {
-      const url = mode === 'halftime' ? '/api/halftime/scan?sports=nba' : '/api/pregame/scan?sport=nba';
-      const res = await fetch(url);
+      const url = mode === 'halftime'
+        ? '/api/halftime/scan?sports=nba,mlb'
+        : `/api/pregame/scan?sport=${sport}`;
+      const res  = await fetch(url);
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
       setGames(data.games);
@@ -839,12 +999,10 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg(err.message);
       setScanState('error');
     }
-  }, [mode]);
+  }, [mode, pregameSport]);
 
   const switchMode = (newMode) => {
     setMode(newMode);
-    // Don't reset games/scan state when switching back to pregame/halftime
-    // Only reset if switching between pregame and halftime
     if ((newMode === 'pregame' && mode === 'halftime') || (newMode === 'halftime' && mode === 'pregame')) {
       setScanState('idle');
       setGames([]);
@@ -854,13 +1012,17 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
     }
   };
 
-  const toggleLeg = (leg) => {
-    setSelectedLegs(prev => {
-      const exists = prev.some(l => l.key === leg.key);
-      return exists ? prev.filter(l => l.key !== leg.key) : [...prev, leg];
-    });
+  const switchPregameSport = (sport) => {
+    setPregameSport(sport);
+    setScanState('idle');
+    setGames([]);
+    setLastScanned(null);
+    setErrorMsg('');
   };
 
+  const toggleLeg = (leg) => setSelectedLegs(prev =>
+    prev.some(l => l.key === leg.key) ? prev.filter(l => l.key !== leg.key) : [...prev, leg]
+  );
   const removeLeg = (key) => setSelectedLegs(prev => prev.filter(l => l.key !== key));
 
   const TABS = [
@@ -884,12 +1046,15 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
               {mode === 'daily' ? 'Daily Card' : mode === 'pregame' ? 'Pre-Game Picks' : mode === 'halftime' ? 'Live Picks' : 'Performance'}
             </h2>
             <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.5' }}>
-              {mode === 'daily' ? "Top picks across today's full slate" : mode === 'pregame' ? 'Pre-game prop picks from historical projections' : mode === 'halftime' ? 'In-game prop picks built from live box scores + recent form' : 'Pick accuracy and projection tracking over time'}
+              {mode === 'daily' ? "Top picks across today's full slate — NBA + MLB"
+                : mode === 'pregame' ? 'Pre-game prop picks from historical projections'
+                : mode === 'halftime' ? 'In-game prop picks built from live box scores + recent form'
+                : 'Pick accuracy and projection tracking over time'}
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginTop: '2px' }}>
             {lastScanned && mode !== 'daily' && mode !== 'performance' && (
-              <button onClick={scan} disabled={scanState === 'scanning'} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '10px', color: 'var(--text-secondary, #888)', padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '500' }}>
+              <button onClick={() => scan()} disabled={scanState === 'scanning'} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '10px', color: 'var(--text-secondary, #888)', padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '500' }}>
                 <Icon.Refresh /> Refresh
               </button>
             )}
@@ -922,6 +1087,24 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
           </div>
         )}
 
+        {/* Pre-game sport selector — NBA / MLB toggle */}
+        {mode === 'pregame' && (
+          <div style={{ marginTop: '14px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            {[
+              { id: 'nba', label: 'NBA', icon: <Icon.Basketball /> },
+              { id: 'mlb', label: 'MLB', icon: <Icon.Baseball /> },
+            ].map(s => (
+              <button
+                key={s.id}
+                onClick={() => switchPregameSport(s.id)}
+                style={{ padding: '10px', borderRadius: '12px', border: `1px solid ${pregameSport === s.id ? '#7c3aed' : 'var(--border-color, #222)'}`, background: pregameSport === s.id ? 'rgba(124,58,237,0.15)' : 'var(--bg-secondary, #111)', color: pregameSport === s.id ? '#a78bfa' : 'var(--text-secondary, #888)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: '500', fontSize: '13px', transition: 'all 0.15s' }}
+              >
+                {s.icon} {s.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Leg count slider */}
         {mode !== 'daily' && mode !== 'performance' && (
           <div style={{ marginTop: '14px', padding: '10px 14px', background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '12px' }}>
@@ -936,7 +1119,9 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
             </div>
             <input type="range" min={2} max={8} step={1} value={legCount} onChange={e => setLegCount(Number(e.target.value))} className="leg-slider" />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-              {[2,3,4,5,6,7,8].map(n => <span key={n} style={{ fontSize: '10px', color: n === legCount ? '#a78bfa' : 'var(--text-secondary, #555)', fontWeight: n === legCount ? '500' : '400' }}>{n}</span>)}
+              {[2,3,4,5,6,7,8].map(n => (
+                <span key={n} style={{ fontSize: '10px', color: n === legCount ? '#a78bfa' : 'var(--text-secondary, #555)', fontWeight: n === legCount ? '500' : '400' }}>{n}</span>
+              ))}
             </div>
           </div>
         )}
@@ -945,11 +1130,18 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       {/* Idle */}
       {mode !== 'performance' && mode !== 'daily' && scanState === 'idle' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
-          <div style={{ width: '64px', height: '64px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}><Icon.Basketball /></div>
+          <div style={{ width: '64px', height: '64px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}>
+            {mode === 'pregame' && pregameSport === 'mlb' ? <Icon.BaseballLg /> : <Icon.Basketball />}
+          </div>
           <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>Ready to scan</h3>
-          <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px', lineHeight: '1.6' }}>{mode === 'halftime' ? 'Scan for NBA games currently in progress.' : "Load today's NBA games and get pre-game prop recommendations."}</p>
-          <button onClick={scan} style={{ padding: '14px 32px', borderRadius: '14px', background: '#7c3aed', border: 'none', color: '#fff', fontWeight: '500', fontSize: '15px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-            <Icon.Zap /> {mode === 'halftime' ? 'Scan for Live Games' : "Find Today's Games"}
+          <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px', lineHeight: '1.6' }}>
+            {mode === 'halftime' ? 'Scan for games currently in progress.'
+              : pregameSport === 'mlb' ? "Load today's MLB games and get prop recommendations."
+              : "Load today's NBA games and get pre-game prop recommendations."}
+          </p>
+          <button onClick={() => scan()} style={{ padding: '14px 32px', borderRadius: '14px', background: '#7c3aed', border: 'none', color: '#fff', fontWeight: '500', fontSize: '15px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+            <Icon.Zap />
+            {mode === 'halftime' ? 'Scan for Live Games' : pregameSport === 'mlb' ? 'Find MLB Games' : 'Find NBA Games'}
           </button>
         </div>
       )}
@@ -958,7 +1150,9 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       {mode !== 'performance' && mode !== 'daily' && scanState === 'scanning' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ width: '40px', height: '40px', margin: '0 auto 16px', border: '3px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
-          <p style={{ color: 'var(--text-secondary, #888)', fontSize: '14px', margin: 0 }}>{mode === 'halftime' ? 'Scanning for halftime games...' : "Loading today's games..."}</p>
+          <p style={{ color: 'var(--text-secondary, #888)', fontSize: '14px', margin: 0 }}>
+            {mode === 'halftime' ? 'Scanning for live games...' : pregameSport === 'mlb' ? 'Loading MLB games...' : 'Loading NBA games...'}
+          </p>
         </div>
       )}
 
@@ -966,7 +1160,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       {mode !== 'performance' && mode !== 'daily' && scanState === 'error' && (
         <div style={{ textAlign: 'center', padding: '32px 24px' }}>
           <p style={{ color: '#f87171', marginBottom: '12px', fontSize: '14px' }}>{errorMsg}</p>
-          <button onClick={scan} style={{ padding: '10px 24px', borderRadius: '10px', background: 'transparent', border: '1px solid #f87171', color: '#f87171', cursor: 'pointer', fontWeight: '500' }}>Try Again</button>
+          <button onClick={() => scan()} style={{ padding: '10px 24px', borderRadius: '10px', background: 'transparent', border: '1px solid #f87171', color: '#f87171', cursor: 'pointer', fontWeight: '500' }}>Try Again</button>
         </div>
       )}
 
@@ -974,8 +1168,12 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       {mode !== 'performance' && mode !== 'daily' && scanState === 'empty' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>No games right now</h3>
-          <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px' }}>{mode === 'halftime' ? 'Check back when NBA games are in progress.' : 'No NBA games scheduled for today.'}</p>
-          <button onClick={scan} style={{ padding: '10px 24px', borderRadius: '10px', background: 'transparent', border: '1px solid var(--border-color, #333)', color: 'var(--text-secondary, #888)', cursor: 'pointer', fontWeight: '500', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+          <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px' }}>
+            {mode === 'halftime' ? 'Check back when games are in progress.'
+              : pregameSport === 'mlb' ? 'No MLB games scheduled for today.'
+              : 'No NBA games scheduled for today.'}
+          </p>
+          <button onClick={() => scan()} style={{ padding: '10px 24px', borderRadius: '10px', background: 'transparent', border: '1px solid var(--border-color, #333)', color: 'var(--text-secondary, #888)', cursor: 'pointer', fontWeight: '500', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
             <Icon.Refresh /> Scan Again
           </button>
         </div>
