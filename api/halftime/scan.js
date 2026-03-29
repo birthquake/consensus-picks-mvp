@@ -1,14 +1,14 @@
 // FILE LOCATION: api/halftime/scan.js
-// Scans live scoreboards for games currently at halftime.
+// Scans live scoreboards for games currently in progress.
 // Returns game metadata needed for the analyze endpoint.
 //
 // Usage: GET /api/halftime/scan?sports=nba,nhl
 // Response: { games: [{ id, sport, league, homeTeam, awayTeam, score, period, clock }] }
 
 const SPORT_CONFIG = {
-  nba:  { sport: 'basketball', league: 'nba',  label: 'NBA',  halftimePeriod: 2 },
-  nhl:  { sport: 'hockey',     league: 'nhl',  label: 'NHL',  halftimePeriod: 2 },
-  mlb:  { sport: 'baseball',   league: 'mlb',  label: 'MLB',  halftimePeriod: 5 }, // 5th inning ~ halfway
+  nba: { sport: 'basketball', league: 'nba', label: 'NBA' },
+  nhl: { sport: 'hockey',     league: 'nhl', label: 'NHL' },
+  mlb: { sport: 'baseball',   league: 'mlb', label: 'MLB' },
 };
 
 async function fetchWithTimeout(url, ms = 5000) {
@@ -25,34 +25,9 @@ async function fetchWithTimeout(url, ms = 5000) {
   }
 }
 
-function isAtHalftime(event, config) {
-  const comp = event.competitions?.[0];
-  const status = comp?.status;
-  const state = status?.type?.state;
-
-  if (state !== 'in') return false;
-
-  const period = status?.period;
-  const clock = status?.displayClock || '';
-  const description = status?.type?.description?.toLowerCase() || '';
-
-  // NBA: halftime is between periods 2 and 3 — description says "Halftime"
-  // or we're in the break after period 2
-  if (config.league === 'nba') {
-    return description.includes('halftime') || description.includes('half time');
-  }
-
-  // NHL: intermission after period 1 or 2
-  if (config.league === 'nhl') {
-    return description.includes('intermission') || description.includes('end of');
-  }
-
-  // MLB: between innings — approximate halftime as innings 4-6
-  if (config.league === 'mlb') {
-    return period >= 4 && period <= 6 && description.includes('middle');
-  }
-
-  return false;
+function isLive(event) {
+  const state = event.competitions?.[0]?.status?.type?.state;
+  return state === 'in';
 }
 
 function extractGameData(event, config) {
@@ -61,6 +36,21 @@ function extractGameData(event, config) {
   const competitors = comp?.competitors || [];
   const home = competitors.find(c => c.homeAway === 'home');
   const away = competitors.find(c => c.homeAway === 'away');
+
+  const period = status?.period;
+  const description = status?.type?.description || '';
+
+  // Human-readable game phase label
+  let phaseLabel = description;
+  if (config.league === 'nba') {
+    if (description.toLowerCase().includes('halftime')) phaseLabel = 'Halftime';
+    else if (period) phaseLabel = `Q${period}`;
+  } else if (config.league === 'nhl') {
+    if (description.toLowerCase().includes('intermission')) phaseLabel = `Intermission`;
+    else if (period) phaseLabel = `P${period}`;
+  } else if (config.league === 'mlb') {
+    phaseLabel = description || `Inning ${period}`;
+  }
 
   return {
     id: event.id,
@@ -83,9 +73,10 @@ function extractGameData(event, config) {
       score: parseInt(away?.score || '0'),
       logo: away?.team?.logo,
     },
-    period: status?.period,
+    period,
     clock: status?.displayClock,
-    statusDescription: status?.type?.description,
+    statusDescription: phaseLabel,
+    isHalftime: description.toLowerCase().includes('halftime') || description.toLowerCase().includes('intermission'),
     startTime: comp?.date,
     venue: comp?.venue?.fullName || null,
     scoreDiff: Math.abs(parseInt(home?.score || '0') - parseInt(away?.score || '0')),
@@ -100,7 +91,6 @@ export default async function handler(req, res) {
   const requestedSports = (req.query.sports || 'nba,nhl').split(',').map(s => s.trim().toLowerCase());
 
   try {
-    // Fetch all requested scoreboards in parallel
     const scoreboard_fetches = requestedSports.map(async (sportKey) => {
       const config = SPORT_CONFIG[sportKey];
       if (!config) return [];
@@ -109,14 +99,14 @@ export default async function handler(req, res) {
       const data = await fetchWithTimeout(url);
       if (!data?.events) return [];
 
-      const halftimeGames = data.events.filter(e => isAtHalftime(e, config));
-      return halftimeGames.map(e => extractGameData(e, config));
+      const liveGames = data.events.filter(e => isLive(e));
+      return liveGames.map(e => extractGameData(e, config));
     });
 
     const results = await Promise.all(scoreboard_fetches);
     const games = results.flat();
 
-    console.log(`[halftime/scan] Found ${games.length} halftime games across ${requestedSports.join(', ')}`);
+    console.log(`[halftime/scan] Found ${games.length} live games across ${requestedSports.join(', ')}`);
 
     return res.status(200).json({
       success: true,
