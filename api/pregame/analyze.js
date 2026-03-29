@@ -1068,6 +1068,7 @@ export default async function handler(req, res) {
 
       // Skip players with an injury/out status from ESPN roster
         const status = (typeof p.status === 'string' ? p.status : '').toLowerCase();
+        console.log(`[pregame/analyze] ${p.name} raw status: ${JSON.stringify(p.status)}`);
         if (status.includes('out') || status.includes('injur') || status.includes('reserve')) {
         console.log(`[pregame/analyze] Skipping ${p.name} -- status: ${p.status}`);
         return null;
