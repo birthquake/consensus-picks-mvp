@@ -105,10 +105,23 @@ async function getPlayerGamelog(playerId, playerName) {
   }
   if (!category) return null;
 
-  // DEBUG: log column names on first call so we can verify in Vercel logs
-  // TODO: remove these logs once NHL is stable
-  const colNames = category.names ?? category.labels ?? [];
-  console.log(`[analyze-nhl] ${playerName} gamelog columns:`, colNames);
+  // DEBUG: log raw category keys and column fields to find correct structure
+  // TODO: remove once NHL column names are confirmed
+  const colNames = category.names ?? category.labels ?? category.displayNames ?? category.abbreviations ?? [];
+  if (playerName === 'Nikita Kucherov' || playerName === 'Andrei Vasilevskiy') {
+    console.log(`[analyze-nhl] RAW category keys for ${playerName}:`, Object.keys(category));
+    console.log(`[analyze-nhl] category.names:`, category.names);
+    console.log(`[analyze-nhl] category.labels:`, category.labels);
+    console.log(`[analyze-nhl] category.displayNames:`, category.displayNames);
+    console.log(`[analyze-nhl] category.abbreviations:`, category.abbreviations);
+    console.log(`[analyze-nhl] category.type:`, category.type);
+    console.log(`[analyze-nhl] category.name:`, category.name);
+    const firstEvent = (category.events ?? [])[0];
+    if (firstEvent) {
+      console.log(`[analyze-nhl] first event keys:`, Object.keys(firstEvent));
+      console.log(`[analyze-nhl] first event stats sample:`, firstEvent.stats?.slice(0, 5));
+    }
+  }
 
   const events = category?.events ?? [];
   if (events.length === 0) return null;
