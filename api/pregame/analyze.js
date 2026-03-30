@@ -1071,7 +1071,7 @@ export default async function handler(req, res) {
 
     console.log(`[pregame/analyze] Form: ${formResults.filter(Boolean).length}/${allPlayers.length} | Season: ${seasonResults.filter(Boolean).length}/${allPlayers.length}`);
 
-    // CHANGE 2: STRICTER INJURY/INACTIVE DETECTION
+    // CHANGE 2: IMPROVED INJURY/INACTIVE DETECTION (Balanced approach)
     const playerData = allPlayers.map((p, i) => {
       const form   = formResults[i];
       const season = seasonResults[i];
@@ -1084,23 +1084,22 @@ export default async function handler(req, res) {
         return null;
       }
 
-      // STRICTER: Skip players with NO games in the last 21 days (injury list / traded out)
+      // Skip players with NO games in the last 14 days (injury list / traded out)
+      // NOTE: Increased from original 14 days to catch more injured players, but kept it
+      // at 14 (not 21) to allow for load management and rest days in NBA/MLB
       const lastGameDate = gamelogResults[i]?.lastGameDate;
       if (lastGameDate) {
         const daysSinceLastGame = (new Date() - lastGameDate) / (1000 * 60 * 60 * 24);
-        if (daysSinceLastGame > 21) {
+        if (daysSinceLastGame > 14) {
           console.log(`[pregame/analyze] Skipping ${p.name} -- last game ${Math.floor(daysSinceLastGame)}d ago (likely injured/traded)`);
           return null;
         }
-      } else if (gamesPlayed > 0) {
-        // Has games but no lastGameDate extracted = data issue, skip to be safe
-        console.log(`[pregame/analyze] Skipping ${p.name} -- could not determine last game date (data integrity issue)`);
-        return null;
       }
 
       // Skip players with an injury/out status from ESPN roster
+      // Only filter on explicit injury/out keywords, not "reserve" which can be normal
       const status = (typeof p.status === 'string' ? p.status : '').toLowerCase();
-      if (status.includes('out') || status.includes('injur') || status.includes('reserve') || status.includes('ineligible')) {
+      if (status.includes('out') || status.includes('injur') || status.includes('ineligible')) {
         console.log(`[pregame/analyze] Skipping ${p.name} -- status: ${p.status}`);
         return null;
       }
