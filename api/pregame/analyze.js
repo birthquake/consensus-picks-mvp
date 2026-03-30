@@ -603,23 +603,38 @@ async function getOpponentDefenseRating(sport, league, opponentTeamId, stat) {
 async function getLeagueInjuryReport(sport, league) {
   const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/injuries`;
   const data = await fetchWithTimeout(url, 5000);
-  if (!data) return null;
+  if (!data) {
+    console.warn(`[getLeagueInjuryReport] No data returned for ${sport}/${league}`);
+    return null;
+  }
 
   // Build a map of injured players: athleteId -> injury info
   const injuryMap = {};
   const athletes = data.athletes || [];
   
+  console.log(`[getLeagueInjuryReport] Raw response has ${athletes.length} athletes`);
+  
   for (const athlete of athletes) {
     if (athlete.id) {
-      injuryMap[String(athlete.id)] = {
+      const injuryInfo = {
         name: athlete.displayName,
         status: athlete.status?.description || athlete.status || null,
         type: athlete.injuryType || null,
       };
+      injuryMap[String(athlete.id)] = injuryInfo;
+      
+      // Log all entries (especially Kyrie)
+      if (athlete.displayName && athlete.displayName.toLowerCase().includes('kyrie')) {
+        console.log(`[getLeagueInjuryReport] FOUND KYRIE: ${athlete.displayName} | ID: ${athlete.id} | Status: ${injuryInfo.status}`);
+      }
     }
   }
 
-  console.log(`[pregame/analyze] League injury report: ${athletes.length} athletes with issues`);
+  console.log(`[getLeagueInjuryReport] Built injury map with ${Object.keys(injuryMap).length} players`);
+  if (Object.keys(injuryMap).length > 0) {
+    console.log(`[getLeagueInjuryReport] First 5 injured players:`, Object.entries(injuryMap).slice(0, 5).map(([id, info]) => `${info.name} (${id})`).join(', '));
+  }
+  
   return injuryMap;
 }
 
@@ -1126,8 +1141,11 @@ export default async function handler(req, res) {
       // Check league injury report (NEW)
       if (leagueInjuryMap && leagueInjuryMap[String(p.id)]) {
         const injuryInfo = leagueInjuryMap[String(p.id)];
-        console.log(`[pregame/analyze] Skipping ${p.name} -- on league injury report: ${injuryInfo.status}`);
+        console.log(`[pregame/analyze] Skipping ${p.name} (ID: ${p.id}) -- on league injury report: ${injuryInfo.status}`);
         return null;
+      } else if (leagueInjuryMap && p.name.toLowerCase().includes('kyrie')) {
+        // Debug: Kyrie not found in injury map
+        console.log(`[pregame/analyze] DEBUG: Kyrie found in roster (ID: ${p.id}) but NOT in injury map. Injury map has these IDs: ${Object.keys(leagueInjuryMap).slice(0, 10).join(', ')}`);
       }
 
       // Skip players with NO games in the last 14 days (injury list / traded out)
