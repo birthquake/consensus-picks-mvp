@@ -1033,17 +1033,16 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
         {mode !== 'daily' && mode !== 'performance' && (
           <div style={{ marginTop: '14px', padding: '10px 14px', background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '12px' }}>
             <style>{`
-              .leg-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; outline: none; cursor: pointer; background: linear-gradient(to right, #7c3aed ${(legCount - 2) / 6 * 100}%, var(--border-color, #333) ${(legCount - 2) / 2 * 100}%); }
-              .leg-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #7c3aed; border: 2px solid #fff; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
+              .leg-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; outline: none; cursor: pointer; background: linear-gradient(to right, #7c3aed ${(legCount - 2) / 3 * 100}%, var(--border-color, #333) ${(legCount - 2) / 3 * 100}%); }              .leg-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #7c3aed; border: 2px solid #fff; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
               .leg-slider::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #7c3aed; border: 2px solid #fff; cursor: pointer; }
             `}</style>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <span style={{ fontSize: '13px', fontWeight: '500', color: 'var(--text-secondary, #888)' }}>Legs per game</span>
               <span style={{ fontSize: '14px', fontWeight: '500', color: '#a78bfa' }}>{legCount}</span>
             </div>
-            <input type="range" min={2} max={4} step={1} value={legCount} onChange={e => setLegCount(Number(e.target.value))} className="leg-slider" />
+            <input type="range" min={2} max={5} step={1} value={legCount} onChange={e => setLegCount(Number(e.target.value))} className="leg-slider" />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-              {[2,3,4].map(n => <span key={n} style={{ fontSize: '10px', color: n === legCount ? '#a78bfa' : 'var(--text-secondary, #555)', fontWeight: n === legCount ? '500' : '400' }}>{n}</span>)}
+              {[2,3,4,5].map(n => <span key={n} style={{ fontSize: '10px', color: n === legCount ? '#a78bfa' : 'var(--text-secondary, #555)', fontWeight: n === legCount ? '500' : '400' }}>{n}</span>)}
             </div>
           </div>
         )}
