@@ -600,55 +600,29 @@ async function getOpponentDefenseRating(sport, league, opponentTeamId, stat) {
 
 // ─── Injury & Transaction Checks ──────────────────────────────────────────────
 
-async function getLeagueInjuryReport(sport, league) {
-  const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/injuries`;
-  const data = await fetchWithTimeout(url, 5000);
-  if (!data) {
-    console.warn(`[getLeagueInjuryReport] No data returned for ${sport}/${league}`);
-    return null;
-  }
+// Hardcoded NBA injury blacklist - Players out for remainder of 2025-26 season (Oct 1 return date)
+// Source: ESPN.com/nba/injuries (updated Mar 30, 2026)
+// BACKLOG: Update this list after 2026-27 season starts (see BACKLOG_UPDATE_INJURY_BLACKLIST.md)
+const NBA_SEASON_OUT_BLACKLIST = new Set([
+  'Egor Demin', 'Day\'Ron Sharpe', 'Jaden Ivey', 'Jalen Smith', 'Zach Collins', 'Noa Essengue',
+  'Kyrie Irving', 'Dereck Lively II',
+  'Moses Moody', 'Jimmy Butler III',
+  'Steven Adams',
+  'Ivica Zubac', 'Tyrese Haliburton',
+  'Yanic Konan Niederhauser', 'Bradley Beal',
+  'Jaylen Wells', 'Zach Edey', 'Ja Morant', 'Brandon Clarke', 'Santi Aldama', 'Scotty Pippen Jr.', 'Kentavious Caldwell-Pope',
+  'Kevin Porter Jr.',
+  'Thomas Sorber',
+  'Damian Lillard',
+  'Drew Eubanks', 'De\'Andre Hunter', 'Domantas Sabonis', 'Zach LaVine',
+  'David Jones Garcia',
+  'Jusuf Nurkic', 'Jaren Jackson Jr.', 'Walker Kessler',
+  'Cam Whitmore'
+]);
 
-  // Build a map of injured players: athleteId -> injury info
-  const injuryMap = {};
-  const athletes = data.athletes || [];
-  
-  console.log(`[getLeagueInjuryReport] Raw response has ${athletes.length} athletes`);
-  
-  for (const athlete of athletes) {
-    if (athlete.id) {
-      const injuryInfo = {
-        name: athlete.displayName,
-        status: athlete.status?.description || athlete.status || null,
-        type: athlete.injuryType || null,
-      };
-      injuryMap[String(athlete.id)] = injuryInfo;
-      
-      // Log all entries (especially Kyrie)
-      if (athlete.displayName && athlete.displayName.toLowerCase().includes('kyrie')) {
-        console.log(`[getLeagueInjuryReport] FOUND KYRIE: ${athlete.displayName} | ID: ${athlete.id} | Status: ${injuryInfo.status}`);
-      }
-    }
-  }
-
-  console.log(`[getLeagueInjuryReport] Built injury map with ${Object.keys(injuryMap).length} players`);
-  if (Object.keys(injuryMap).length > 0) {
-    console.log(`[getLeagueInjuryReport] First 5 injured players:`, Object.entries(injuryMap).slice(0, 5).map(([id, info]) => `${info.name} (${id})`).join(', '));
-  }
-  
-  return injuryMap;
-}
-
-async function getTeamTransactions(sport, league, teamId) {
-  const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams/${teamId}/transactions`;
-  const data = await fetchWithTimeout(url, 5000);
-  if (!data) return [];
-
-  // Get recent transactions (trades, signings, etc.)
-  const transactions = data.items || [];
-  const recentTransactions = transactions.slice(0, 50); // Last 50 transactions
-  
-  console.log(`[pregame/analyze] Team ${teamId} transactions: ${recentTransactions.length} recent`);
-  return recentTransactions;
+function isPlayerSeasonOut(playerName) {
+  if (!playerName) return false;
+  return NBA_SEASON_OUT_BLACKLIST.has(playerName);
 }
 
 // ─── Projection engine ────────────────────────────────────────────────────────
@@ -1108,12 +1082,11 @@ export default async function handler(req, res) {
 
     console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players`);
 
-    const [gamelogResults, standingsMap, leagueInjuryMap] = await Promise.all([
+    const [gamelogResults, standingsMap] = await Promise.all([
       Promise.all(allPlayers.map(p =>
         getPlayerGamelog(sport, league, p.id).catch(() => null)
       )),
       getTeamStandings(sport, league),
-      getLeagueInjuryReport(sport, league),
     ]);
 
     const matchupContext = buildMatchupContext(resolvedHomeId, resolvedAwayId, standingsMap);
@@ -1138,14 +1111,10 @@ export default async function handler(req, res) {
         return null;
       }
 
-      // Check league injury report (NEW)
-      if (leagueInjuryMap && leagueInjuryMap[String(p.id)]) {
-        const injuryInfo = leagueInjuryMap[String(p.id)];
-        console.log(`[pregame/analyze] Skipping ${p.name} (ID: ${p.id}) -- on league injury report: ${injuryInfo.status}`);
+      // Check hardcoded injury blacklist (season-out players)
+      if (isPlayerSeasonOut(p.name)) {
+        console.log(`[pregame/analyze] Skipping ${p.name} -- on season-out blacklist (injured/out for remainder of season)`);
         return null;
-      } else if (leagueInjuryMap && p.name.toLowerCase().includes('kyrie')) {
-        // Debug: Kyrie not found in injury map
-        console.log(`[pregame/analyze] DEBUG: Kyrie found in roster (ID: ${p.id}) but NOT in injury map. Injury map has these IDs: ${Object.keys(leagueInjuryMap).slice(0, 10).join(', ')}`);
       }
 
       // Skip players with NO games in the last 14 days (injury list / traded out)
