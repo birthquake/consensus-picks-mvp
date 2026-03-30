@@ -9,6 +9,7 @@
 //   - Opponent defensive rating vs position/stat
 //   - Rest-adjusted and opponent-adjusted projection
 //   - Directional factors → threshold and star rating
+//   - Recency filter → skip players whose last game was 14+ days ago (injured/inactive)
 //
 // Usage: POST /api/pregame/analyze
 // Body: { gameId, sport, league, homeTeam, awayTeam, gameDate, existingLegs?, legCount? }
@@ -428,7 +429,18 @@ async function getPlayerGamelog(sport, league, athleteId) {
   }
 
   if (allGames.length === 0) return null;
-  allGames.reverse();
+  allGames.reverse(); // most recent first
+
+  // Get date of most recent game for recency filter
+  // data.events is a top-level map of eventId -> { date, ... }
+  let lastGameDate = null;
+  if (data.events && allGames.length > 0) {
+    const mostRecentEventId = allGames[0].eventId;
+    const eventData = data.events[mostRecentEventId];
+    if (eventData?.date) {
+      lastGameDate = new Date(eventData.date);
+    }
+  }
 
   const displayTeam = seasonType?.displayTeam || '';
   const currentTeam = displayTeam.includes('/')
@@ -455,7 +467,7 @@ async function getPlayerGamelog(sport, league, athleteId) {
     fgPct:    avg(season, 'fgPct'),
   };
 
-  return { allGames, last5, last10, seasonAvg, gamesPlayed: allGames.length, currentTeam };
+  return { allGames, last5, last10, seasonAvg, gamesPlayed: allGames.length, currentTeam, lastGameDate };
 }
 
 async function getSeasonAverages(sport, league, athleteId) {
@@ -1059,17 +1071,26 @@ export default async function handler(req, res) {
       const season = seasonResults[i];
       if (!form && !season) return null;
 
-      // Skip injured/inactive players -- fewer than 3 games this season
+      // Skip players with fewer than 3 games this season (inactive all season)
       const gamesPlayed = gamelogResults[i]?.gamesPlayed || 0;
       if (gamesPlayed < 3) {
         console.log(`[pregame/analyze] Skipping ${p.name} -- ${gamesPlayed} games played (inactive)`);
         return null;
       }
 
+      // Skip players whose last game was more than 14 days ago (injured/inactive)
+      const lastGameDate = gamelogResults[i]?.lastGameDate;
+      if (lastGameDate) {
+        const daysSinceLastGame = (new Date() - lastGameDate) / (1000 * 60 * 60 * 24);
+        if (daysSinceLastGame > 14) {
+          console.log(`[pregame/analyze] Skipping ${p.name} -- last game ${Math.floor(daysSinceLastGame)}d ago`);
+          return null;
+        }
+      }
+
       // Skip players with an injury/out status from ESPN roster
-        const status = (typeof p.status === 'string' ? p.status : '').toLowerCase();
-        console.log(`[pregame/analyze] ${p.name} raw status: ${JSON.stringify(p.status)}`);
-        if (status.includes('out') || status.includes('injur') || status.includes('reserve')) {
+      const status = (typeof p.status === 'string' ? p.status : '').toLowerCase();
+      if (status.includes('out') || status.includes('injur') || status.includes('reserve')) {
         console.log(`[pregame/analyze] Skipping ${p.name} -- status: ${p.status}`);
         return null;
       }
@@ -1107,7 +1128,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // Daily card mode -- route through Claude with legCount=2, no sportsbook lines
+    // Daily card mode
     if (mode === 'daily') {
       console.log(`[pregame/analyze] Daily card mode -- routing through Claude (legCount=2)`);
       const dailyResult = await generatePreGamePicks(
@@ -1142,9 +1163,9 @@ export default async function handler(req, res) {
       oddsMap,
     );
 
-      const taggedPicks = (picks.picks || []).map(p => ({ ...p, model: 'claude-haiku-4-5-20251001' }));
-      const picksWithOdds = picks.picks ? { ...picks, picks: attachOdds(taggedPicks, oddsMap) } : picks;    
-      return res.status(200).json({
+    const taggedPicks = (picks.picks || []).map(p => ({ ...p, model: 'claude-haiku-4-5-20251001' }));
+    const picksWithOdds = picks.picks ? { ...picks, picks: attachOdds(taggedPicks, oddsMap) } : picks;
+    return res.status(200).json({
       success: true, gameId,
       game: { homeTeam, awayTeam, sport, league, gameDate },
       ...picksWithOdds,
