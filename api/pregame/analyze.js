@@ -598,6 +598,44 @@ async function getOpponentDefenseRating(sport, league, opponentTeamId, stat) {
   return null;
 }
 
+// ─── Injury & Transaction Checks ──────────────────────────────────────────────
+
+async function getLeagueInjuryReport(sport, league) {
+  const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/injuries`;
+  const data = await fetchWithTimeout(url, 5000);
+  if (!data) return null;
+
+  // Build a map of injured players: athleteId -> injury info
+  const injuryMap = {};
+  const athletes = data.athletes || [];
+  
+  for (const athlete of athletes) {
+    if (athlete.id) {
+      injuryMap[String(athlete.id)] = {
+        name: athlete.displayName,
+        status: athlete.status?.description || athlete.status || null,
+        type: athlete.injuryType || null,
+      };
+    }
+  }
+
+  console.log(`[pregame/analyze] League injury report: ${athletes.length} athletes with issues`);
+  return injuryMap;
+}
+
+async function getTeamTransactions(sport, league, teamId) {
+  const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams/${teamId}/transactions`;
+  const data = await fetchWithTimeout(url, 5000);
+  if (!data) return [];
+
+  // Get recent transactions (trades, signings, etc.)
+  const transactions = data.items || [];
+  const recentTransactions = transactions.slice(0, 50); // Last 50 transactions
+  
+  console.log(`[pregame/analyze] Team ${teamId} transactions: ${recentTransactions.length} recent`);
+  return recentTransactions;
+}
+
 // ─── Projection engine ────────────────────────────────────────────────────────
 
 function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, opponentContext, matchupContext) {
@@ -1055,11 +1093,12 @@ export default async function handler(req, res) {
 
     console.log(`[pregame/analyze] Analyzing ${allPlayers.length} players`);
 
-    const [gamelogResults, standingsMap] = await Promise.all([
+    const [gamelogResults, standingsMap, leagueInjuryMap] = await Promise.all([
       Promise.all(allPlayers.map(p =>
         getPlayerGamelog(sport, league, p.id).catch(() => null)
       )),
       getTeamStandings(sport, league),
+      getLeagueInjuryReport(sport, league),
     ]);
 
     const matchupContext = buildMatchupContext(resolvedHomeId, resolvedAwayId, standingsMap);
@@ -1081,6 +1120,13 @@ export default async function handler(req, res) {
       const gamesPlayed = gamelogResults[i]?.gamesPlayed || 0;
       if (gamesPlayed < 3) {
         console.log(`[pregame/analyze] Skipping ${p.name} -- ${gamesPlayed} games played (inactive all season)`);
+        return null;
+      }
+
+      // Check league injury report (NEW)
+      if (leagueInjuryMap && leagueInjuryMap[String(p.id)]) {
+        const injuryInfo = leagueInjuryMap[String(p.id)];
+        console.log(`[pregame/analyze] Skipping ${p.name} -- on league injury report: ${injuryInfo.status}`);
         return null;
       }
 
