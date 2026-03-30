@@ -212,6 +212,24 @@ async function getLiveBoxScore(sport, league, gameId) {
       const playerStats = { minutes };
 
       for (const [statName, espnKey] of Object.entries(BOX_KEY_MAP)) {
+        if (statName === 'fieldGoalsMade') {
+          // ESPN returns FG as "made-attempted" string e.g. "5-9"
+          // Split into both fields so FG% calculation is accurate
+          const idx = keys.findIndex(k => k === 'fieldGoalsMade-fieldGoalsAttempted' || k === 'fieldGoalsMade');
+          if (idx >= 0) {
+            const raw = String(athlete.stats[idx] ?? '');
+            if (raw.includes('-') && !raw.startsWith('-')) {
+              const parts = raw.split('-');
+              playerStats.fieldGoalsMade      = parseInt(parts[0], 10) || 0;
+              playerStats.fieldGoalsAttempted = parseInt(parts[1], 10) || 0;
+            } else {
+              playerStats.fieldGoalsMade      = parseFloat(raw) || 0;
+              playerStats.fieldGoalsAttempted = playerStats.fieldGoalsMade;
+            }
+          }
+          continue;
+        }
+
         const idx = keys.findIndex(k => k === espnKey || k.startsWith(espnKey.split('-')[0]));
         if (idx >= 0) {
           const raw = athlete.stats[idx];
