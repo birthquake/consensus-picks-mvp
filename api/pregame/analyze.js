@@ -9,7 +9,7 @@
 //   - Opponent defensive rating vs position/stat
 //   - Rest-adjusted and opponent-adjusted projection
 //   - Directional factors → threshold and star rating
-//   - Recency filter → skip players whose last game was 14+ days ago (injured/inactive)
+//   - Recency filter → skip players whose last game was 21+ days ago (injured/inactive)
 //
 // Usage: POST /api/pregame/analyze
 // Body: { gameId, sport, league, homeTeam, awayTeam, gameDate, existingLegs?, legCount? }
@@ -440,6 +440,11 @@ async function getPlayerGamelog(sport, league, athleteId) {
     if (eventData?.date) {
       lastGameDate = new Date(eventData.date);
     }
+  }
+
+  // CHANGE 1: Added debug logging for missing lastGameDate
+  if (!lastGameDate && allGames.length > 0) {
+    console.warn(`[getPlayerGamelog] Could not extract lastGameDate for athlete ${athleteId}, but has ${allGames.length} games`);
   }
 
   const displayTeam = seasonType?.displayTeam || '';
@@ -1066,6 +1071,7 @@ export default async function handler(req, res) {
 
     console.log(`[pregame/analyze] Form: ${formResults.filter(Boolean).length}/${allPlayers.length} | Season: ${seasonResults.filter(Boolean).length}/${allPlayers.length}`);
 
+    // CHANGE 2: STRICTER INJURY/INACTIVE DETECTION
     const playerData = allPlayers.map((p, i) => {
       const form   = formResults[i];
       const season = seasonResults[i];
@@ -1074,23 +1080,27 @@ export default async function handler(req, res) {
       // Skip players with fewer than 3 games this season (inactive all season)
       const gamesPlayed = gamelogResults[i]?.gamesPlayed || 0;
       if (gamesPlayed < 3) {
-        console.log(`[pregame/analyze] Skipping ${p.name} -- ${gamesPlayed} games played (inactive)`);
+        console.log(`[pregame/analyze] Skipping ${p.name} -- ${gamesPlayed} games played (inactive all season)`);
         return null;
       }
 
-      // Skip players whose last game was more than 14 days ago (injured/inactive)
+      // STRICTER: Skip players with NO games in the last 21 days (injury list / traded out)
       const lastGameDate = gamelogResults[i]?.lastGameDate;
       if (lastGameDate) {
         const daysSinceLastGame = (new Date() - lastGameDate) / (1000 * 60 * 60 * 24);
-        if (daysSinceLastGame > 14) {
-          console.log(`[pregame/analyze] Skipping ${p.name} -- last game ${Math.floor(daysSinceLastGame)}d ago`);
+        if (daysSinceLastGame > 21) {
+          console.log(`[pregame/analyze] Skipping ${p.name} -- last game ${Math.floor(daysSinceLastGame)}d ago (likely injured/traded)`);
           return null;
         }
+      } else if (gamesPlayed > 0) {
+        // Has games but no lastGameDate extracted = data issue, skip to be safe
+        console.log(`[pregame/analyze] Skipping ${p.name} -- could not determine last game date (data integrity issue)`);
+        return null;
       }
 
       // Skip players with an injury/out status from ESPN roster
       const status = (typeof p.status === 'string' ? p.status : '').toLowerCase();
-      if (status.includes('out') || status.includes('injur') || status.includes('reserve')) {
+      if (status.includes('out') || status.includes('injur') || status.includes('reserve') || status.includes('ineligible')) {
         console.log(`[pregame/analyze] Skipping ${p.name} -- status: ${p.status}`);
         return null;
       }
@@ -1128,14 +1138,20 @@ export default async function handler(req, res) {
       });
     }
 
+    // CHANGE 3: DYNAMIC LEGCOUNT FOR DAILY MODE
     // Daily card mode
     if (mode === 'daily') {
-      console.log(`[pregame/analyze] Daily card mode -- routing through Claude (legCount=2)`);
+      // Scale legCount based on available players (prevents "run out of picks" issue)
+      // For NBA/smaller rosters: request fewer picks
+      // For MLB/larger rosters: request more picks
+      const dynamicLegCount = Math.min(playerData.length > 8 ? 4 : 2, playerData.length);
+      console.log(`[pregame/analyze] Daily card mode -- ${playerData.length} players available, requesting ${dynamicLegCount} picks`);
+      
       const dailyResult = await generatePreGamePicks(
         { homeTeam, awayTeam, gameDate },
         playerData,
         [],
-        2,
+        dynamicLegCount,
         matchupContext,
         {},
       );
