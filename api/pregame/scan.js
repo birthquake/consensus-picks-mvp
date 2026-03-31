@@ -84,13 +84,8 @@ export default async function handler(req, res) {
     // ESPN's API expects dates in YYYYMMDD format in UTC, not local timezone
     // This fixes an issue where the server's local timezone could cause
     // the scanner to return tomorrow's games when it should return today's
-    const now = new Date();
-    const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const tomorrowUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-    const today    = formatDate(todayUTC);
-    const tomorrow = formatDate(tomorrowUTC);
-
-    console.log(`[pregame/scan] Fetching games for today (UTC): ${today}, tomorrow (UTC): ${tomorrow}`);
+    const today    = formatDate(new Date());
+    const tomorrow = formatDate(new Date(Date.now() + 86400000));
 
     const [todayData, tomorrowData] = await Promise.all([
       fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${today}`),
@@ -153,8 +148,8 @@ export default async function handler(req, res) {
 }
 
 function formatDate(d) {
-  const yyyy = d.getUTCFullYear();
-  const mm   = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const dd   = String(d.getUTCDate()).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const mm   = String(d.getMonth() + 1).padStart(2, '0');
+  const dd   = String(d.getDate()).padStart(2, '0');
   return `${yyyy}${mm}${dd}`;
-}
+}}
