@@ -1,4 +1,10 @@
 {
+  "functions": {
+    "api/pregame/analyze.js":     { "maxDuration": 60 },
+    "api/pregame/analyze-mlb.js": { "maxDuration": 60 },
+    "api/pregame/analyze-nhl.js": { "maxDuration": 60 },
+    "api/halftime/analyze.js":    { "maxDuration": 60 }
+  },
   "crons": [
     {
       "path": "/api/cron/fetch-game-results",
