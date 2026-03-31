@@ -84,8 +84,11 @@ export default async function handler(req, res) {
     // ESPN's API expects dates in YYYYMMDD format in UTC, not local timezone
     // This fixes an issue where the server's local timezone could cause
     // the scanner to return tomorrow's games when it should return today's
-    const today    = formatDate(new Date());
-    const tomorrow = formatDate(new Date(Date.now() + 86400000));
+    // Use Eastern Time for date — NBA/MLB/NHL schedules are ET-based
+    // Vercel servers run UTC so we subtract 4 hours (EDT) to get the correct ET date
+    const nowET    = new Date(Date.now() - 4 * 60 * 60 * 1000);
+    const today    = formatDate(nowET);
+    const tomorrow = formatDate(new Date(nowET.getTime() + 86400000));
 
     const [todayData, tomorrowData] = await Promise.all([
       fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?dates=${today}`),
