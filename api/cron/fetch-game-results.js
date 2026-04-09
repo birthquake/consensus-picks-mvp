@@ -124,7 +124,12 @@ async function gradeHalftimePicks() {
         const gameDate = pick.gameDate || pick.game_date;
         if (!gameDate) { results.skipped++; continue; }
 
+        // Use end-of-day (23:59) as the reference point so picks from any
+        // game on a given date pass this gate once the day is over.
+        // Previously used raw gameDate timestamp (often midnight UTC) which
+        // caused all 104 pending picks to be permanently skipped.
         const pickDate = new Date(gameDate);
+        pickDate.setHours(23, 59, 0, 0);
         const now = new Date();
         const hoursSinceGame = (now - pickDate) / 3600000;
         if (hoursSinceGame < 4) { results.skipped++; continue; }
