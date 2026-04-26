@@ -430,7 +430,7 @@ async function generatePicks(gameData, existingLegs = [], legCount = 4) {
     const statLine = [
       `${s.minutes}min`,
       `${s.points ?? 0}pts`,
-      `${s.fieldGoalsMade ?? 0}/${(s.fieldGoalsMade ?? 0) + (s.fieldGoalsAttempted ?? 0)} FG`,
+      `${s.fieldGoalsMade ?? 0}/${(s.fieldGoalsAttempted ?? 0)} FG`,
       `${s.rebounds ?? 0}reb`,
       `${s.assists ?? 0}ast`,
       `${s.fouls ?? 0}pf`,
