@@ -243,11 +243,11 @@ function DailyPickRow({ pick, index, isSelected, onToggleLeg, ratingColor }) {
           </div>
         </div>
         <div style={{ flexShrink: 0, display: 'flex', gap: '6px', alignItems: 'center' }}>
-          {(pick.rationale || pick.rating_reason) && (
-            <button onClick={() => setExpanded(e => !e)} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '10px', color: 'var(--text-secondary, #888)', padding: '6px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', transition: 'all 0.15s' }}>
+  
+          <button onClick={() => setExpanded(e => !e)} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '10px', color: 'var(--text-secondary, #888)', padding: '6px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', transition: 'all 0.15s' }}>
               {expanded ? 'Less' : 'More'}
             </button>
-          )}
+        
           <button onClick={() => onToggleLeg({ ...pick, key })} style={{ background: isSelected ? '#7c3aed' : 'transparent', border: `1px solid ${isSelected ? '#7c3aed' : 'var(--border-color, #333)'}`, borderRadius: '10px', color: isSelected ? '#fff' : 'var(--text-secondary, #888)', padding: '6px 12px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', transition: 'all 0.15s' }}>
             {isSelected ? '✓' : '+ Add'}
           </button>
