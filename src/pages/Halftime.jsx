@@ -141,6 +141,7 @@ const Icon = {
     </svg>
   ),
 };
+
 // ── Star Rating ───────────────────────────────────────────────────────────────
 function StarRating({ rating }) {
   const color = rating >= 4 ? '#4ade80' : rating >= 3 ? '#fbbf24' : '#f87171';
@@ -317,37 +318,18 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
   const topRating   = totalPicks ? Math.max(...[...nbaPicks, ...mlbPicks, ...nhlPicks].map(p => p.rating)) : 0;
   const avgRating   = totalPicks ? ([...nbaPicks, ...mlbPicks, ...nhlPicks].reduce((s, p) => s + p.rating, 0) / totalPicks).toFixed(1) : '0';
 
+  // ── THE ONLY CHANGED SECTION — now uses PickCard which has More/Less built in
   const renderPickRow = (pick, i) => {
-    const key        = `${pick.player}:${pick.stat}`;
+    const key = `${pick.player}:${pick.stat}`;
     const isSelected = selectedLegs.some(l => l.key === key);
     return (
-      <div key={key} style={{ background: isSelected ? 'rgba(124,58,237,0.08)' : 'var(--bg-secondary, #111)', border: `1px solid ${isSelected ? '#7c3aed' : 'var(--border-color, #222)'}`, borderRadius: '16px', padding: '14px 16px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px', animation: `fadeUp 0.25s ease ${i * 0.04}s both` }}>
-        <div style={{ width: '42px', height: '42px', borderRadius: '12px', flexShrink: 0, background: `${ratingColor(pick.rating)}15`, border: `1px solid ${ratingColor(pick.rating)}30`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-          <span style={{ fontSize: '17px', fontWeight: '500', color: ratingColor(pick.rating), lineHeight: 1 }}>{pick.rating}</span>
-          <span style={{ fontSize: '9px', color: ratingColor(pick.rating), opacity: 0.8 }}>★</span>
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '14px', fontWeight: '500', color: 'var(--text-primary, #fff)' }}>{pick.player}</span>
-            <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '10px', background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', fontWeight: '500' }}>{pick.team}</span>
-          </div>
-          <div style={{ marginTop: '2px', fontSize: '12px', color: '#60a5fa', fontWeight: '500' }}>
-            Over {pick.hasRealLine ? pick.realLine : pick.threshold} {pick.stat}
-            {pick.hasRealLine && <span style={{ fontSize: '10px', fontWeight: '500', marginLeft: '5px', padding: '1px 5px', borderRadius: '6px', background: 'rgba(74,222,128,0.12)', color: '#4ade80' }}>{pick.book || 'live'}</span>}
-            <span style={{ color: 'var(--text-secondary, #777)', fontWeight: '400', marginLeft: '6px' }}>proj {pick.projection}</span>
-          </div>
-          <div style={{ marginTop: '3px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {pick.belowFloor && <span style={{ fontSize: '10px', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Icon.Lock /> below floor</span>}
-            {pick.trend === 'up' && <span style={{ fontSize: '10px', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Icon.TrendUp /> trending up</span>}
-            {pick.isBackToBack && <span style={{ fontSize: '10px', color: '#fbbf24', background: 'rgba(251,191,36,0.1)', padding: '1px 6px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Icon.Warning /> b2b</span>}
-          </div>
-        </div>
-        <div style={{ flexShrink: 0 }}>
-          <button onClick={() => onToggleLeg({ ...pick, key })} style={{ background: isSelected ? '#7c3aed' : 'transparent', border: `1px solid ${isSelected ? '#7c3aed' : 'var(--border-color, #333)'}`, borderRadius: '10px', color: isSelected ? '#fff' : 'var(--text-secondary, #888)', padding: '6px 12px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', transition: 'all 0.15s' }}>
-            {isSelected ? '✓' : '+ Add'}
-          </button>
-        </div>
-      </div>
+      <PickCard
+        key={key}
+        pick={{ ...pick, direction: pick.direction || 'Over' }}
+        index={i}
+        isSelected={isSelected}
+        onToggle={() => onToggleLeg({ ...pick, key })}
+      />
     );
   };
 
@@ -441,6 +423,7 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
     </div>
   );
 }
+
 // ── Performance Stats ─────────────────────────────────────────────────────────
 function PerformanceStats() {
   const [stats, setStats]     = useState(null);
@@ -577,6 +560,7 @@ function PerformanceStats() {
     </div>
   );
 }
+
 // ── Game Card ─────────────────────────────────────────────────────────────────
 function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime', oddsMap = {}, cachedAnalysis, onAnalysisUpdate }) {
   const [state, setState]               = useState(cachedAnalysis ? 'done' : 'idle');
@@ -820,6 +804,7 @@ function ParlayBuilder({ legs, onRemove }) {
     </div>
   );
 }
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const [mode, setMode]                 = useState('daily');
