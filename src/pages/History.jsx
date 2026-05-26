@@ -369,7 +369,16 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
 
   const renderPickRow = (pick, i) => {
     const key = `${pick.player}:${pick.stat}`;
-    return <DailyPickRow key={key} pick={pick} index={i} isSelected={selectedLegs.some(l => l.key === key)} onToggleLeg={onToggleLeg} ratingColor={ratingColor} />;
+    const isSelected = selectedLegs.some(l => l.key === key);
+    return (
+      <PickCard
+        key={key}
+        pick={{ ...pick, direction: pick.direction || 'Over' }}
+        index={i}
+        isSelected={isSelected}
+        onToggle={() => onToggleLeg({ ...pick, key })}
+      />
+    );
   };
 
   return (
