@@ -7,15 +7,15 @@
 //   - Data-driven star rating (computeRating) — replaces Claude's subjective confidence
 //   - Hard projection filter — picks where projection doesn't clear line dropped in code
 //   - Floor detection extended to last 10 games (was season-wide min)
-//   - Sabermetrics integration — BABIP regression, platoon splits, hard hit % from Baseball Savant
+//   - Sabermetrics: batter BA vs xBA regression, platoon splits, pitcher K%/xBA against
 //
 // BATTERS:
 //   - Season avg hits, total bases, home runs, RBI, runs, HRA (hits+runs+RBI)
 //   - Last 5 game rolling averages for trend detection
 //   - Variance (std dev) over season → determines cushion on threshold
 //   - Floor detection — worst game in last 10 (near-free if floor >= line)
-//   - Opponent ERA multiplier — boosts/reduces projection vs league avg ERA
-//   - Sabermetric multiplier — BABIP regression + platoon + hard hit quality (hits only)
+//   - Opponent ERA multiplier + pitcher K%/xBA multiplier
+//   - Batter sabermetric multiplier: BA vs xBA regression + platoon splits
 //
 // PITCHERS (SP only):
 //   - Season avg strikeouts, outs recorded, walks per start
@@ -27,7 +27,14 @@
 // Body: { gameId, sport, league, homeTeam, awayTeam, gameDate, existingLegs?, legCount? }
 
 import Anthropic from '@anthropic-ai/sdk';
-import { getSabermetrics, getSabermetricMultiplier, formatSabermetricsForPrompt } from './sabermetrics.js';
+import {
+  getSabermetrics,
+  getPitcherSabermetrics,
+  getSabermetricMultiplier,
+  getPitcherMultiplierForBatters,
+  formatSabermetricsForPrompt,
+  formatPitcherSabermetricsForPrompt,
+} from './sabermetrics.js';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -187,7 +194,7 @@ async function getTeamPitchingStats(league, teamId) {
   const era = starterERA ?? teamERA;
   if (era == null) return null;
 
-  const rawMultiplier = era / MLB_AVG.starterERA;
+  const rawMultiplier    = era / MLB_AVG.starterERA;
   const batterMultiplier = Math.max(0.80, Math.min(1.20, rawMultiplier));
 
   return {
@@ -204,7 +211,7 @@ async function getPitcherRestDays(league, teamId, gameDate) {
   const today = gameDate ? new Date(gameDate) : new Date();
   const yyyy  = today.getFullYear();
 
-  const url = `https://site.api.espn.com/apis/site/v2/sports/baseball/${league}/teams/${teamId}/schedule?season=${yyyy}`;
+  const url  = `https://site.api.espn.com/apis/site/v2/sports/baseball/${league}/teams/${teamId}/schedule?season=${yyyy}`;
   const data = await fetchWithTimeout(url, 3000);
   if (!data) return null;
 
@@ -234,7 +241,7 @@ async function getPitcherRestDays(league, teamId, gameDate) {
 // ─── Gamelog fetching ─────────────────────────────────────────────────────────
 
 async function getPlayerGamelog(league, athleteId, isPitcher) {
-  const url = `https://site.web.api.espn.com/apis/common/v3/sports/baseball/${league}/athletes/${athleteId}/gamelog`;
+  const url  = `https://site.web.api.espn.com/apis/common/v3/sports/baseball/${league}/athletes/${athleteId}/gamelog`;
   const data = await fetchWithTimeout(url, 5000);
   if (!data) return null;
 
@@ -272,7 +279,7 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
     for (const cat of categories) {
       for (const event of (cat.events || [])) {
         const stats = event.stats || [];
-        const ip = parseInnings(parseS(stats, IP_I));
+        const ip    = parseInnings(parseS(stats, IP_I));
         if (ip == null || ip < 1) continue;
 
         const outs = OUTS_I >= 0 ? parseS(stats, OUTS_I) : (ip != null ? Math.round(ip * 3) : null);
@@ -300,7 +307,7 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
     for (const cat of categories) {
       for (const event of (cat.events || [])) {
         const stats = event.stats || [];
-        const ab = parseS(stats, AB_I);
+        const ab    = parseS(stats, AB_I);
         if (ab === 0 && parseS(stats, H_I) === 0) continue;
 
         const h   = parseS(stats, H_I)   ?? 0;
@@ -330,7 +337,7 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
 
 // ─── Projection engine ────────────────────────────────────────────────────────
 
-function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starterHand = null) {
+function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starterHand = null, pitcherSaber = null) {
   if (!gamelog || gamelog.allGames.length < 1) return null;
 
   const games  = gamelog.allGames;
@@ -339,9 +346,16 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
   const season = games;
   const projections = {};
 
-  const oppMult   = opponentERA?.batterMultiplier ?? 1.0;
-  const oppERA    = opponentERA?.era ?? null;
+  const oppMult  = opponentERA?.batterMultiplier ?? 1.0;
+  const oppERA   = opponentERA?.era ?? null;
+
+  // Batter sabermetric multiplier: BA vs xBA regression + platoon splits
   const saberMult = sabermetrics ? getSabermetricMultiplier(sabermetrics, starterHand) : 1.0;
+
+  // Pitcher sabermetric multiplier: K% suppression + xBA allowed
+  // Combined with ERA mult for total pitcher difficulty signal (capped at ±20%)
+  const pitcherMult      = pitcherSaber ? getPitcherMultiplierForBatters(pitcherSaber) : 1.0;
+  const totalPitcherMult = Math.max(0.80, Math.min(1.20, oppMult * pitcherMult));
 
   for (const stat of BATTER_STATS) {
     if (stat === 'hra') continue;
@@ -357,13 +371,12 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
     const floor     = last10Vals.length ? Math.min(...last10Vals) : Math.min(...seasonVals);
     const ceiling   = Math.max(...seasonVals);
 
-    const rawBlended = last5Avg != null
+    // 60/40 blend → total pitcher mult (ERA × K%/xBA) → batter sabermetric mult (hits only)
+    const rawBlended    = last5Avg != null
       ? Math.round((last5Avg * 0.6 + seasonAvg * 0.4) * 100) / 100
       : seasonAvg;
-
-    // Sabermetric multiplier applies to hits only (most directly affected)
     const statSaberMult = stat === 'hits' ? saberMult : 1.0;
-    const blended = Math.round(rawBlended * oppMult * statSaberMult * 100) / 100;
+    const blended       = Math.round(rawBlended * totalPitcherMult * statSaberMult * 100) / 100;
 
     const trend = last5Avg != null && seasonAvg > 0
       ? last5Avg > seasonAvg * 1.2 ? 'up' : last5Avg < seasonAvg * 0.8 ? 'down' : 'neutral'
@@ -390,7 +403,8 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
       edge, stdDev: sd, floor, ceiling, trend,
       sampleSize: seasonVals.length,
       oppMult, oppERA,
-      saberMult: Math.round(saberMult * 100) / 100,
+      saberMult:   Math.round(saberMult * 100) / 100,
+      pitcherMult: Math.round(pitcherMult * 100) / 100,
     };
   }
 
@@ -403,10 +417,10 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
       : null;
 
     const hraCushionConfig = VARIANCE_CUSHION.hra;
-    const hraVals = gamelog.allGames.map(g => (g.stats.hits ?? 0) + (g.stats.runs ?? 0) + (g.stats.rbi ?? 0));
-    const hraSd   = gamelog.allGames.length >= 2 ? stdDev(hraVals) : null;
-    const hraLast10Vals = hraVals.slice(0, 10);
-    const hraFloor      = hraLast10Vals.length ? Math.min(...hraLast10Vals) : null;
+    const hraVals          = gamelog.allGames.map(g => (g.stats.hits ?? 0) + (g.stats.runs ?? 0) + (g.stats.rbi ?? 0));
+    const hraSd            = gamelog.allGames.length >= 2 ? stdDev(hraVals) : null;
+    const hraLast10Vals    = hraVals.slice(0, 10);
+    const hraFloor         = hraLast10Vals.length ? Math.min(...hraLast10Vals) : null;
 
     let hraCushion = 1.0;
     if (hraCushionConfig && hraSd != null) {
@@ -474,8 +488,8 @@ function buildPitcherProjection(gamelog, restInfo) {
       else if (sd < cushionConfig.mid[1])  cushion = cushionConfig.mid[2];
       else                                  cushion = cushionConfig.high[2];
     }
-    if (trend === 'up')   cushion -= 0.5;
-    if (trend === 'down') cushion += 0.5;
+    if (trend === 'up')        cushion -= 0.5;
+    if (trend === 'down')      cushion += 0.5;
     if (restInfo?.isShortRest) cushion += 0.5;
 
     const rawThreshold = blended - cushion;
@@ -532,6 +546,11 @@ function computeRating(proj) {
     if (proj.saberMult < 0.95) score -= 1;
   }
 
+  if (proj.pitcherMult != null) {
+    if (proj.pitcherMult > 1.04) score += 1;
+    if (proj.pitcherMult < 0.96) score -= 1;
+  }
+
   if (proj.isShortRest) score -= 1;
   if (proj.isExtraRest) score += 1;
 
@@ -544,8 +563,8 @@ function computeRating(proj) {
 
 function formatPlayerForPrompt(player, projections) {
   const isPitcher = player.isPitcher;
-  const stats = isPitcher ? PITCHER_STATS : BATTER_STATS;
-  const lines = [`${player.teamAbbrev} | ${player.name} (${player.position}) ${isPitcher ? '[PITCHER]' : '[BATTER]'}`];
+  const stats     = isPitcher ? PITCHER_STATS : BATTER_STATS;
+  const lines     = [`${player.teamAbbrev} | ${player.name} (${player.position}) ${isPitcher ? '[PITCHER]' : '[BATTER]'}`];
 
   if (isPitcher && projections._avgInnings) {
     lines.push(`  Avg innings per start: ${projections._avgInnings} | Last 5 starts avg: ${projections._last5Innings ?? '?'}`);
@@ -553,15 +572,20 @@ function formatPlayerForPrompt(player, projections) {
 
   if (!isPitcher && player.sabermetrics) {
     const saberLine = formatSabermetricsForPrompt(player.sabermetrics, player.starterHand);
-    if (saberLine) lines.push(`  SABERMETRICS: ${saberLine}`);
+    if (saberLine) lines.push(`  BATTER SABERMETRICS: ${saberLine}`);
+  }
+
+  if (!isPitcher && player.pitcherSaber) {
+    const pitcherLine = formatPitcherSabermetricsForPrompt(player.pitcherSaber);
+    if (pitcherLine) lines.push(`  OPPOSING PITCHER SABERMETRICS: ${pitcherLine}`);
   }
 
   for (const stat of stats) {
     const p = projections[stat];
     if (!p || p.blended == null) continue;
 
-    const label = stat === 'hra' ? 'H+R+RBI' : stat === 'outsRecorded' ? 'Outs Recorded' : stat === 'rbi' ? 'RBI' : stat.charAt(0).toUpperCase() + stat.slice(1);
-    const trendIcon = p.trend === 'up' ? 'TRENDING UP' : p.trend === 'down' ? 'TRENDING DOWN' : 'NEUTRAL';
+    const label         = stat === 'hra' ? 'H+R+RBI' : stat === 'outsRecorded' ? 'Outs Recorded' : stat === 'rbi' ? 'RBI' : stat.charAt(0).toUpperCase() + stat.slice(1);
+    const trendIcon     = p.trend === 'up' ? 'TRENDING UP' : p.trend === 'down' ? 'TRENDING DOWN' : 'NEUTRAL';
     const compositeNote = p.isComposite ? ' [COMPOSITE: H+R+RBI]' : '';
 
     let contextLine = '';
@@ -570,7 +594,11 @@ function formatPlayerForPrompt(player, projections) {
     }
     if (!isPitcher && p.saberMult != null && p.saberMult !== 1.0) {
       const dir = p.saberMult > 1 ? '↑' : '↓';
-      contextLine += `\n    Sabermetric mult: ${p.saberMult}x ${dir} (BABIP regression + platoon + contact quality)`;
+      contextLine += `\n    Batter sabermetric mult: ${p.saberMult}x ${dir} (BA vs xBA regression + platoon)`;
+    }
+    if (!isPitcher && p.pitcherMult != null && p.pitcherMult !== 1.0) {
+      const dir = p.pitcherMult > 1 ? '↑' : '↓';
+      contextLine += `\n    Pitcher sabermetric mult: ${p.pitcherMult}x ${dir} (K% suppression + xBA allowed)`;
     }
     if (isPitcher) {
       const restNote = p.isShortRest ? ' ⚠️SHORT REST' : p.isExtraRest ? ' ✅EXTRA REST' : '';
@@ -637,12 +665,17 @@ BASEBALL-SPECIFIC FACTORS:
 - Trending up in last 5 is a strong signal in baseball — hot streaks are real
 
 SABERMETRIC FACTORS (when provided):
-- BABIP well below xBA (>20 pts) = positive regression signal = more hits incoming
-- BABIP well above xBA (>20 pts) = negative regression risk = fewer hits incoming
-- wRC+ > 120 = above average offensive value; wRC+ < 80 = below average
-- Hard Hit% above league avg (38.5%) = consistent quality contact = hits prop upside
+- Batter BA vs xBA: if actual BA well below xBA (>20 pts), positive regression signal = more hits incoming
+- Batter BA vs xBA: if actual BA well above xBA (>20 pts), negative regression risk
 - Platoon split vs today's starter handedness = most relevant split to cite
-- Sabermetric multiplier already applied to hits blended projection — factor this into rationale
+- Batter sabermetric multiplier already applied to hits blended projection
+
+OPPOSING PITCHER SABERMETRIC FACTORS (when provided):
+- High pitcher K% (>26%) suppresses hits — factor into hits prop confidence
+- Low pitcher K% (<18%) = contact pitcher = batter hits upside
+- Pitcher xBA against: if high vs league avg (0.248), batters have genuine upside beyond ERA
+- ERA vs FIP gap: if ERA much higher than FIP, pitcher is better than ERA suggests — reduce batter confidence
+- Pitcher matchup multiplier already applied to all batter stat projections
 
 STAT LABELS FOR OUTPUT:
 - Use exactly: "Hits", "Total Bases", "Home Runs", "RBI", "Runs", "H+R+RBI", "Strikeouts", "Outs Recorded", "Walks"
@@ -683,12 +716,12 @@ Return ONLY valid JSON, no markdown:
 Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad with weak picks. Consider both pitcher and batter props equally. Prioritize picks where projection clearly exceeds threshold with low variance.`;
 
   const msg = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model:      'claude-haiku-4-5-20251001',
     max_tokens: 2500,
-    messages: [{ role: 'user', content: prompt }],
+    messages:   [{ role: 'user', content: prompt }],
   });
 
-  const raw = msg.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  const raw      = msg.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
   const jsonStart = raw.indexOf('{');
   const jsonEnd   = raw.lastIndexOf('}');
   const cleaned   = jsonStart !== -1 && jsonEnd !== -1 ? raw.substring(jsonStart, jsonEnd + 1) : raw;
@@ -730,12 +763,12 @@ export default async function handler(req, res) {
     console.log(`[analyze-mlb] homeId: ${resolvedHomeId}, awayId: ${resolvedAwayId}`);
 
     const [homeRoster, awayRoster, homeERA, awayERA, homeRest, awayRest] = await Promise.all([
-      resolvedHomeId ? getTeamRoster(league, resolvedHomeId)                                  : [],
-      resolvedAwayId ? getTeamRoster(league, resolvedAwayId)                                  : [],
-      resolvedAwayId ? getTeamPitchingStats(league, resolvedAwayId).catch(() => null)         : null,
-      resolvedHomeId ? getTeamPitchingStats(league, resolvedHomeId).catch(() => null)         : null,
-      resolvedHomeId ? getPitcherRestDays(league, resolvedHomeId, gameDate).catch(() => null) : null,
-      resolvedAwayId ? getPitcherRestDays(league, resolvedAwayId, gameDate).catch(() => null) : null,
+      resolvedHomeId ? getTeamRoster(league, resolvedHomeId)                                            : [],
+      resolvedAwayId ? getTeamRoster(league, resolvedAwayId)                                            : [],
+      resolvedAwayId ? getTeamPitchingStats(league, resolvedAwayId).catch(() => null)                   : null,
+      resolvedHomeId ? getTeamPitchingStats(league, resolvedHomeId).catch(() => null)                   : null,
+      resolvedHomeId ? getPitcherRestDays(league, resolvedHomeId, gameDate).catch(() => null)           : null,
+      resolvedAwayId ? getPitcherRestDays(league, resolvedAwayId, gameDate).catch(() => null)           : null,
     ]);
 
     console.log(`[analyze-mlb] homeRoster: ${homeRoster.length}, awayRoster: ${awayRoster.length}`);
@@ -751,23 +784,34 @@ export default async function handler(req, res) {
     console.log(`[analyze-mlb] Analyzing ${allPlayers.length} players (${homePitchers.length + awayPitchers.length} pitchers, ${homeBatters.length + awayBatters.length} batters)`);
 
     const gamelogResults = await Promise.all(
-      allPlayers.map(p =>
-        getPlayerGamelog(league, p.id, p.isPitcher).catch(() => null)
-      )
+      allPlayers.map(p => getPlayerGamelog(league, p.id, p.isPitcher).catch(() => null))
     );
 
-    // Fetch sabermetric data for batters in parallel (best-effort, failures return null)
-    const battersOnly = allPlayers.map((p, i) => ({ player: p, index: i })).filter(({ player }) => !player.isPitcher);
-    const saberResults = await Promise.all(
-      battersOnly.map(({ player }) =>
-        getSabermetrics(player.name).catch(() => null)
-      )
-    );
+    // Fetch batter and pitcher sabermetrics in parallel (best-effort)
+    const battersOnly  = allPlayers.map((p, i) => ({ player: p, index: i })).filter(({ player }) => !player.isPitcher);
+    const pitchersOnly = allPlayers.map((p, i) => ({ player: p, index: i })).filter(({ player }) => player.isPitcher);
+
+    const [saberResults, pitcherSaberResults] = await Promise.all([
+      Promise.all(battersOnly.map(({ player }) => getSabermetrics(player.name).catch(() => null))),
+      Promise.all(pitchersOnly.map(({ player }) => getPitcherSabermetrics(player.name).catch(() => null))),
+    ]);
+
     const saberByIndex = {};
     battersOnly.forEach(({ index }, i) => { saberByIndex[index] = saberResults[i]; });
+    const pitcherSaberByIndex = {};
+    pitchersOnly.forEach(({ index }, i) => { pitcherSaberByIndex[index] = pitcherSaberResults[i]; });
+
+    // homePitchers[0] faces away batters; awayPitchers[0] faces home batters
+    const homePitcherSaber = homePitchers[0]
+      ? (pitcherSaberByIndex[allPlayers.indexOf(homePitchers[0])] || null)
+      : null;
+    const awayPitcherSaber = awayPitchers[0]
+      ? (pitcherSaberByIndex[allPlayers.indexOf(awayPitchers[0])] || null)
+      : null;
 
     console.log(`[analyze-mlb] Gamelogs: ${gamelogResults.filter(Boolean).length}/${allPlayers.length} fetched`);
     console.log(`[analyze-mlb] Sabermetrics: ${saberResults.filter(Boolean).length}/${battersOnly.length} batters enriched`);
+    console.log(`[analyze-mlb] Pitcher sabermetrics: ${pitcherSaberResults.filter(Boolean).length}/${pitchersOnly.length} pitchers enriched`);
 
     const playerData = allPlayers.map((p, i) => {
       const gamelog = gamelogResults[i];
@@ -782,16 +826,18 @@ export default async function handler(req, res) {
         : null;
 
       const starterHand = !p.isPitcher
-        ? (p.isHome
-            ? awayPitchers[0]?.throws || null
-            : homePitchers[0]?.throws || null)
+        ? (p.isHome ? awayPitchers[0]?.throws || null : homePitchers[0]?.throws || null)
         : null;
 
       const sabermetrics = !p.isPitcher ? (saberByIndex[i] || null) : null;
 
+      const pitcherSaber = !p.isPitcher
+        ? (p.isHome ? awayPitcherSaber : homePitcherSaber)
+        : null;
+
       const projections = p.isPitcher
         ? buildPitcherProjection(gamelog, restInfo)
-        : buildBatterProjection(gamelog, opponentERA, sabermetrics, starterHand);
+        : buildBatterProjection(gamelog, opponentERA, sabermetrics, starterHand, pitcherSaber);
 
       if (!projections || Object.keys(projections).length === 0) return null;
 
@@ -805,7 +851,7 @@ export default async function handler(req, res) {
         projections.hra._computedRating = computeRating(projections.hra);
       }
 
-      return { ...p, projections, gamesPlayed: gamelog.gamesPlayed, sabermetrics, starterHand };
+      return { ...p, projections, gamesPlayed: gamelog.gamesPlayed, sabermetrics, starterHand, pitcherSaber };
     }).filter(Boolean);
 
     console.log(`[analyze-mlb] Built projections for ${playerData.length} players`);
