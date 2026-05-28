@@ -860,15 +860,22 @@ export default async function handler(req, res) {
           if (proj.blended <= proj.threshold) {
             delete p.projections[stat];
           }
-          // Hits-specific minimum: projection must be >= 1.0
+         // Hits-specific minimum: projection must be >= 1.0
           // Sub-1.0 hits projection = less than 1 hit per game on average — too thin
           if (stat === 'hits' && proj && proj.blended < 1.0) {
+            delete p.projections[stat];
+          }
+          // Runs minimum: projection must be >= 0.80
+          if (stat === 'runs' && proj && proj.blended < 0.80) {
+            delete p.projections[stat];
+          }
+          // RBI minimum: projection must be >= 0.75
+          if (stat === 'rbi' && proj && proj.blended < 0.75) {
             delete p.projections[stat];
           }
         }
       }
     }
-
     if (playerData.length === 0) {
       return res.status(404).json({ error: 'Could not build projections for any players in this game' });
     }
