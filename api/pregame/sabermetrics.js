@@ -10,16 +10,14 @@
 //
 // All data is season-level from the current year.
 // Failures are handled gracefully — returns null per player on any error.
-// The analyzer continues normally with null sabermetrics (no data = no adjustment).
 
 const CURRENT_YEAR = new Date().getFullYear();
 
-// League average baselines for context and adjustment calculations
 const MLB_LEAGUE_AVG = {
-  babip:       0.298,
-  wrcPlus:     100,
-  hardHitPct:  38.5,
-  xba:         0.248,
+  babip:      0.298,
+  wrcPlus:    100,
+  hardHitPct: 38.5,
+  xba:        0.248,
 };
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
@@ -28,12 +26,22 @@ async function fetchWithTimeout(url, ms = 6000) {
   const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    const res = await fetch(url, { signal: ctrl.signal });
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; PaiGrade/1.0)',
+        'Accept': 'application/json, text/csv, */*',
+      },
+    });
     clearTimeout(timer);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.log(`[sabermetrics] HTTP ${res.status} for ${url.substring(0, 80)}`);
+      return null;
+    }
     return res;
-  } catch {
+  } catch (err) {
     clearTimeout(timer);
+    console.log(`[sabermetrics] Fetch failed for ${url.substring(0, 80)}: ${err.message}`);
     return null;
   }
 }
@@ -57,43 +65,83 @@ function safeFloat(val) {
   return isNaN(n) ? null : n;
 }
 
-// ─── Baseball Savant player ID lookup ────────────────────────────────────────
+// ─── Player ID lookup via MLB Stats API ───────────────────────────────────────
 
 async function getMlbamId(playerName) {
   try {
     const encoded = encodeURIComponent(playerName);
-    const url     = `https://baseballsavant.mlb.com/player/search-all?q=${encoded}&type=batter`;
+    const url     = `https://statsapi.mlb.com/api/v1/people/search?names=${encoded}&sportId=1`;
     const res     = await fetchWithTimeout(url, 5000);
-    if (!res) return null;
+    if (res) {
+      const data   = await res.json();
+      const people = data?.people || [];
+      if (people.length > 0) {
+        const match = people.find(p =>
+          p.fullName?.toLowerCase() === playerName.toLowerCase()
+        ) || people[0];
+        if (match?.id) {
+          console.log(`[sabermetrics] Found MLBAM ID ${match.id} for ${playerName}`);
+          return match.id;
+        }
+      }
+    }
 
-    const data = await res.json();
-    if (!Array.isArray(data) || !data.length) return null;
+    // Fallback: Baseball Savant search
+    const savantUrl = `https://baseballsavant.mlb.com/player/search-all?q=${encoded}&type=batter`;
+    const savantRes = await fetchWithTimeout(savantUrl, 5000);
+    if (savantRes) {
+      const savantData = await savantRes.json();
+      if (Array.isArray(savantData) && savantData.length > 0) {
+        const match = savantData.find(p =>
+          `${p.first_name} ${p.last_name}`.toLowerCase() === playerName.toLowerCase()
+        ) || savantData[0];
+        const id = match?.id || match?.player_id;
+        if (id) {
+          console.log(`[sabermetrics] Found MLBAM ID ${id} for ${playerName} via Savant`);
+          return id;
+        }
+      }
+    }
 
-    const match = data.find(p => {
-      const fullName = `${p.first_name} ${p.last_name}`.toLowerCase();
-      return fullName === playerName.toLowerCase();
-    }) || data[0];
-
-    return match?.id || match?.player_id || null;
-  } catch {
+    console.log(`[sabermetrics] Could not find MLBAM ID for ${playerName}`);
+    return null;
+  } catch (err) {
+    console.log(`[sabermetrics] getMlbamId error for ${playerName}: ${err.message}`);
     return null;
   }
 }
 
 // ─── Statcast season-level batting stats ─────────────────────────────────────
 
-async function fetchStatcastBatter(mlbamId) {
+async function fetchStatcastBatter(mlbamId, playerName) {
   try {
     const lbUrl = `https://baseballsavant.mlb.com/leaderboard/expected_statistics?type=batter&year=${CURRENT_YEAR}&position=&team=&min=25&csv=true`;
-    const res   = await fetchWithTimeout(lbUrl, 8000);
-    if (!res) return null;
+    const res   = await fetchWithTimeout(lbUrl, 10000);
+    if (!res) {
+      console.log(`[sabermetrics] Could not fetch Statcast leaderboard`);
+      return null;
+    }
 
     const text = await res.text();
+    if (!text || text.length < 100) {
+      console.log(`[sabermetrics] Statcast leaderboard returned empty response`);
+      return null;
+    }
+
     const rows = parseCSV(text);
+    console.log(`[sabermetrics] Statcast leaderboard: ${rows.length} rows`);
 
-    const row = rows.find(r => String(r.player_id) === String(mlbamId) || String(r.mlbam_id) === String(mlbamId));
-    if (!row) return null;
+    const row = rows.find(r =>
+      String(r.player_id) === String(mlbamId) ||
+      String(r.mlbam_id)  === String(mlbamId)
+    );
 
+    if (!row) {
+      console.log(`[sabermetrics] No Statcast row found for ${playerName} (ID: ${mlbamId})`);
+      return null;
+    }
+
+    console.log(`[sabermetrics] Got Statcast data for ${playerName}: xba=${row.xba} babip=${row.babip}`);
     return {
       xba:         safeFloat(row.xba  || row.est_ba),
       xslg:        safeFloat(row.xslg || row.est_slg),
@@ -107,47 +155,57 @@ async function fetchStatcastBatter(mlbamId) {
       bbPct:       safeFloat(row['BB%'] || row.walk_percent),
       pa:          safeFloat(row.pa),
     };
-  } catch {
+  } catch (err) {
+    console.log(`[sabermetrics] fetchStatcastBatter error: ${err.message}`);
     return null;
   }
 }
 
-// ─── Platoon splits ───────────────────────────────────────────────────────────
+// ─── Platoon splits via MLB Stats API ────────────────────────────────────────
 
-async function fetchPlatoonSplits(mlbamId) {
+async function fetchPlatoonSplits(mlbamId, playerName) {
   try {
-    const vsRHP = `https://www.fangraphs.com/api/leaders/splits/leaders?strPlayerId=${mlbamId}&splitArr=6&statGroup=hitting&startDate=${CURRENT_YEAR}-03-01&endDate=${CURRENT_YEAR}-11-01&season=${CURRENT_YEAR}&gameType=R&stat=avg,obp,slg,woba,wrc_plus,babip&numberofrecords=1&sortDir=default&sortStat=Batting+Average&filterset=default&c=0`;
-    const vsLHP = `https://www.fangraphs.com/api/leaders/splits/leaders?strPlayerId=${mlbamId}&splitArr=5&statGroup=hitting&startDate=${CURRENT_YEAR}-03-01&endDate=${CURRENT_YEAR}-11-01&season=${CURRENT_YEAR}&gameType=R&stat=avg,obp,slg,woba,wrc_plus,babip&numberofrecords=1&sortDir=default&sortStat=Batting+Average&filterset=default&c=0`;
+    const url = `https://statsapi.mlb.com/api/v1/people/${mlbamId}/stats?stats=statSplits&group=hitting&season=${CURRENT_YEAR}&sitCodes=vr,vl&gameType=R`;
+    const res = await fetchWithTimeout(url, 6000);
+    if (!res) {
+      console.log(`[sabermetrics] Could not fetch platoon splits for ${playerName}`);
+      return null;
+    }
 
-    const [rhpRes, lhpRes] = await Promise.all([
-      fetchWithTimeout(vsRHP, 5000),
-      fetchWithTimeout(vsLHP, 5000),
-    ]);
+    const data   = await res.json();
+    const splits = data?.stats?.[0]?.splits || [];
 
-    const rhpData = rhpRes ? await rhpRes.json().catch(() => null) : null;
-    const lhpData = lhpRes ? await lhpRes.json().catch(() => null) : null;
+    if (!splits.length) {
+      console.log(`[sabermetrics] No platoon splits found for ${playerName}`);
+      return null;
+    }
 
-    const extractSplit = (data) => {
-      const row = data?.data?.[0] || data?.[0] || null;
-      if (!row) return null;
+    const vsRhpSplit = splits.find(s => s.split?.code === 'vr');
+    const vsLhpSplit = splits.find(s => s.split?.code === 'vl');
+
+    const extractSplit = (split) => {
+      if (!split?.stat) return null;
       return {
-        avg:     safeFloat(row.AVG || row.avg),
-        obp:     safeFloat(row.OBP || row.obp),
-        slg:     safeFloat(row.SLG || row.slg),
-        woba:    safeFloat(row.wOBA || row.woba),
-        wrcPlus: safeFloat(row['wRC+'] || row.wrc_plus),
-        babip:   safeFloat(row.BABIP || row.babip),
-        pa:      safeFloat(row.PA || row.pa),
+        avg:   safeFloat(split.stat.avg),
+        obp:   safeFloat(split.stat.obp),
+        slg:   safeFloat(split.stat.slg),
+        ops:   safeFloat(split.stat.ops),
+        babip: safeFloat(split.stat.babip),
+        pa:    safeFloat(split.stat.plateAppearances),
+        hits:  safeFloat(split.stat.hits),
+        ab:    safeFloat(split.stat.atBats),
       };
     };
 
-    const vsRhp = extractSplit(rhpData);
-    const vsLhp = extractSplit(lhpData);
+    const vsRhp = extractSplit(vsRhpSplit);
+    const vsLhp = extractSplit(vsLhpSplit);
 
     if (!vsRhp && !vsLhp) return null;
 
+    console.log(`[sabermetrics] Got platoon splits for ${playerName}: vsRHP avg=${vsRhp?.avg} vsLHP avg=${vsLhp?.avg}`);
     return { vsRhp, vsLhp };
-  } catch {
+  } catch (err) {
+    console.log(`[sabermetrics] fetchPlatoonSplits error for ${playerName}: ${err.message}`);
     return null;
   }
 }
@@ -160,14 +218,18 @@ export async function getSabermetrics(playerName) {
     if (!mlbamId) return null;
 
     const [statcast, platoon] = await Promise.all([
-      fetchStatcastBatter(mlbamId),
-      fetchPlatoonSplits(mlbamId),
+      fetchStatcastBatter(mlbamId, playerName),
+      fetchPlatoonSplits(mlbamId, playerName),
     ]);
 
-    if (!statcast && !platoon) return null;
+    if (!statcast && !platoon) {
+      console.log(`[sabermetrics] No data at all for ${playerName}`);
+      return null;
+    }
 
     return { mlbamId, statcast, platoon };
-  } catch {
+  } catch (err) {
+    console.log(`[sabermetrics] getSabermetrics error for ${playerName}: ${err.message}`);
     return null;
   }
 }
@@ -186,7 +248,6 @@ export function getBabipMultiplier(sabermetrics) {
   if (diff < -0.010) return 1.03;
   if (diff > 0.020)  return 0.97;
   if (diff > 0.010)  return 0.99;
-
   return 1.0;
 }
 
@@ -231,18 +292,18 @@ export function formatSabermetricsForPrompt(sabermetrics, starterHand) {
   const s = sabermetrics.statcast;
 
   if (s) {
-    if (s.babip != null)       lines.push(`BABIP: ${s.babip} (lg avg ${MLB_LEAGUE_AVG.babip})`);
-    if (s.xba != null)         lines.push(`xBA: ${s.xba}`);
-    if (s.wrcPlus != null)     lines.push(`wRC+: ${s.wrcPlus} (100=avg)`);
-    if (s.hardHitPct != null)  lines.push(`Hard Hit%: ${s.hardHitPct}% (lg avg ${MLB_LEAGUE_AVG.hardHitPct}%)`);
-    if (s.barrelPct != null)   lines.push(`Barrel%: ${s.barrelPct}%`);
+    if (s.babip != null)      lines.push(`BABIP: ${s.babip} (lg avg ${MLB_LEAGUE_AVG.babip})`);
+    if (s.xba != null)        lines.push(`xBA: ${s.xba}`);
+    if (s.wrcPlus != null)    lines.push(`wRC+: ${s.wrcPlus} (100=avg)`);
+    if (s.hardHitPct != null) lines.push(`Hard Hit%: ${s.hardHitPct}% (lg avg ${MLB_LEAGUE_AVG.hardHitPct}%)`);
+    if (s.barrelPct != null)  lines.push(`Barrel%: ${s.barrelPct}%`);
   }
 
   if (sabermetrics.platoon && starterHand) {
     const split = starterHand === 'R' ? sabermetrics.platoon.vsRhp : sabermetrics.platoon.vsLhp;
     const label = starterHand === 'R' ? 'vs RHP' : 'vs LHP';
     if (split?.avg != null) {
-      lines.push(`${label}: AVG ${split.avg} | wRC+ ${split.wrcPlus ?? '?'} | BABIP ${split.babip ?? '?'}`);
+      lines.push(`${label}: AVG ${split.avg} | OPS ${split.ops ?? '?'} | BABIP ${split.babip ?? '?'}`);
     }
   }
 
