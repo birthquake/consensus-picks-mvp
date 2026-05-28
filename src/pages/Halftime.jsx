@@ -140,6 +140,19 @@ const Icon = {
       <polyline points="18 15 12 9 6 15"/>
     </svg>
   ),
+  // ── NEW: pitcher/batter toggle icons ────────────────────────────────────────
+  Person: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="7" r="4"/>
+      <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>
+    </svg>
+  ),
+  Pitch: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+    </svg>
+  ),
 };
 
 // ── Star Rating ───────────────────────────────────────────────────────────────
@@ -320,7 +333,6 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
   const topRating   = totalPicks ? Math.max(...[...nbaPicks, ...mlbPicks, ...nhlPicks].map(p => p.rating)) : 0;
   const avgRating   = totalPicks ? ([...nbaPicks, ...mlbPicks, ...nhlPicks].reduce((s, p) => s + p.rating, 0) / totalPicks).toFixed(1) : '0';
 
-  // ── THE ONLY CHANGED SECTION — now uses PickCard which has More/Less built in
   const renderPickRow = (pick, i) => {
     const key = `${pick.player}:${pick.stat}`;
     const isSelected = selectedLegs.some(l => l.key === key);
@@ -381,7 +393,7 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
             </div>
           </div>
 
-          {/* Sport selector — NBA / MLB / NHL tabs */}
+          {/* Sport selector */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '16px' }}>
             {[
               { id: 'nba', label: 'NBA', icon: <Icon.Basketball />, count: nbaPicks.length },
@@ -570,6 +582,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
   const [errorMsg, setErrorMsg]         = useState('');
   const [analysisMode, setAnalysisMode] = useState('picks');
   const [collapsed, setCollapsed]       = useState(false);
+  const [pickType, setPickType]         = useState('all'); // 'all' | 'batters' | 'pitchers'
 
   const isMLB = game.league === 'mlb';
   const isNHL = game.league === 'nhl';
@@ -585,10 +598,16 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
         body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount, mode: analysisMode, oddsMap };
       } else if (isMLB) {
         endpoint = '/api/pregame/analyze-mlb';
-        body = { gameId: game.id, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount };
+        body = {
+          gameId: game.id, league: game.league,
+          homeTeam: game.homeTeam, awayTeam: game.awayTeam,
+          gameDate: game.gameDate || game.startTime,
+          existingLegs, legCount,
+          pickType,   // ← passed through to backend
+        };
       } else if (isNHL) {
         endpoint = '/api/pregame/analyze-nhl';
-        body = { gameId: game.id, league: game.league, homeTeam: game.homeTeam.abbreviation, awayTeam: game.awayTeam.abbreviation,homeTeamId: game.homeTeam.id, awayTeamId: game.awayTeam.id, gameDate: game.gameDate || game.startTime, existingLegs, legCount };
+        body = { gameId: game.id, league: game.league, homeTeam: game.homeTeam.abbreviation, awayTeam: game.awayTeam.abbreviation, homeTeamId: game.homeTeam.id, awayTeamId: game.awayTeam.id, gameDate: game.gameDate || game.startTime, existingLegs, legCount };
       } else {
         endpoint = '/api/pregame/analyze';
         body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount, mode: analysisMode, oddsMap };
@@ -605,7 +624,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
       setErrorMsg(err.message);
       setState('error');
     }
-  }, [game, mode, analysisMode, legCount, isMLB, isNHL]);
+  }, [game, mode, analysisMode, legCount, isMLB, isNHL, pickType]);  // pickType in deps
 
   const savePicks = async (analysisData) => {
     await fetch('/api/halftime/save-picks', {
@@ -658,6 +677,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
 
       {!collapsed && (
         <div style={{ padding: '16px 20px' }}>
+          {/* NBA/halftime mode toggle */}
           {mode === 'pregame' && !isMLB && !isNHL && (
             <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', background: 'var(--bg-tertiary, #0a0a0a)', padding: '4px', borderRadius: '10px' }}>
               {[{ id: 'picks', label: 'Prop Picks', icon: Icon.Target }, { id: 'pra', label: 'PRA Leader', icon: Icon.BarChart }].map(m => (
@@ -667,6 +687,32 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
               ))}
             </div>
           )}
+
+          {/* ── MLB pitcher/batter toggle ───────────────────────────────────── */}
+          {mode === 'pregame' && isMLB && (
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', background: 'var(--bg-tertiary, #0a0a0a)', padding: '4px', borderRadius: '10px' }}>
+              {[
+                { id: 'all',      label: 'All Picks' },
+                { id: 'batters',  label: 'Batters',  icon: Icon.Person },
+                { id: 'pitchers', label: 'Pitchers', icon: Icon.Pitch  },
+              ].map(opt => (
+                <button
+                  key={opt.id}
+                  onClick={() => setPickType(opt.id)}
+                  style={{
+                    flex: 1, padding: '7px', borderRadius: '8px', border: 'none',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+                    background: pickType === opt.id ? '#7c3aed' : 'transparent',
+                    color: pickType === opt.id ? '#fff' : 'var(--text-secondary, #888)',
+                    fontWeight: '500', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s',
+                  }}
+                >
+                  {opt.icon && <opt.icon />}{opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* ─────────────────────────────────────────────────────────────────── */}
 
           {state === 'idle' && (
             <button onClick={() => analyze()} style={{ width: '100%', padding: '13px', borderRadius: '12px', background: '#7c3aed', border: 'none', color: '#fff', fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -678,7 +724,10 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
             <div style={{ textAlign: 'center', padding: '24px 0' }}>
               <div style={{ width: '36px', height: '36px', margin: '0 auto 12px', border: '3px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
               <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>
-                {mode === 'halftime' ? 'Pulling live box scores + player history...' : isMLB ? 'Pulling MLB gamelogs + pitcher data...' : isNHL ? 'Pulling NHL gamelogs + skater data...' : 'Pulling player history + projections...'}
+                {mode === 'halftime' ? 'Pulling live box scores + player history...'
+                  : isMLB ? `Pulling MLB gamelogs + ${pickType === 'pitchers' ? 'pitcher' : pickType === 'batters' ? 'batter' : 'pitcher + batter'} data...`
+                  : isNHL ? 'Pulling NHL gamelogs + skater data...'
+                  : 'Pulling player history + projections...'}
               </p>
             </div>
           )}
@@ -812,7 +861,6 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const [mode, setMode]                 = useState('daily');
   const [pregameSport, setPregameSport] = useState('nba');
 
-  // ── Split scan state — NBA, MLB, and NHL persist independently ─────────────
   const [nbaGames, setNbaGames]             = useState([]);
   const [nbaScanState, setNbaScanState]     = useState('idle');
   const [nbaLastScanned, setNbaLastScanned] = useState(null);
@@ -826,12 +874,10 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const [nhlScanState, setNhlScanState]     = useState('idle');
   const [nhlLastScanned, setNhlLastScanned] = useState(null);
 
-  // ── Live scan state ────────────────────────────────────────────────────────
   const [liveGames, setLiveGames]         = useState([]);
   const [liveScanState, setLiveScanState] = useState('idle');
   const [liveLastScanned, setLiveLast]    = useState(null);
 
-  // ── Derived from active sport ──────────────────────────────────────────────
   const games       = mode === 'halftime' ? liveGames       : pregameSport === 'nba' ? nbaGames       : pregameSport === 'mlb' ? mlbGames       : nhlGames;
   const scanState   = mode === 'halftime' ? liveScanState   : pregameSport === 'nba' ? nbaScanState   : pregameSport === 'mlb' ? mlbScanState   : nhlScanState;
   const lastScanned = mode === 'halftime' ? liveLastScanned : pregameSport === 'nba' ? nbaLastScanned : pregameSport === 'mlb' ? mlbLastScanned : nhlLastScanned;
@@ -841,7 +887,6 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const [errorMsg, setErrorMsg]         = useState('');
   const [legCount, setLegCount]         = useState(4);
 
-  // ── Persistent caches ──────────────────────────────────────────────────────
   const [dailyCache, setDailyCache]     = useState({ state: 'idle', nbaPicks: [], mlbPicks: [], nhlPicks: [] });
   const [pregameCache, setPregameCache] = useState({});
 
@@ -930,7 +975,6 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const switchPregameSport = (sport) => {
     setPregameSport(sport);
     setErrorMsg('');
-    // No reset — each sport keeps its own scan state
   };
 
   const toggleLeg = (leg) => setSelectedLegs(prev =>
