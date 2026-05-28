@@ -766,6 +766,11 @@ LINEUP POSITION (when shown):
 STAT LABELS FOR OUTPUT:
 - Use exactly: "Hits", "Total Bases", "Home Runs", "RBI", "Runs", "H+R+RBI", "Strikeouts", "Outs Recorded", "Walks"
 
+H+R+RBI FORMATTING:
+- For H+R+RBI picks, threshold is always 1.5 — describe as "2+ H+R+RBI" in rationale (not "Over 1.5")
+- If threshold is 2.5, describe as "3+ H+R+RBI"
+- Always use the N+ format when referencing H+R+RBI in text
+
 For each pick provide:
 - player, team, stat, direction (always "Over"), threshold, projection, edge
 - rationale: 2-3 sentences citing SPECIFIC numbers
