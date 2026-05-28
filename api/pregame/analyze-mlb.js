@@ -11,6 +11,7 @@
 //   - Ballpark factors: static park factor table applied to hits/runs/TB projections
 //   - Pitcher handedness: sourced from MLB Stats API for reliable platoon splits
 //   - Weather: Open-Meteo API, wind/temp/precip applied to hits/runs/TB projections
+//   - Lineup position weighting: batting order slot → runs/RBI multipliers
 //
 // BATTERS:
 //   - Season avg hits, total bases, home runs, RBI, runs, HRA (hits+runs+RBI)
@@ -18,6 +19,7 @@
 //   - Variance (std dev) over season → determines cushion on threshold
 //   - Floor detection — worst game in last 10 (near-free if floor >= line)
 //   - Opponent ERA × pitcher K%/xBA × park factor × weather × batter sabermetric mult
+//   - Lineup slot multiplier applied to runs and RBI projections
 //
 // PITCHERS (SP only):
 //   - Season avg strikeouts, outs recorded, walks per start
@@ -61,6 +63,88 @@ const PARK_FACTORS = {
 function getParkFactor(teamAbbrev) {
   if (!teamAbbrev) return 1.0;
   return PARK_FACTORS[teamAbbrev.toUpperCase()] ?? 1.0;
+}
+
+// ─── Lineup position weighting ────────────────────────────────────────────────
+// Batting order slot → multipliers for runs and RBI projections
+// Leadoff hitters score more runs; cleanup hitters drive in more RBI
+
+const LINEUP_SLOT_MULTIPLIERS = {
+  1: { runs: 1.10, rbi: 0.90 },
+  2: { runs: 1.08, rbi: 0.92 },
+  3: { runs: 1.02, rbi: 1.08 },
+  4: { runs: 0.95, rbi: 1.15 },
+  5: { runs: 0.93, rbi: 1.10 },
+  6: { runs: 0.90, rbi: 0.90 },
+  7: { runs: 0.90, rbi: 0.90 },
+  8: { runs: 0.90, rbi: 0.90 },
+  9: { runs: 0.90, rbi: 0.90 },
+};
+
+function getLineupMultiplier(slot) {
+  if (!slot || slot < 1 || slot > 9) return { runs: 1.0, rbi: 1.0 };
+  return LINEUP_SLOT_MULTIPLIERS[slot] || { runs: 1.0, rbi: 1.0 };
+}
+
+// Fetch batting order slots for a game from the MLB Stats API
+// Returns a map of { playerName (lowercase) -> battingOrder slot }
+async function getBattingOrderSlots(gameDate, homeTeamId, awayTeamId) {
+  try {
+    if (!gameDate) return {};
+
+    const dateStr = gameDate.substring(0, 10); // YYYY-MM-DD
+    const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}&teamId=${homeTeamId}&hydrate=lineups`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+
+    let data;
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) return {};
+      data = await res.json();
+    } catch {
+      clearTimeout(timer);
+      return {};
+    }
+
+    const games = data?.dates?.[0]?.games || [];
+    if (!games.length) return {};
+
+    // Find the game matching our teams
+    const game = games.find(g => {
+      const home = g.teams?.home?.team?.id;
+      const away = g.teams?.away?.team?.id;
+      return (home === homeTeamId || away === homeTeamId) &&
+             (home === awayTeamId || away === awayTeamId);
+    }) || games[0];
+
+    if (!game) return {};
+
+    const slotMap = {};
+    const lineups = game.lineups;
+    if (!lineups) {
+      console.log('[analyze-mlb] Lineup slots: not yet confirmed');
+      return {};
+    }
+
+    const processLineup = (players) => {
+      if (!Array.isArray(players)) return;
+      players.forEach(p => {
+        const name = p.person?.fullName?.toLowerCase();
+        const slot = p.battingOrder ? Math.floor(parseInt(p.battingOrder) / 100) : null;
+        if (name && slot) slotMap[name] = slot;
+      });
+    };
+
+    processLineup(lineups.homePlayers);
+    processLineup(lineups.awayPlayers);
+
+    return slotMap;
+  } catch (err) {
+    console.log(`[analyze-mlb] getBattingOrderSlots error: ${err.message}`);
+    return {};
+  }
 }
 
 // ─── Stat config ──────────────────────────────────────────────────────────────
@@ -325,7 +409,7 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
 
 // ─── Projection engine ────────────────────────────────────────────────────────
 
-function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starterHand = null, pitcherSaber = null, parkFactor = 1.0, weatherMult = 1.0) {
+function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starterHand = null, pitcherSaber = null, parkFactor = 1.0, weatherMult = 1.0, lineupSlot = null) {
   if (!gamelog || gamelog.allGames.length < 1) return null;
 
   const games = gamelog.allGames;
@@ -339,6 +423,7 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
   const totalPitcherMult = Math.max(0.80, Math.min(1.20, oppMult * pitcherMult));
   const parkMult         = Math.max(0.88, Math.min(1.12, parkFactor));
   const cappedWeatherMult = Math.max(0.88, Math.min(1.12, weatherMult));
+  const lineupMult       = getLineupMultiplier(lineupSlot);
 
   for (const stat of BATTER_STATS) {
     if (stat === 'hra') continue;
@@ -358,7 +443,8 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
     const statSaberMult   = stat === 'hits' ? saberMult : 1.0;
     const statParkMult    = ['hits', 'runs', 'totalBases'].includes(stat) ? parkMult : 1.0;
     const statWeatherMult = ['hits', 'runs', 'totalBases'].includes(stat) ? cappedWeatherMult : 1.0;
-    const blended         = Math.round(rawBlended * totalPitcherMult * statSaberMult * statParkMult * statWeatherMult * 100) / 100;
+    const statLineupMult  = stat === 'runs' ? lineupMult.runs : stat === 'rbi' ? lineupMult.rbi : 1.0;
+    const blended         = Math.round(rawBlended * totalPitcherMult * statSaberMult * statParkMult * statWeatherMult * statLineupMult * 100) / 100;
 
     const trend = last5Avg != null && seasonAvg > 0
       ? last5Avg > seasonAvg * 1.2 ? 'up' : last5Avg < seasonAvg * 0.8 ? 'down' : 'neutral'
@@ -387,6 +473,10 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
       pitcherMult:  Math.round(pitcherMult * 100) / 100,
       parkMult:     Math.round(parkMult * 100) / 100,
       weatherMult:  Math.round(cappedWeatherMult * 100) / 100,
+      lineupSlot:   lineupSlot ?? null,
+      lineupMult:   stat === 'runs' ? Math.round(lineupMult.runs * 100) / 100
+                  : stat === 'rbi'  ? Math.round(lineupMult.rbi  * 100) / 100
+                  : null,
     };
   }
 
@@ -419,6 +509,7 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
       edge: Math.round((hraBlended - hraThreshold) * 100) / 100,
       stdDev: hraSd, floor: hraFloor, trend: hraTrend,
       sampleSize: gamelog.allGames.length, oppMult, oppERA, isComposite: true,
+      lineupSlot: lineupSlot ?? null,
     };
   }
 
@@ -517,7 +608,8 @@ function computeRating(proj) {
 function formatPlayerForPrompt(player, projections) {
   const isPitcher = player.isPitcher;
   const stats     = isPitcher ? PITCHER_STATS : BATTER_STATS;
-  const lines     = [`${player.teamAbbrev} | ${player.name} (${player.position}) ${isPitcher ? '[PITCHER]' : '[BATTER]'}`];
+  const slotNote  = !isPitcher && player.lineupSlot ? ` | Batting ${player.lineupSlot}` : '';
+  const lines     = [`${player.teamAbbrev} | ${player.name} (${player.position})${slotNote} ${isPitcher ? '[PITCHER]' : '[BATTER]'}`];
 
   if (isPitcher && projections._avgInnings) {
     lines.push(`  Avg innings per start: ${projections._avgInnings} | Last 5 starts avg: ${projections._last5Innings ?? '?'}`);
@@ -564,6 +656,10 @@ function formatPlayerForPrompt(player, projections) {
     if (!isPitcher && p.weatherMult != null && p.weatherMult !== 1.0) {
       const dir = p.weatherMult > 1 ? '↑' : '↓';
       contextLine += `\n    Weather mult: ${p.weatherMult}x ${dir}`;
+    }
+    if (!isPitcher && p.lineupMult != null && p.lineupMult !== 1.0) {
+      const dir = p.lineupMult > 1 ? '↑' : '↓';
+      contextLine += `\n    Lineup slot ${p.lineupSlot} mult: ${p.lineupMult}x ${dir}`;
     }
     if (isPitcher) {
       const restNote = p.isShortRest ? ' ⚠️SHORT REST' : p.isExtraRest ? ' ✅EXTRA REST' : '';
@@ -646,6 +742,11 @@ WEATHER (when shown):
 - Wind blowing in (N/NE) = scoring suppressor already applied
 - Cold temp (<55°F) = dead ball; high precip (>40%) = pitcher advantage
 - Weather multiplier already applied to hits/runs/TB projections — cite when meaningful
+
+LINEUP POSITION (when shown):
+- Batting order slot already factored into runs and RBI projections via lineup multiplier
+- Leadoff/2-hole hitters have boosted runs projection; cleanup hitters have boosted RBI projection
+- Cite batting slot when it's a meaningful factor (slots 1-2 for runs, slots 3-5 for RBI)
 
 STAT LABELS FOR OUTPUT:
 - Use exactly: "Hits", "Total Bases", "Home Runs", "RBI", "Runs", "H+R+RBI", "Strikeouts", "Outs Recorded", "Walks"
@@ -734,9 +835,17 @@ export default async function handler(req, res) {
 
     console.log(`[analyze-mlb] Analyzing ${allPlayers.length} players (${homePitchers.length + awayPitchers.length} pitchers, ${homeBatters.length + awayBatters.length} batters)`);
 
-    const gamelogResults = await Promise.all(
-      allPlayers.map(p => getPlayerGamelog(league, p.id, p.isPitcher).catch(() => null))
-    );
+    // Fetch lineup slots and gamelogs in parallel
+    const mlbHomeId = resolvedHomeId;
+    const mlbAwayId = resolvedAwayId;
+
+    const [gamelogResults, lineupSlotMap] = await Promise.all([
+      Promise.all(allPlayers.map(p => getPlayerGamelog(league, p.id, p.isPitcher).catch(() => null))),
+      getBattingOrderSlots(gameDate, mlbHomeId, mlbAwayId).catch(() => ({})),
+    ]);
+
+    const slotsFound = Object.keys(lineupSlotMap).length;
+    console.log(`[analyze-mlb] Lineup slots: ${slotsFound} confirmed`);
 
     const battersOnly  = allPlayers.map((p, i) => ({ player: p, index: i })).filter(({ player }) => !player.isPitcher);
     const pitchersOnly = allPlayers.map((p, i) => ({ player: p, index: i })).filter(({ player }) => player.isPitcher);
@@ -780,10 +889,11 @@ export default async function handler(req, res) {
       const sabermetrics = !p.isPitcher ? (saberByIndex[i] || null) : null;
       const pitcherSaber = !p.isPitcher ? (p.isHome ? awayPitcherSaber : homePitcherSaber) : null;
       const parkFactor   = !p.isPitcher ? getParkFactor(homeTeam?.abbreviation) : 1.0;
+      const lineupSlot   = !p.isPitcher ? (lineupSlotMap[p.name?.toLowerCase()] ?? null) : null;
 
       const projections = p.isPitcher
         ? buildPitcherProjection(gamelog, restInfo)
-        : buildBatterProjection(gamelog, opponentERA, sabermetrics, starterHand, pitcherSaber, parkFactor, weatherMult);
+        : buildBatterProjection(gamelog, opponentERA, sabermetrics, starterHand, pitcherSaber, parkFactor, weatherMult, lineupSlot);
 
       if (!projections || Object.keys(projections).length === 0) return null;
 
@@ -793,7 +903,7 @@ export default async function handler(req, res) {
       }
       if (projections.hra) projections.hra._computedRating = computeRating(projections.hra);
 
-      return { ...p, projections, gamesPlayed: gamelog.gamesPlayed, sabermetrics, starterHand, pitcherSaber, weatherStr: !p.isPitcher ? weatherStr : null };
+      return { ...p, projections, gamesPlayed: gamelog.gamesPlayed, sabermetrics, starterHand, pitcherSaber, weatherStr: !p.isPitcher ? weatherStr : null, lineupSlot };
     }).filter(Boolean);
 
     console.log(`[analyze-mlb] Built projections for ${playerData.length} players`);
