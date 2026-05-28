@@ -717,7 +717,7 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
 
   const msg = await anthropic.messages.create({
     model:      'claude-haiku-4-5-20251001',
-    max_tokens: 2500,
+    max_tokens: 4000,
     messages:   [{ role: 'user', content: prompt }],
   });
 
@@ -730,6 +730,7 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
     return JSON.parse(cleaned);
   } catch (parseErr) {
     console.error('[analyze-mlb] JSON parse error:', parseErr.message);
+    console.error('[analyze-mlb] Raw response was:', raw?.substring(0, 500));
     try {
       const sanitized = cleaned
         .replace(/[\u0000-\u001F\u007F]/g, ' ')
