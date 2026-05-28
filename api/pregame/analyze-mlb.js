@@ -618,6 +618,48 @@ function computeRating(proj) {
   return Math.max(1, Math.min(5, score + 3));
 }
 
+// ─── Historical hit rates (feedback loop) ────────────────────────────────────
+// Fetches model's historical hit rate by stat type from the stats API.
+// Used to inject performance context into the Claude prompt.
+// Fails silently — if unavailable, prompt proceeds without this data.
+
+async function fetchStatHitRates() {
+  try {
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : 'https://consensus-picks-mvp.vercel.app';
+
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+
+    let data;
+    try {
+      const res = await fetch(`${baseUrl}/api/halftime/stats?days=90`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      data = await res.json();
+    } catch {
+      clearTimeout(timer);
+      return null;
+    }
+
+    if (!data?.success || !data.by_stat) return null;
+
+    // Only include stats with 10+ graded picks to avoid noise
+    const rates = {};
+    for (const [stat, d] of Object.entries(data.by_stat)) {
+      if (d.total >= 10 && d.hitRate != null) {
+        rates[stat] = { hitRate: d.hitRate, total: d.total };
+      }
+    }
+
+    return Object.keys(rates).length >= 2 ? rates : null;
+  } catch (err) {
+    console.log(`[analyze-mlb] fetchStatHitRates error: ${err.message}`);
+    return null;
+  }
+}
+
 // ─── Claude prompt ────────────────────────────────────────────────────────────
 
 function formatPlayerForPrompt(player, projections) {
@@ -693,7 +735,7 @@ function formatPlayerForPrompt(player, projections) {
   return lines.join('\n');
 }
 
-async function generateMLBPicks(game, playerData, existingLegs, legCount) {
+async function generateMLBPicks(game, playerData, existingLegs, legCount, statHitRates = null) {
   const pitchers = playerData.filter(p => p.isPitcher);
   const batters  = playerData.filter(p => !p.isPitcher);
 
@@ -763,7 +805,10 @@ LINEUP POSITION (when shown):
 - Leadoff/2-hole hitters have boosted runs projection; cleanup hitters have boosted RBI projection
 - Cite batting slot when it's a meaningful factor (slots 1-2 for runs, slots 3-5 for RBI)
 
-STAT LABELS FOR OUTPUT:
+${statHitRates ? `HISTORICAL HIT RATES BY STAT (last 90 days, 10+ sample):
+${Object.entries(statHitRates).map(([stat, d]) => `- ${stat}: ${d.hitRate}% (${d.total} picks)`).join('\n')}
+Use this to calibrate confidence — favor stat types hitting above 60%, be cautious below 50%. Do not override star ratings, but factor this into rationale and risk_flags.
+` : ''}STAT LABELS FOR OUTPUT:
 - Use exactly: "Hits", "Total Bases", "Home Runs", "RBI", "Runs", "H+R+RBI", "Strikeouts", "Outs Recorded", "Walks"
 
 H+R+RBI FORMATTING:
@@ -956,8 +1001,17 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Could not build projections for any players in this game' });
     }
 
+    // Fetch historical hit rates for feedback loop — fails silently
+    const statHitRates = await fetchStatHitRates().catch(() => null);
+    if (statHitRates) {
+      const summary = Object.entries(statHitRates).map(([s, d]) => `${s}=${d.hitRate}%`).join(' ');
+      console.log(`[analyze-mlb] Stat hit rates: ${summary} (${Object.keys(statHitRates).length} stats)`);
+    } else {
+      console.log('[analyze-mlb] Stat hit rates: unavailable (skipping feedback loop)');
+    }
+
     const targetLegCount = mode === 'daily' ? 2 : legCount;
-    const picks = await generateMLBPicks({ homeTeam, awayTeam, gameDate }, playerData, existingLegs || [], targetLegCount);
+    const picks = await generateMLBPicks({ homeTeam, awayTeam, gameDate }, playerData, existingLegs || [], targetLegCount, statHitRates);
 
     const picksWithMeta = (picks.picks || []).map(pick => ({
       ...pick, hasRealLine: false, model: 'claude-haiku-4-5-20251001', sport: 'mlb',
