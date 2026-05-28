@@ -10,14 +10,14 @@
 //   - Sabermetrics: batter BA vs xBA regression, platoon splits, pitcher K%/xBA against
 //   - Ballpark factors: static park factor table applied to hits/runs/TB projections
 //   - Pitcher handedness: sourced from MLB Stats API for reliable platoon splits
+//   - Weather: Open-Meteo API, wind/temp/precip applied to hits/runs/TB projections
 //
 // BATTERS:
 //   - Season avg hits, total bases, home runs, RBI, runs, HRA (hits+runs+RBI)
 //   - Last 5 game rolling averages for trend detection
 //   - Variance (std dev) over season → determines cushion on threshold
 //   - Floor detection — worst game in last 10 (near-free if floor >= line)
-//   - Opponent ERA multiplier + pitcher K%/xBA multiplier + park factor
-//   - Batter sabermetric multiplier: BA vs xBA regression + platoon splits
+//   - Opponent ERA × pitcher K%/xBA × park factor × weather × batter sabermetric mult
 //
 // PITCHERS (SP only):
 //   - Season avg strikeouts, outs recorded, walks per start
@@ -37,6 +37,7 @@ import {
   formatSabermetricsForPrompt,
   formatPitcherSabermetricsForPrompt,
 } from './sabermetrics.js';
+import { getGameWeather, getWeatherMultiplier, formatWeatherForPrompt } from './weather.js';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -47,47 +48,14 @@ const MLB_AVG = {
 };
 
 // ─── Ballpark factors ─────────────────────────────────────────────────────────
-// Park factor > 1.0 = hitter friendly, < 1.0 = pitcher friendly
-// Source: multi-year park factor averages (2022-2024)
-// Applied as a multiplier to batter hits, runs, total bases projections
-// Capped at ±12% to avoid over-correction on extreme parks
-
 const PARK_FACTORS = {
-  // Hitter friendly
-  COL: 1.12,  // Coors Field — extreme altitude, always #1
-  CIN: 1.07,  // Great American Ball Park
-  PHI: 1.06,  // Citizens Bank Park
-  TEX: 1.05,  // Globe Life Field
-  BAL: 1.05,  // Camden Yards
-  BOS: 1.04,  // Fenway Park
-  MIL: 1.03,  // American Family Field
-  NYY: 1.03,  // Yankee Stadium
-  TOR: 1.02,  // Rogers Centre
-  HOU: 1.02,  // Minute Maid Park
-  ATL: 1.02,  // Truist Park
-  ARI: 1.01,  // Chase Field
-  MIN: 1.01,  // Target Field
-  // Neutral
-  STL: 1.00,  // Busch Stadium
-  LAA: 1.00,  // Angel Stadium
-  DET: 1.00,  // Comerica Park
-  KC:  1.00,  // Kauffman Stadium
-  CLE: 0.99,  // Progressive Field
-  WSH: 0.99,  // Nationals Park
-  CHC: 0.99,  // Wrigley Field
-  NYM: 0.99,  // Citi Field
-  PIT: 0.99,  // PNC Park
-  TB:  0.98,  // Tropicana Field
-  MIA: 0.98,  // loanDepot park
-  LAD: 0.98,  // Dodger Stadium
-  // Pitcher friendly
-  SEA: 0.97,  // T-Mobile Park
-  CWS: 0.97,  // Guaranteed Rate Field
-  CHW: 0.97,  // alias
-  OAK: 0.97,  // Oakland Coliseum
-  ATH: 0.97,  // Athletics (alias)
-  SF:  0.96,  // Oracle Park
-  SD:  0.96,  // Petco Park
+  COL: 1.12, CIN: 1.07, PHI: 1.06, TEX: 1.05, BAL: 1.05,
+  BOS: 1.04, MIL: 1.03, NYY: 1.03, TOR: 1.02, HOU: 1.02,
+  ATL: 1.02, ARI: 1.01, MIN: 1.01, STL: 1.00, LAA: 1.00,
+  DET: 1.00, KC:  1.00, CLE: 0.99, WSH: 0.99, CHC: 0.99,
+  NYM: 0.99, PIT: 0.99, TB:  0.98, MIA: 0.98, LAD: 0.98,
+  SEA: 0.97, CWS: 0.97, CHW: 0.97, OAK: 0.97, ATH: 0.97,
+  SF:  0.96, SD:  0.96,
 };
 
 function getParkFactor(teamAbbrev) {
@@ -225,33 +193,27 @@ async function getTeamPitchingStats(league, teamId) {
 
   const categories = data?.results?.stats?.categories ?? data?.stats?.categories ?? [];
 
-  let teamERA     = null;
-  let starterERA  = null;
-  let gamesPlayed = null;
-  let whip        = null;
+  let teamERA = null, starterERA = null, gamesPlayed = null, whip = null;
 
   for (const cat of categories) {
     for (const stat of cat?.stats ?? []) {
       const name = stat.name?.toLowerCase();
       const val  = parseFloat(stat.value);
       if (isNaN(val)) continue;
-      if (name === 'era' || name === 'earnedrunavg')        teamERA     = val;
-      if (name === 'spera' || name === 'startingera')       starterERA  = val;
-      if (name === 'gamesplayed' || name === 'games')       gamesPlayed = val;
-      if (name === 'whip')                                  whip        = val;
+      if (name === 'era' || name === 'earnedrunavg')   teamERA     = val;
+      if (name === 'spera' || name === 'startingera')  starterERA  = val;
+      if (name === 'gamesplayed' || name === 'games')  gamesPlayed = val;
+      if (name === 'whip')                             whip        = val;
     }
   }
 
   const era = starterERA ?? teamERA;
   if (era == null) return null;
 
-  const rawMultiplier    = era / MLB_AVG.starterERA;
-  const batterMultiplier = Math.max(0.80, Math.min(1.20, rawMultiplier));
-
+  const batterMultiplier = Math.max(0.80, Math.min(1.20, era / MLB_AVG.starterERA));
   return {
-    era:              Math.round(era * 100) / 100,
-    whip,
-    gamesPlayed,
+    era: Math.round(era * 100) / 100,
+    whip, gamesPlayed,
     batterMultiplier: Math.round(batterMultiplier * 100) / 100,
   };
 }
@@ -267,19 +229,15 @@ async function getPitcherRestDays(league, teamId, gameDate) {
   if (!data) return null;
 
   const todayStr = today.toISOString().substring(0, 10).replace(/-/g, '');
-  const events   = data?.events ?? [];
-
-  const completed = events.filter(e => {
+  const completed = (data?.events ?? []).filter(e => {
     const eDate = (e.date ?? '').substring(0, 10).replace(/-/g, '');
     return eDate < todayStr && e.competitions?.[0]?.status?.type?.completed;
   });
 
   if (!completed.length) return null;
 
-  const lastGame     = completed[completed.length - 1];
-  const lastGameDate = new Date(lastGame.date);
-  const diffMs       = today - lastGameDate;
-  const daysSince    = diffMs / (1000 * 60 * 60 * 24);
+  const lastGame  = completed[completed.length - 1];
+  const daysSince = (today - new Date(lastGame.date)) / (1000 * 60 * 60 * 24);
 
   return {
     lastGameDate:      lastGame.date,
@@ -299,8 +257,7 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
   const names = data.names || [];
   if (!names.length) return null;
 
-  const seasonType = data.seasonTypes?.[0];
-  const categories = seasonType?.categories || [];
+  const categories = data.seasonTypes?.[0]?.categories || [];
 
   const colIdx = (...candidates) => {
     for (const c of candidates) {
@@ -321,10 +278,8 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
   const allGames = [];
 
   if (isPitcher) {
-    const IP_I   = colIdx('inningsPitched', 'IP');
-    const K_I    = colIdx('strikeouts', 'SO', 'K');
-    const BB_I   = colIdx('baseOnBalls', 'BB');
-    const ER_I   = colIdx('earnedRuns', 'ER');
+    const IP_I = colIdx('inningsPitched', 'IP'), K_I = colIdx('strikeouts', 'SO', 'K');
+    const BB_I = colIdx('baseOnBalls', 'BB'), ER_I = colIdx('earnedRuns', 'ER');
     const OUTS_I = colIdx('pitchingOuts', 'outsRecorded');
 
     for (const cat of categories) {
@@ -332,84 +287,58 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
         const stats = event.stats || [];
         const ip    = parseInnings(parseS(stats, IP_I));
         if (ip == null || ip < 1) continue;
-
-        const outs = OUTS_I >= 0 ? parseS(stats, OUTS_I) : (ip != null ? Math.round(ip * 3) : null);
-
-        allGames.push({
-          eventId: event.eventId,
-          stats: {
-            inningsPitched: ip,
-            strikeouts:     parseS(stats, K_I),
-            outsRecorded:   outs ?? (ip != null ? Math.round(ip * 3) : null),
-            walks:          parseS(stats, BB_I),
-            earnedRuns:     parseS(stats, ER_I),
-          },
-        });
+        const outs  = OUTS_I >= 0 ? parseS(stats, OUTS_I) : Math.round(ip * 3);
+        allGames.push({ eventId: event.eventId, stats: {
+          inningsPitched: ip,
+          strikeouts:     parseS(stats, K_I),
+          outsRecorded:   outs ?? Math.round(ip * 3),
+          walks:          parseS(stats, BB_I),
+          earnedRuns:     parseS(stats, ER_I),
+        }});
       }
     }
   } else {
-    const H_I   = colIdx('hits', 'H');
-    const TB_I  = colIdx('totalBases', 'TB');
-    const HR_I  = colIdx('homeRuns', 'HR');
-    const RBI_I = colIdx('RBI', 'rbi');
-    const R_I   = colIdx('runs', 'R');
-    const AB_I  = colIdx('atBats', 'AB');
+    const H_I = colIdx('hits','H'), TB_I = colIdx('totalBases','TB');
+    const HR_I = colIdx('homeRuns','HR'), RBI_I = colIdx('RBI','rbi');
+    const R_I = colIdx('runs','R'), AB_I = colIdx('atBats','AB');
 
     for (const cat of categories) {
       for (const event of (cat.events || [])) {
         const stats = event.stats || [];
         const ab    = parseS(stats, AB_I);
         if (ab === 0 && parseS(stats, H_I) === 0) continue;
-
-        const h   = parseS(stats, H_I)   ?? 0;
-        const r   = parseS(stats, R_I)   ?? 0;
+        const h = parseS(stats, H_I) ?? 0;
+        const r = parseS(stats, R_I) ?? 0;
         const rbi = parseS(stats, RBI_I) ?? 0;
-
-        allGames.push({
-          eventId: event.eventId,
-          stats: {
-            hits:       h,
-            totalBases: parseS(stats, TB_I) ?? h,
-            homeRuns:   parseS(stats, HR_I) ?? 0,
-            rbi,
-            runs:       r,
-            hra:        h + r + rbi,
-          },
-        });
+        allGames.push({ eventId: event.eventId, stats: {
+          hits: h, totalBases: parseS(stats, TB_I) ?? h,
+          homeRuns: parseS(stats, HR_I) ?? 0, rbi, runs: r, hra: h + r + rbi,
+        }});
       }
     }
   }
 
   if (!allGames.length) return null;
   allGames.reverse();
-
   return { allGames, gamesPlayed: allGames.length };
 }
 
 // ─── Projection engine ────────────────────────────────────────────────────────
 
-function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starterHand = null, pitcherSaber = null, parkFactor = 1.0) {
+function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starterHand = null, pitcherSaber = null, parkFactor = 1.0, weatherMult = 1.0) {
   if (!gamelog || gamelog.allGames.length < 1) return null;
 
-  const games  = gamelog.allGames;
-  const last5  = games.slice(0, 5);
-  const last10 = games.slice(0, 10);
-  const season = games;
+  const games = gamelog.allGames;
+  const last5 = games.slice(0, 5), last10 = games.slice(0, 10), season = games;
   const projections = {};
 
-  const oppMult  = opponentERA?.batterMultiplier ?? 1.0;
-  const oppERA   = opponentERA?.era ?? null;
-
-  // Batter sabermetric multiplier: BA vs xBA regression + platoon splits
-  const saberMult = sabermetrics ? getSabermetricMultiplier(sabermetrics, starterHand) : 1.0;
-
-  // Pitcher sabermetric multiplier: K% suppression + xBA allowed
-  // Combined with ERA mult for total pitcher difficulty signal (capped at ±20%)
+  const oppMult          = opponentERA?.batterMultiplier ?? 1.0;
+  const oppERA           = opponentERA?.era ?? null;
+  const saberMult        = sabermetrics ? getSabermetricMultiplier(sabermetrics, starterHand) : 1.0;
   const pitcherMult      = pitcherSaber ? getPitcherMultiplierForBatters(pitcherSaber) : 1.0;
   const totalPitcherMult = Math.max(0.80, Math.min(1.20, oppMult * pitcherMult));
-
-  // Park factor: applied to hits, runs, total bases (capped at ±12%)
-  const parkMult = Math.max(0.88, Math.min(1.12, parkFactor));
+  const parkMult         = Math.max(0.88, Math.min(1.12, parkFactor));
+  const cappedWeatherMult = Math.max(0.88, Math.min(1.12, weatherMult));
 
   for (const stat of BATTER_STATS) {
     if (stat === 'hra') continue;
@@ -425,13 +354,11 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
     const floor     = last10Vals.length ? Math.min(...last10Vals) : Math.min(...seasonVals);
     const ceiling   = Math.max(...seasonVals);
 
-    // 60/40 blend → total pitcher mult (ERA × K%/xBA) → batter sabermetric mult (hits only) → park factor (hits/runs/TB)
-    const rawBlended    = last5Avg != null
-      ? Math.round((last5Avg * 0.6 + seasonAvg * 0.4) * 100) / 100
-      : seasonAvg;
-    const statSaberMult = stat === 'hits' ? saberMult : 1.0;
-    const statParkMult  = ['hits', 'runs', 'totalBases'].includes(stat) ? parkMult : 1.0;
-    const blended       = Math.round(rawBlended * totalPitcherMult * statSaberMult * statParkMult * 100) / 100;
+    const rawBlended      = last5Avg != null ? Math.round((last5Avg * 0.6 + seasonAvg * 0.4) * 100) / 100 : seasonAvg;
+    const statSaberMult   = stat === 'hits' ? saberMult : 1.0;
+    const statParkMult    = ['hits', 'runs', 'totalBases'].includes(stat) ? parkMult : 1.0;
+    const statWeatherMult = ['hits', 'runs', 'totalBases'].includes(stat) ? cappedWeatherMult : 1.0;
+    const blended         = Math.round(rawBlended * totalPitcherMult * statSaberMult * statParkMult * statWeatherMult * 100) / 100;
 
     const trend = last5Avg != null && seasonAvg > 0
       ? last5Avg > seasonAvg * 1.2 ? 'up' : last5Avg < seasonAvg * 0.8 ? 'down' : 'neutral'
@@ -447,10 +374,8 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
     if (trend === 'up')   cushion -= 0.25;
     if (trend === 'down') cushion += 0.25;
 
-    const rawThreshold = blended - cushion;
-    const rounded      = Math.round(rawThreshold * 2) / 2;
-    const threshold    = Math.max(rounded, SPORTSBOOK_MINIMUMS[stat] || 0.5);
-    const edge         = Math.round((blended - threshold) * 100) / 100;
+    const threshold = Math.max(Math.round((blended - cushion) * 2) / 2, SPORTSBOOK_MINIMUMS[stat] || 0.5);
+    const edge      = Math.round((blended - threshold) * 100) / 100;
 
     projections[stat] = {
       seasonAvg, last5Avg, blended, threshold,
@@ -458,9 +383,10 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
       edge, stdDev: sd, floor, ceiling, trend,
       sampleSize: seasonVals.length,
       oppMult, oppERA,
-      saberMult:   Math.round(saberMult * 100) / 100,
-      pitcherMult: Math.round(pitcherMult * 100) / 100,
-      parkMult:    Math.round(parkMult * 100) / 100,
+      saberMult:    Math.round(saberMult * 100) / 100,
+      pitcherMult:  Math.round(pitcherMult * 100) / 100,
+      parkMult:     Math.round(parkMult * 100) / 100,
+      weatherMult:  Math.round(cappedWeatherMult * 100) / 100,
     };
   }
 
@@ -469,14 +395,12 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
     const hraBlended   = Math.round((projections.hits.blended + projections.runs.blended + projections.rbi.blended) * 100) / 100;
     const hraSeasonAvg = Math.round((projections.hits.seasonAvg + projections.runs.seasonAvg + projections.rbi.seasonAvg) * 100) / 100;
     const hraLast5     = projections.hits.last5Avg != null && projections.runs.last5Avg != null && projections.rbi.last5Avg != null
-      ? Math.round((projections.hits.last5Avg + projections.runs.last5Avg + projections.rbi.last5Avg) * 100) / 100
-      : null;
+      ? Math.round((projections.hits.last5Avg + projections.runs.last5Avg + projections.rbi.last5Avg) * 100) / 100 : null;
 
     const hraCushionConfig = VARIANCE_CUSHION.hra;
-    const hraVals          = gamelog.allGames.map(g => (g.stats.hits ?? 0) + (g.stats.runs ?? 0) + (g.stats.rbi ?? 0));
-    const hraSd            = gamelog.allGames.length >= 2 ? stdDev(hraVals) : null;
-    const hraLast10Vals    = hraVals.slice(0, 10);
-    const hraFloor         = hraLast10Vals.length ? Math.min(...hraLast10Vals) : null;
+    const hraVals       = gamelog.allGames.map(g => (g.stats.hits ?? 0) + (g.stats.runs ?? 0) + (g.stats.rbi ?? 0));
+    const hraSd         = gamelog.allGames.length >= 2 ? stdDev(hraVals) : null;
+    const hraFloor      = hraVals.slice(0, 10).length ? Math.min(...hraVals.slice(0, 10)) : null;
 
     let hraCushion = 1.0;
     if (hraCushionConfig && hraSd != null) {
@@ -485,18 +409,16 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
       else                                        hraCushion = hraCushionConfig.high[2];
     }
 
-    const hraRaw       = hraBlended - hraCushion;
-    const hraThreshold = Math.max(Math.round(hraRaw * 2) / 2, SPORTSBOOK_MINIMUMS.hra);
-    const hraEdge      = Math.round((hraBlended - hraThreshold) * 100) / 100;
+    const hraThreshold = Math.max(Math.round((hraBlended - hraCushion) * 2) / 2, SPORTSBOOK_MINIMUMS.hra);
     const hraTrend     = projections.hits.trend === projections.runs.trend && projections.runs.trend === projections.rbi.trend
       ? projections.hits.trend : 'neutral';
 
     projections.hra = {
       seasonAvg: hraSeasonAvg, last5Avg: hraLast5, blended: hraBlended,
-      threshold: hraThreshold, cushion: hraCushion, edge: hraEdge,
-      stdDev: hraSd, floor: hraFloor, trend: hraTrend, sampleSize: gamelog.allGames.length,
-      oppMult, oppERA,
-      isComposite: true,
+      threshold: hraThreshold, cushion: hraCushion,
+      edge: Math.round((hraBlended - hraThreshold) * 100) / 100,
+      stdDev: hraSd, floor: hraFloor, trend: hraTrend,
+      sampleSize: gamelog.allGames.length, oppMult, oppERA, isComposite: true,
     };
   }
 
@@ -506,15 +428,11 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
 function buildPitcherProjection(gamelog, restInfo) {
   if (!gamelog || gamelog.allGames.length < 1) return null;
 
-  const games  = gamelog.allGames;
-  const last5  = games.slice(0, 5);
-  const last10 = games.slice(0, 10);
-  const season = games;
+  const games = gamelog.allGames;
+  const last5 = games.slice(0, 5), last10 = games.slice(0, 10), season = games;
   const projections = {};
 
-  const restMult = restInfo?.isShortRest ? 0.92
-                 : restInfo?.isExtraRest ? 1.04
-                 : 1.0;
+  const restMult = restInfo?.isShortRest ? 0.92 : restInfo?.isExtraRest ? 1.04 : 1.0;
 
   for (const stat of PITCHER_STATS) {
     const seasonVals = season.map(g => g.stats[stat]).filter(v => v != null);
@@ -527,11 +445,7 @@ function buildPitcherProjection(gamelog, restInfo) {
     const sd        = stdDev(seasonVals);
     const floor     = last10Vals.length ? Math.min(...last10Vals) : Math.min(...seasonVals);
     const ceiling   = Math.max(...seasonVals);
-
-    const rawBlended = last5Avg != null
-      ? Math.round((last5Avg * 0.55 + seasonAvg * 0.45) * 100) / 100
-      : seasonAvg;
-    const blended = Math.round(rawBlended * restMult * 100) / 100;
+    const blended   = Math.round((last5Avg != null ? (last5Avg * 0.55 + seasonAvg * 0.45) : seasonAvg) * restMult * 100) / 100;
 
     const trend = last5Avg != null && seasonAvg > 0
       ? last5Avg > seasonAvg * 1.15 ? 'up' : last5Avg < seasonAvg * 0.85 ? 'down' : 'neutral'
@@ -548,19 +462,16 @@ function buildPitcherProjection(gamelog, restInfo) {
     if (trend === 'down')      cushion += 0.5;
     if (restInfo?.isShortRest) cushion += 0.5;
 
-    const rawThreshold = blended - cushion;
-    const rounded      = Math.round(rawThreshold * 2) / 2;
-    const threshold    = Math.max(rounded, SPORTSBOOK_MINIMUMS[stat] || 0.5);
-    const edge         = Math.round((blended - threshold) * 100) / 100;
+    const threshold = Math.max(Math.round((blended - cushion) * 2) / 2, SPORTSBOOK_MINIMUMS[stat] || 0.5);
 
     projections[stat] = {
       seasonAvg, last5Avg, blended, threshold,
       cushion: Math.round(cushion * 100) / 100,
-      edge, stdDev: sd, floor, ceiling, trend,
-      sampleSize: seasonVals.length,
-      restMult,
-      isShortRest:       !!restInfo?.isShortRest,
-      isExtraRest:       !!restInfo?.isExtraRest,
+      edge: Math.round((blended - threshold) * 100) / 100,
+      stdDev: sd, floor, ceiling, trend,
+      sampleSize: seasonVals.length, restMult,
+      isShortRest: !!restInfo?.isShortRest,
+      isExtraRest: !!restInfo?.isExtraRest,
       daysSinceLastGame: restInfo?.daysSinceLastGame ?? null,
     };
   }
@@ -578,7 +489,6 @@ function buildPitcherProjection(gamelog, restInfo) {
 
 function computeRating(proj) {
   if (!proj) return 3;
-
   let score = 0;
 
   const edgePct = proj.threshold > 0 ? proj.edge / proj.threshold : 0;
@@ -587,34 +497,16 @@ function computeRating(proj) {
 
   if (proj.trend === 'up')   score += 1;
   if (proj.trend === 'down') score -= 1;
-
   if (proj.stdDev != null && proj.stdDev < proj.edge) score += 1;
-
   if (proj.floor != null && proj.floor >= proj.threshold) score += 2;
 
-  if (proj.oppMult != null) {
-    if (proj.oppMult > 1.08) score += 1;
-    if (proj.oppMult < 0.92) score -= 1;
-  }
-
-  if (proj.saberMult != null) {
-    if (proj.saberMult > 1.05) score += 1;
-    if (proj.saberMult < 0.95) score -= 1;
-  }
-
-  if (proj.pitcherMult != null) {
-    if (proj.pitcherMult > 1.04) score += 1;
-    if (proj.pitcherMult < 0.96) score -= 1;
-  }
-
-  if (proj.parkMult != null) {
-    if (proj.parkMult > 1.04) score += 1;
-    if (proj.parkMult < 0.96) score -= 1;
-  }
-
+  if (proj.oppMult != null)     { if (proj.oppMult > 1.08)     score += 1; if (proj.oppMult < 0.92)     score -= 1; }
+  if (proj.saberMult != null)   { if (proj.saberMult > 1.05)   score += 1; if (proj.saberMult < 0.95)   score -= 1; }
+  if (proj.pitcherMult != null) { if (proj.pitcherMult > 1.04) score += 1; if (proj.pitcherMult < 0.96) score -= 1; }
+  if (proj.parkMult != null)    { if (proj.parkMult > 1.04)    score += 1; if (proj.parkMult < 0.96)    score -= 1; }
+  if (proj.weatherMult != null) { if (proj.weatherMult > 1.04) score += 1; if (proj.weatherMult < 0.96) score -= 1; }
   if (proj.isShortRest) score -= 1;
   if (proj.isExtraRest) score += 1;
-
   if (proj.sampleSize != null && proj.sampleSize < 10) score -= 1;
 
   return Math.max(1, Math.min(5, score + 3));
@@ -641,6 +533,10 @@ function formatPlayerForPrompt(player, projections) {
     if (pitcherLine) lines.push(`  OPPOSING PITCHER SABERMETRICS: ${pitcherLine}`);
   }
 
+  if (!isPitcher && player.weatherStr) {
+    lines.push(`  WEATHER: ${player.weatherStr}`);
+  }
+
   for (const stat of stats) {
     const p = projections[stat];
     if (!p || p.blended == null) continue;
@@ -665,6 +561,10 @@ function formatPlayerForPrompt(player, projections) {
       const dir = p.parkMult > 1 ? '↑' : '↓';
       contextLine += `\n    Park factor: ${p.parkMult}x ${dir}`;
     }
+    if (!isPitcher && p.weatherMult != null && p.weatherMult !== 1.0) {
+      const dir = p.weatherMult > 1 ? '↑' : '↓';
+      contextLine += `\n    Weather mult: ${p.weatherMult}x ${dir}`;
+    }
     if (isPitcher) {
       const restNote = p.isShortRest ? ' ⚠️SHORT REST' : p.isExtraRest ? ' ✅EXTRA REST' : '';
       contextLine = `\n    Rest: ${p.daysSinceLastGame ?? '?'} days since last game${restNote}`;
@@ -686,9 +586,8 @@ async function generateMLBPicks(game, playerData, existingLegs, legCount) {
   const pitchers = playerData.filter(p => p.isPitcher);
   const batters  = playerData.filter(p => !p.isPitcher);
 
-  const pitcherLines = pitchers.map(p => formatPlayerForPrompt(p, p.projections)).join('\n\n');
-  const batterLines  = batters.map(p => formatPlayerForPrompt(p, p.projections)).join('\n\n');
-
+  const pitcherLines    = pitchers.map(p => formatPlayerForPrompt(p, p.projections)).join('\n\n');
+  const batterLines     = batters.map(p => formatPlayerForPrompt(p, p.projections)).join('\n\n');
   const existingLegsText = existingLegs.length > 0
     ? `\nEXISTING LEGS (exclude these players):\n${existingLegs.map((l, i) => `${i + 1}. ${l.player} - ${l.stat}`).join('\n')}\n`
     : '';
@@ -709,10 +608,9 @@ HOW TO USE THESE PROJECTIONS:
 
 THRESHOLD LOGIC:
 - Suggested threshold = blended projection minus variance cushion
-- Blended = 60% last 5 games + 40% season average (55/45 for pitchers), adjusted by opponent ERA multiplier (batters) or rest multiplier (pitchers)
-- Edge = cushion between projection and threshold
+- Blended = 60% last 5 games + 40% season average (55/45 for pitchers), adjusted by all multipliers
 - Always use the suggested threshold since no sportsbook lines are available
-- HARD RULE: Only recommend picks where projection > threshold. Never recommend a pick where projection <= threshold.
+- HARD RULE: Only recommend picks where projection > threshold.
 
 MINIMUM THRESHOLDS (never recommend below these):
 - Hits: 0.5 | Total Bases: 1.5 | Home Runs: 0.5 | RBI: 0.5 | Runs: 0.5 | H+R+RBI: 1.5
@@ -721,66 +619,52 @@ MINIMUM THRESHOLDS (never recommend below these):
 RATING RULE: Use the "Star rating" shown in each stat block exactly as given (integer 1-5). Do not assign your own rating.
 
 BASEBALL-SPECIFIC FACTORS:
-- For pitchers: innings projection matters — a pitcher averaging 5 innings has more outs/K ceiling than a 4-inning pitcher
+- For pitchers: innings projection matters — a pitcher averaging 5 innings has more outs/K ceiling
 - Short rest pitchers are risky for K/outs props even with a good trend
 - High opponent ERA multiplier (> 1.08x) is a meaningful batter boost
 - For batters: home runs have very high variance — be conservative with HR props unless clear trend
 - H+R+RBI composite: strong pick when all three components trend the same direction
-- Total bases: driven by extra-base hits — check if player has power in recent games (high TB relative to hits)
 - Trending up in last 5 is a strong signal in baseball — hot streaks are real
 
 SABERMETRIC FACTORS (when provided):
 - Batter BA vs xBA: if actual BA well below xBA (>20 pts), positive regression signal = more hits incoming
-- Batter BA vs xBA: if actual BA well above xBA (>20 pts), negative regression risk
 - Platoon split vs today's starter handedness = most relevant split to cite
 - Batter sabermetric multiplier already applied to hits blended projection
 
 OPPOSING PITCHER SABERMETRIC FACTORS (when provided):
 - High pitcher K% (>26%) suppresses hits — factor into hits prop confidence
 - Low pitcher K% (<18%) = contact pitcher = batter hits upside
-- Pitcher xBA against: if high vs league avg (0.248), batters have genuine upside beyond ERA
-- ERA vs FIP gap: if ERA much higher than FIP, pitcher is better than ERA suggests — reduce batter confidence
+- ERA vs FIP gap: if ERA much higher than FIP, pitcher is better than ERA suggests
 - Pitcher matchup multiplier already applied to all batter stat projections
 
 PARK FACTOR (when shown):
-- Park factor > 1.0 = hitter friendly park = boosts hits/runs/TB projections
-- Park factor < 1.0 = pitcher friendly park = suppresses hits/runs/TB projections
-- Already applied to blended projection — cite it in rationale when meaningful (>1.03 or <0.97)
+- Park factor > 1.0 = hitter friendly; < 1.0 = pitcher friendly
+- Already applied to blended projection — cite when meaningful (>1.03 or <0.97)
+
+WEATHER (when shown):
+- Wind blowing out (SW) = HR/TB boost already applied
+- Wind blowing in (N/NE) = scoring suppressor already applied
+- Cold temp (<55°F) = dead ball; high precip (>40%) = pitcher advantage
+- Weather multiplier already applied to hits/runs/TB projections — cite when meaningful
 
 STAT LABELS FOR OUTPUT:
 - Use exactly: "Hits", "Total Bases", "Home Runs", "RBI", "Runs", "H+R+RBI", "Strikeouts", "Outs Recorded", "Walks"
 
 For each pick provide:
-- player: exact full name
-- team: team abbreviation
-- stat: one of the stat labels above
-- direction: always "Over"
-- threshold: the exact number to bet Over on
-- projection: the blended projection number
-- edge: cushion between projection and threshold
-- rationale: 2-3 sentences citing SPECIFIC numbers from the projections
-- rating: the pre-computed star rating from the stat block (integer 1-5)
-- rating_reason: one sentence explaining the key factors behind the rating
-- risk_flags: array of concern strings (empty if clean)
+- player, team, stat, direction (always "Over"), threshold, projection, edge
+- rationale: 2-3 sentences citing SPECIFIC numbers
+- rating: the pre-computed star rating (integer 1-5) — use exactly as given
+- rating_reason: one sentence on key factors
+- risk_flags: array of concerns (empty if clean)
 
 Return ONLY valid JSON, no markdown:
 {
   "game_summary": "2-3 sentences on the matchup",
-  "picks": [
-    {
-      "player": "Full Name",
-      "team": "ABV",
-      "stat": "Hits",
-      "direction": "Over",
-      "threshold": 0.5,
-      "projection": 1.2,
-      "edge": 0.7,
-      "rationale": "...",
-      "rating": 4,
-      "rating_reason": "...",
-      "risk_flags": []
-    }
-  ]
+  "picks": [{
+    "player": "Full Name", "team": "ABV", "stat": "Hits",
+    "direction": "Over", "threshold": 0.5, "projection": 1.2, "edge": 0.7,
+    "rationale": "...", "rating": 4, "rating_reason": "...", "risk_flags": []
+  }]
 }
 
 Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never pad with weak picks. Consider both pitcher and batter props equally. Prioritize picks where projection clearly exceeds threshold with low variance.`;
@@ -820,17 +704,13 @@ export default async function handler(req, res) {
   }
 
   const { gameId, league = 'mlb', homeTeam, awayTeam, gameDate, existingLegs, legCount = 4, mode = 'picks' } = req.body;
-
-  if (!gameId) {
-    return res.status(400).json({ error: 'Missing required field: gameId' });
-  }
+  if (!gameId) return res.status(400).json({ error: 'Missing required field: gameId' });
 
   try {
     console.log(`[analyze-mlb] Analyzing ${gameId} (MLB) mode=${mode}`);
 
     const resolvedHomeId = homeTeam?.id || await findTeamId(league, homeTeam?.abbreviation);
     const resolvedAwayId = awayTeam?.id || await findTeamId(league, awayTeam?.abbreviation);
-
     console.log(`[analyze-mlb] homeId: ${resolvedHomeId}, awayId: ${resolvedAwayId}`);
 
     const [homeRoster, awayRoster, homeERA, awayERA, homeRest, awayRest] = await Promise.all([
@@ -871,31 +751,26 @@ export default async function handler(req, res) {
     const pitcherSaberByIndex = {};
     pitchersOnly.forEach(({ index }, i) => { pitcherSaberByIndex[index] = pitcherSaberResults[i]; });
 
-    const homePitcherSaber = homePitchers[0]
-      ? (pitcherSaberByIndex[allPlayers.indexOf(homePitchers[0])] || null)
-      : null;
-    const awayPitcherSaber = awayPitchers[0]
-      ? (pitcherSaberByIndex[allPlayers.indexOf(awayPitchers[0])] || null)
-      : null;
+    const homePitcherSaber = homePitchers[0] ? (pitcherSaberByIndex[allPlayers.indexOf(homePitchers[0])] || null) : null;
+    const awayPitcherSaber = awayPitchers[0] ? (pitcherSaberByIndex[allPlayers.indexOf(awayPitchers[0])] || null) : null;
 
     console.log(`[analyze-mlb] Gamelogs: ${gamelogResults.filter(Boolean).length}/${allPlayers.length} fetched`);
     console.log(`[analyze-mlb] Sabermetrics: ${saberResults.filter(Boolean).length}/${battersOnly.length} batters enriched`);
     console.log(`[analyze-mlb] Pitcher sabermetrics: ${pitcherSaberResults.filter(Boolean).length}/${pitchersOnly.length} pitchers enriched`);
     console.log(`[analyze-mlb] Park factor: ${homeTeam?.abbreviation} = ${getParkFactor(homeTeam?.abbreviation)}x`);
 
+    const weather     = await getGameWeather(homeTeam?.abbreviation, gameDate).catch(() => null);
+    const weatherMult = getWeatherMultiplier(weather);
+    const weatherStr  = formatWeatherForPrompt(weather);
+    if (weatherStr) console.log(`[analyze-mlb] Weather: ${weatherStr}`);
+
     const playerData = allPlayers.map((p, i) => {
       const gamelog = gamelogResults[i];
       if (!gamelog || gamelog.gamesPlayed < 1) return null;
 
-      const opponentERA = p.isPitcher ? null
-                        : p.isHome   ? homeERA
-                        :              awayERA;
+      const opponentERA = p.isPitcher ? null : p.isHome ? homeERA : awayERA;
+      const restInfo    = p.isPitcher ? (p.isHome ? homeRest : awayRest) : null;
 
-      const restInfo = p.isPitcher
-        ? (p.isHome ? homeRest : awayRest)
-        : null;
-
-      // Use pitchHand from MLB Stats API — more reliable than ESPN roster throws field
       const starterHand = !p.isPitcher
         ? (p.isHome
             ? (awayPitcherSaber?.pitchHand || awayPitchers[0]?.throws || null)
@@ -903,30 +778,22 @@ export default async function handler(req, res) {
         : null;
 
       const sabermetrics = !p.isPitcher ? (saberByIndex[i] || null) : null;
-
-      const pitcherSaber = !p.isPitcher
-        ? (p.isHome ? awayPitcherSaber : homePitcherSaber)
-        : null;
-
-      const parkFactor = !p.isPitcher ? getParkFactor(homeTeam?.abbreviation) : 1.0;
+      const pitcherSaber = !p.isPitcher ? (p.isHome ? awayPitcherSaber : homePitcherSaber) : null;
+      const parkFactor   = !p.isPitcher ? getParkFactor(homeTeam?.abbreviation) : 1.0;
 
       const projections = p.isPitcher
         ? buildPitcherProjection(gamelog, restInfo)
-        : buildBatterProjection(gamelog, opponentERA, sabermetrics, starterHand, pitcherSaber, parkFactor);
+        : buildBatterProjection(gamelog, opponentERA, sabermetrics, starterHand, pitcherSaber, parkFactor, weatherMult);
 
       if (!projections || Object.keys(projections).length === 0) return null;
 
       const statsToRate = p.isPitcher ? PITCHER_STATS : BATTER_STATS;
       for (const stat of statsToRate) {
-        if (projections[stat]) {
-          projections[stat]._computedRating = computeRating(projections[stat]);
-        }
+        if (projections[stat]) projections[stat]._computedRating = computeRating(projections[stat]);
       }
-      if (projections.hra) {
-        projections.hra._computedRating = computeRating(projections.hra);
-      }
+      if (projections.hra) projections.hra._computedRating = computeRating(projections.hra);
 
-      return { ...p, projections, gamesPlayed: gamelog.gamesPlayed, sabermetrics, starterHand, pitcherSaber };
+      return { ...p, projections, gamesPlayed: gamelog.gamesPlayed, sabermetrics, starterHand, pitcherSaber, weatherStr: !p.isPitcher ? weatherStr : null };
     }).filter(Boolean);
 
     console.log(`[analyze-mlb] Built projections for ${playerData.length} players`);
@@ -936,21 +803,10 @@ export default async function handler(req, res) {
       for (const stat of statsToCheck) {
         const proj = p.projections[stat];
         if (proj && proj.blended != null && proj.threshold != null) {
-          if (proj.blended <= proj.threshold) {
-            delete p.projections[stat];
-          }
-          // Hits minimum: projection must be >= 1.0
-          if (stat === 'hits' && proj && proj.blended < 1.0) {
-            delete p.projections[stat];
-          }
-          // Runs minimum: projection must be >= 0.80
-          if (stat === 'runs' && proj && proj.blended < 0.80) {
-            delete p.projections[stat];
-          }
-          // RBI minimum: projection must be >= 0.75
-          if (stat === 'rbi' && proj && proj.blended < 0.75) {
-            delete p.projections[stat];
-          }
+          if (proj.blended <= proj.threshold)                delete p.projections[stat];
+          if (stat === 'hits' && proj?.blended < 1.0)        delete p.projections[stat];
+          if (stat === 'runs' && proj?.blended < 0.80)       delete p.projections[stat];
+          if (stat === 'rbi'  && proj?.blended < 0.75)       delete p.projections[stat];
         }
       }
     }
@@ -960,27 +816,16 @@ export default async function handler(req, res) {
     }
 
     const targetLegCount = mode === 'daily' ? 2 : legCount;
-    const picks = await generateMLBPicks(
-      { homeTeam, awayTeam, gameDate },
-      playerData,
-      existingLegs || [],
-      targetLegCount
-    );
+    const picks = await generateMLBPicks({ homeTeam, awayTeam, gameDate }, playerData, existingLegs || [], targetLegCount);
 
     const picksWithMeta = (picks.picks || []).map(pick => ({
-      ...pick,
-      hasRealLine: false,
-      model: 'claude-haiku-4-5-20251001',
-      sport: 'mlb',
+      ...pick, hasRealLine: false, model: 'claude-haiku-4-5-20251001', sport: 'mlb',
     }));
 
     return res.status(200).json({
-      success: true,
-      gameId,
+      success: true, gameId,
       game: { homeTeam, awayTeam, league, gameDate },
-      mode,
-      ...picks,
-      picks: picksWithMeta,
+      mode, ...picks, picks: picksWithMeta,
       player_count: playerData.length,
       analyzed_at: new Date().toISOString(),
     });
