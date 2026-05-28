@@ -8,6 +8,7 @@
 //   - Hard projection filter — picks where projection doesn't clear line dropped in code
 //   - Floor detection extended to last 10 games (was season-wide min)
 //   - Sabermetrics: batter BA vs xBA regression, platoon splits, pitcher K%/xBA against
+//   - Hits minimum: projection must be >= 1.0 to surface as a pick
 //
 // BATTERS:
 //   - Season avg hits, total bases, home runs, RBI, runs, HRA (hits+runs+RBI)
@@ -55,7 +56,7 @@ const SPORTSBOOK_MINIMUMS = {
   homeRuns:     0.5,
   rbi:          0.5,
   runs:         0.5,
-  hra:          2.5,
+  hra:          1.5,
   strikeouts:   3.5,
   outsRecorded: 10.5,
   walks:        0.5,
@@ -349,11 +350,7 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
   const oppMult  = opponentERA?.batterMultiplier ?? 1.0;
   const oppERA   = opponentERA?.era ?? null;
 
-  // Batter sabermetric multiplier: BA vs xBA regression + platoon splits
-  const saberMult = sabermetrics ? getSabermetricMultiplier(sabermetrics, starterHand) : 1.0;
-
-  // Pitcher sabermetric multiplier: K% suppression + xBA allowed
-  // Combined with ERA mult for total pitcher difficulty signal (capped at ±20%)
+  const saberMult        = sabermetrics ? getSabermetricMultiplier(sabermetrics, starterHand) : 1.0;
   const pitcherMult      = pitcherSaber ? getPitcherMultiplierForBatters(pitcherSaber) : 1.0;
   const totalPitcherMult = Math.max(0.80, Math.min(1.20, oppMult * pitcherMult));
 
@@ -371,7 +368,6 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
     const floor     = last10Vals.length ? Math.min(...last10Vals) : Math.min(...seasonVals);
     const ceiling   = Math.max(...seasonVals);
 
-    // 60/40 blend → total pitcher mult (ERA × K%/xBA) → batter sabermetric mult (hits only)
     const rawBlended    = last5Avg != null
       ? Math.round((last5Avg * 0.6 + seasonAvg * 0.4) * 100) / 100
       : seasonAvg;
@@ -721,7 +717,7 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
     messages:   [{ role: 'user', content: prompt }],
   });
 
-  const raw      = msg.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  const raw       = msg.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
   const jsonStart = raw.indexOf('{');
   const jsonEnd   = raw.lastIndexOf('}');
   const cleaned   = jsonStart !== -1 && jsonEnd !== -1 ? raw.substring(jsonStart, jsonEnd + 1) : raw;
@@ -788,7 +784,6 @@ export default async function handler(req, res) {
       allPlayers.map(p => getPlayerGamelog(league, p.id, p.isPitcher).catch(() => null))
     );
 
-    // Fetch batter and pitcher sabermetrics in parallel (best-effort)
     const battersOnly  = allPlayers.map((p, i) => ({ player: p, index: i })).filter(({ player }) => !player.isPitcher);
     const pitchersOnly = allPlayers.map((p, i) => ({ player: p, index: i })).filter(({ player }) => player.isPitcher);
 
@@ -802,7 +797,6 @@ export default async function handler(req, res) {
     const pitcherSaberByIndex = {};
     pitchersOnly.forEach(({ index }, i) => { pitcherSaberByIndex[index] = pitcherSaberResults[i]; });
 
-    // homePitchers[0] faces away batters; awayPitchers[0] faces home batters
     const homePitcherSaber = homePitchers[0]
       ? (pitcherSaberByIndex[allPlayers.indexOf(homePitchers[0])] || null)
       : null;
@@ -857,12 +851,18 @@ export default async function handler(req, res) {
 
     console.log(`[analyze-mlb] Built projections for ${playerData.length} players`);
 
+    // Hard filter: drop stat projections that don't clear their threshold
     for (const p of playerData) {
       const statsToCheck = p.isPitcher ? PITCHER_STATS : [...BATTER_STATS];
       for (const stat of statsToCheck) {
         const proj = p.projections[stat];
         if (proj && proj.blended != null && proj.threshold != null) {
           if (proj.blended <= proj.threshold) {
+            delete p.projections[stat];
+          }
+          // Hits-specific minimum: projection must be >= 1.0
+          // Sub-1.0 hits projection = less than 1 hit per game on average — too thin
+          if (stat === 'hits' && proj && proj.blended < 1.0) {
             delete p.projections[stat];
           }
         }
