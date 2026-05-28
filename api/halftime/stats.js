@@ -79,7 +79,16 @@ export default async function handler(req, res) {
       d.hitRate = d.total > 0 ? Math.round((d.hits / d.total) * 100) : null;
     }
 
-    // Projection accuracy — average absolute error for graded picks with projections
+    // ── Twitter picks — separate hit rate tracking ────────────────────────
+    const twitterGraded  = graded.filter(p => p.posted_to_twitter === true);
+    const twitterHits    = twitterGraded.filter(p => p.hit === true);
+    const twitterPending = all.filter(p => p.posted_to_twitter === true && p.status === 'pending');
+
+    const twitterHitRate = twitterGraded.length > 0
+      ? Math.round((twitterHits.length / twitterGraded.length) * 100)
+      : null;
+
+    // Projection accuracy
     const withProjection = graded.filter(
       p => p.projection?.blended != null && p.actual_value != null
     );
@@ -98,12 +107,12 @@ export default async function handler(req, res) {
       : null;
 
     // Recent streak (last 10 graded)
-    const recent10 = graded.slice(-10);
+    const recent10   = graded.slice(-10);
     const recentHits = recent10.filter(p => p.hit).length;
 
     // Most accurate stat (highest hit rate with >= 5 samples)
     const statEntries = Object.entries(byStat).filter(([, d]) => d.total >= 5);
-    const bestStat = statEntries.sort((a, b) => (b[1].hitRate || 0) - (a[1].hitRate || 0))[0];
+    const bestStat  = statEntries.sort((a, b) => (b[1].hitRate || 0) - (a[1].hitRate || 0))[0];
     const worstStat = statEntries.sort((a, b) => (a[1].hitRate || 0) - (b[1].hitRate || 0))[0];
 
     return res.status(200).json({
@@ -121,6 +130,13 @@ export default async function handler(req, res) {
       by_rating:    byRating,
       by_stat:      byStat,
       by_direction: byDirection,
+      // ── Twitter picks performance ────────────────────────────────────────
+      twitter: {
+        graded:   twitterGraded.length,
+        hits:     twitterHits.length,
+        pending:  twitterPending.length,
+        hit_rate: twitterHitRate,
+      },
       projection_accuracy: {
         picks_with_data:      withProjection.length,
         avg_absolute_error:   avgProjectionError,
