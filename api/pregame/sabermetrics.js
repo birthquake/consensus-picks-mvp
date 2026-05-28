@@ -129,8 +129,8 @@ async function fetchStatcastBatter(mlbamId, playerName) {
     }
 
     const rows = parseCSV(text);
-    console.log(`[sabermetrics] Statcast leaderboard: ${rows.length} rows`);
-
+    console.log(`[sabermetrics] Statcast leaderboard: ${rows.length} rows, columns: ${Object.keys(rows[0] || {}).join(', ')}`);
+    
     const row = rows.find(r =>
       String(r.player_id) === String(mlbamId) ||
       String(r.mlbam_id)  === String(mlbamId)
