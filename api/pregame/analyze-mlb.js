@@ -8,14 +8,15 @@
 //   - Hard projection filter — picks where projection doesn't clear line dropped in code
 //   - Floor detection extended to last 10 games (was season-wide min)
 //   - Sabermetrics: batter BA vs xBA regression, platoon splits, pitcher K%/xBA against
-//   - Hits minimum: projection must be >= 1.0 to surface as a pick
+//   - Ballpark factors: static park factor table applied to hits/runs/TB projections
+//   - Pitcher handedness: sourced from MLB Stats API for reliable platoon splits
 //
 // BATTERS:
 //   - Season avg hits, total bases, home runs, RBI, runs, HRA (hits+runs+RBI)
 //   - Last 5 game rolling averages for trend detection
 //   - Variance (std dev) over season → determines cushion on threshold
 //   - Floor detection — worst game in last 10 (near-free if floor >= line)
-//   - Opponent ERA multiplier + pitcher K%/xBA multiplier
+//   - Opponent ERA multiplier + pitcher K%/xBA multiplier + park factor
 //   - Batter sabermetric multiplier: BA vs xBA regression + platoon splits
 //
 // PITCHERS (SP only):
@@ -44,6 +45,55 @@ const MLB_AVG = {
   teamERA:    4.30,
   starterERA: 4.50,
 };
+
+// ─── Ballpark factors ─────────────────────────────────────────────────────────
+// Park factor > 1.0 = hitter friendly, < 1.0 = pitcher friendly
+// Source: multi-year park factor averages (2022-2024)
+// Applied as a multiplier to batter hits, runs, total bases projections
+// Capped at ±12% to avoid over-correction on extreme parks
+
+const PARK_FACTORS = {
+  // Hitter friendly
+  COL: 1.12,  // Coors Field — extreme altitude, always #1
+  CIN: 1.07,  // Great American Ball Park
+  PHI: 1.06,  // Citizens Bank Park
+  TEX: 1.05,  // Globe Life Field
+  BAL: 1.05,  // Camden Yards
+  BOS: 1.04,  // Fenway Park
+  MIL: 1.03,  // American Family Field
+  NYY: 1.03,  // Yankee Stadium
+  TOR: 1.02,  // Rogers Centre
+  HOU: 1.02,  // Minute Maid Park
+  ATL: 1.02,  // Truist Park
+  ARI: 1.01,  // Chase Field
+  MIN: 1.01,  // Target Field
+  // Neutral
+  STL: 1.00,  // Busch Stadium
+  LAA: 1.00,  // Angel Stadium
+  DET: 1.00,  // Comerica Park
+  KC:  1.00,  // Kauffman Stadium
+  CLE: 0.99,  // Progressive Field
+  WSH: 0.99,  // Nationals Park
+  CHC: 0.99,  // Wrigley Field
+  NYM: 0.99,  // Citi Field
+  PIT: 0.99,  // PNC Park
+  TB:  0.98,  // Tropicana Field
+  MIA: 0.98,  // loanDepot park
+  LAD: 0.98,  // Dodger Stadium
+  // Pitcher friendly
+  SEA: 0.97,  // T-Mobile Park
+  CWS: 0.97,  // Guaranteed Rate Field
+  CHW: 0.97,  // alias
+  OAK: 0.97,  // Oakland Coliseum
+  ATH: 0.97,  // Athletics (alias)
+  SF:  0.96,  // Oracle Park
+  SD:  0.96,  // Petco Park
+};
+
+function getParkFactor(teamAbbrev) {
+  if (!teamAbbrev) return 1.0;
+  return PARK_FACTORS[teamAbbrev.toUpperCase()] ?? 1.0;
+}
 
 // ─── Stat config ──────────────────────────────────────────────────────────────
 
@@ -338,7 +388,7 @@ async function getPlayerGamelog(league, athleteId, isPitcher) {
 
 // ─── Projection engine ────────────────────────────────────────────────────────
 
-function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starterHand = null, pitcherSaber = null) {
+function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starterHand = null, pitcherSaber = null, parkFactor = 1.0) {
   if (!gamelog || gamelog.allGames.length < 1) return null;
 
   const games  = gamelog.allGames;
@@ -350,9 +400,16 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
   const oppMult  = opponentERA?.batterMultiplier ?? 1.0;
   const oppERA   = opponentERA?.era ?? null;
 
-  const saberMult        = sabermetrics ? getSabermetricMultiplier(sabermetrics, starterHand) : 1.0;
+  // Batter sabermetric multiplier: BA vs xBA regression + platoon splits
+  const saberMult = sabermetrics ? getSabermetricMultiplier(sabermetrics, starterHand) : 1.0;
+
+  // Pitcher sabermetric multiplier: K% suppression + xBA allowed
+  // Combined with ERA mult for total pitcher difficulty signal (capped at ±20%)
   const pitcherMult      = pitcherSaber ? getPitcherMultiplierForBatters(pitcherSaber) : 1.0;
   const totalPitcherMult = Math.max(0.80, Math.min(1.20, oppMult * pitcherMult));
+
+  // Park factor: applied to hits, runs, total bases (capped at ±12%)
+  const parkMult = Math.max(0.88, Math.min(1.12, parkFactor));
 
   for (const stat of BATTER_STATS) {
     if (stat === 'hra') continue;
@@ -368,11 +425,13 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
     const floor     = last10Vals.length ? Math.min(...last10Vals) : Math.min(...seasonVals);
     const ceiling   = Math.max(...seasonVals);
 
+    // 60/40 blend → total pitcher mult (ERA × K%/xBA) → batter sabermetric mult (hits only) → park factor (hits/runs/TB)
     const rawBlended    = last5Avg != null
       ? Math.round((last5Avg * 0.6 + seasonAvg * 0.4) * 100) / 100
       : seasonAvg;
     const statSaberMult = stat === 'hits' ? saberMult : 1.0;
-    const blended       = Math.round(rawBlended * totalPitcherMult * statSaberMult * 100) / 100;
+    const statParkMult  = ['hits', 'runs', 'totalBases'].includes(stat) ? parkMult : 1.0;
+    const blended       = Math.round(rawBlended * totalPitcherMult * statSaberMult * statParkMult * 100) / 100;
 
     const trend = last5Avg != null && seasonAvg > 0
       ? last5Avg > seasonAvg * 1.2 ? 'up' : last5Avg < seasonAvg * 0.8 ? 'down' : 'neutral'
@@ -401,6 +460,7 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
       oppMult, oppERA,
       saberMult:   Math.round(saberMult * 100) / 100,
       pitcherMult: Math.round(pitcherMult * 100) / 100,
+      parkMult:    Math.round(parkMult * 100) / 100,
     };
   }
 
@@ -547,6 +607,11 @@ function computeRating(proj) {
     if (proj.pitcherMult < 0.96) score -= 1;
   }
 
+  if (proj.parkMult != null) {
+    if (proj.parkMult > 1.04) score += 1;
+    if (proj.parkMult < 0.96) score -= 1;
+  }
+
   if (proj.isShortRest) score -= 1;
   if (proj.isExtraRest) score += 1;
 
@@ -595,6 +660,10 @@ function formatPlayerForPrompt(player, projections) {
     if (!isPitcher && p.pitcherMult != null && p.pitcherMult !== 1.0) {
       const dir = p.pitcherMult > 1 ? '↑' : '↓';
       contextLine += `\n    Pitcher sabermetric mult: ${p.pitcherMult}x ${dir} (K% suppression + xBA allowed)`;
+    }
+    if (!isPitcher && p.parkMult != null && p.parkMult !== 1.0) {
+      const dir = p.parkMult > 1 ? '↑' : '↓';
+      contextLine += `\n    Park factor: ${p.parkMult}x ${dir}`;
     }
     if (isPitcher) {
       const restNote = p.isShortRest ? ' ⚠️SHORT REST' : p.isExtraRest ? ' ✅EXTRA REST' : '';
@@ -646,7 +715,7 @@ THRESHOLD LOGIC:
 - HARD RULE: Only recommend picks where projection > threshold. Never recommend a pick where projection <= threshold.
 
 MINIMUM THRESHOLDS (never recommend below these):
-- Hits: 0.5 | Total Bases: 1.5 | Home Runs: 0.5 | RBI: 0.5 | Runs: 0.5 | H+R+RBI: 2.5
+- Hits: 0.5 | Total Bases: 1.5 | Home Runs: 0.5 | RBI: 0.5 | Runs: 0.5 | H+R+RBI: 1.5
 - Strikeouts: 3.5 | Outs Recorded: 10.5 | Walks: 0.5
 
 RATING RULE: Use the "Star rating" shown in each stat block exactly as given (integer 1-5). Do not assign your own rating.
@@ -672,6 +741,11 @@ OPPOSING PITCHER SABERMETRIC FACTORS (when provided):
 - Pitcher xBA against: if high vs league avg (0.248), batters have genuine upside beyond ERA
 - ERA vs FIP gap: if ERA much higher than FIP, pitcher is better than ERA suggests — reduce batter confidence
 - Pitcher matchup multiplier already applied to all batter stat projections
+
+PARK FACTOR (when shown):
+- Park factor > 1.0 = hitter friendly park = boosts hits/runs/TB projections
+- Park factor < 1.0 = pitcher friendly park = suppresses hits/runs/TB projections
+- Already applied to blended projection — cite it in rationale when meaningful (>1.03 or <0.97)
 
 STAT LABELS FOR OUTPUT:
 - Use exactly: "Hits", "Total Bases", "Home Runs", "RBI", "Runs", "H+R+RBI", "Strikeouts", "Outs Recorded", "Walks"
@@ -807,6 +881,7 @@ export default async function handler(req, res) {
     console.log(`[analyze-mlb] Gamelogs: ${gamelogResults.filter(Boolean).length}/${allPlayers.length} fetched`);
     console.log(`[analyze-mlb] Sabermetrics: ${saberResults.filter(Boolean).length}/${battersOnly.length} batters enriched`);
     console.log(`[analyze-mlb] Pitcher sabermetrics: ${pitcherSaberResults.filter(Boolean).length}/${pitchersOnly.length} pitchers enriched`);
+    console.log(`[analyze-mlb] Park factor: ${homeTeam?.abbreviation} = ${getParkFactor(homeTeam?.abbreviation)}x`);
 
     const playerData = allPlayers.map((p, i) => {
       const gamelog = gamelogResults[i];
@@ -820,8 +895,11 @@ export default async function handler(req, res) {
         ? (p.isHome ? homeRest : awayRest)
         : null;
 
+      // Use pitchHand from MLB Stats API — more reliable than ESPN roster throws field
       const starterHand = !p.isPitcher
-        ? (p.isHome ? awayPitchers[0]?.throws || null : homePitchers[0]?.throws || null)
+        ? (p.isHome
+            ? (awayPitcherSaber?.pitchHand || awayPitchers[0]?.throws || null)
+            : (homePitcherSaber?.pitchHand || homePitchers[0]?.throws || null))
         : null;
 
       const sabermetrics = !p.isPitcher ? (saberByIndex[i] || null) : null;
@@ -830,9 +908,11 @@ export default async function handler(req, res) {
         ? (p.isHome ? awayPitcherSaber : homePitcherSaber)
         : null;
 
+      const parkFactor = !p.isPitcher ? getParkFactor(homeTeam?.abbreviation) : 1.0;
+
       const projections = p.isPitcher
         ? buildPitcherProjection(gamelog, restInfo)
-        : buildBatterProjection(gamelog, opponentERA, sabermetrics, starterHand, pitcherSaber);
+        : buildBatterProjection(gamelog, opponentERA, sabermetrics, starterHand, pitcherSaber, parkFactor);
 
       if (!projections || Object.keys(projections).length === 0) return null;
 
@@ -851,7 +931,6 @@ export default async function handler(req, res) {
 
     console.log(`[analyze-mlb] Built projections for ${playerData.length} players`);
 
-    // Hard filter: drop stat projections that don't clear their threshold
     for (const p of playerData) {
       const statsToCheck = p.isPitcher ? PITCHER_STATS : [...BATTER_STATS];
       for (const stat of statsToCheck) {
@@ -860,8 +939,7 @@ export default async function handler(req, res) {
           if (proj.blended <= proj.threshold) {
             delete p.projections[stat];
           }
-         // Hits-specific minimum: projection must be >= 1.0
-          // Sub-1.0 hits projection = less than 1 hit per game on average — too thin
+          // Hits minimum: projection must be >= 1.0
           if (stat === 'hits' && proj && proj.blended < 1.0) {
             delete p.projections[stat];
           }
@@ -876,6 +954,7 @@ export default async function handler(req, res) {
         }
       }
     }
+
     if (playerData.length === 0) {
       return res.status(404).json({ error: 'Could not build projections for any players in this game' });
     }
