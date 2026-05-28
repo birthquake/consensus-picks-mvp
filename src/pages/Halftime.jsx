@@ -140,7 +140,7 @@ const Icon = {
       <polyline points="18 15 12 9 6 15"/>
     </svg>
   ),
-  // ── NEW: pitcher/batter toggle icons ────────────────────────────────────────
+  // ── pitcher/batter toggle icons ──────────────────────────────────────────
   Person: () => (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="12" cy="7" r="4"/>
@@ -329,9 +329,8 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
     }
   };
 
-  const ratingColor = (r) => r >= 4 ? '#4ade80' : r >= 3 ? '#fbbf24' : '#f87171';
-  const topRating   = totalPicks ? Math.max(...[...nbaPicks, ...mlbPicks, ...nhlPicks].map(p => p.rating)) : 0;
-  const avgRating   = totalPicks ? ([...nbaPicks, ...mlbPicks, ...nhlPicks].reduce((s, p) => s + p.rating, 0) / totalPicks).toFixed(1) : '0';
+  const topRating = totalPicks ? Math.max(...[...nbaPicks, ...mlbPicks, ...nhlPicks].map(p => p.rating)) : 0;
+  const avgRating = totalPicks ? ([...nbaPicks, ...mlbPicks, ...nhlPicks].reduce((s, p) => s + p.rating, 0) / totalPicks).toFixed(1) : '0';
 
   const renderPickRow = (pick, i) => {
     const key = `${pick.player}:${pick.stat}`;
@@ -380,7 +379,6 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
 
       {state === 'done' && (
         <div>
-          {/* Summary card */}
           <div style={{ background: 'linear-gradient(135deg, #4c1d95, #5b21b6)', borderRadius: '16px', padding: '16px 18px', marginBottom: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
               <div style={{ width: '7px', height: '7px', background: '#4ade80', borderRadius: '50%' }}/>
@@ -393,31 +391,21 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
             </div>
           </div>
 
-          {/* Sport selector */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '16px' }}>
             {[
               { id: 'nba', label: 'NBA', icon: <Icon.Basketball />, count: nbaPicks.length },
               { id: 'mlb', label: 'MLB', icon: <Icon.Baseball />,   count: mlbPicks.length },
               { id: 'nhl', label: 'NHL', icon: <Icon.Hockey />,     count: nhlPicks.length },
             ].map(s => (
-              <button
-                key={s.id}
-                onClick={() => setDailySport(s.id)}
-                style={{ padding: '10px', borderRadius: '12px', border: `1px solid ${dailySport === s.id ? '#7c3aed' : 'var(--border-color, #222)'}`, background: dailySport === s.id ? 'rgba(124,58,237,0.15)' : 'var(--bg-secondary, #111)', color: dailySport === s.id ? '#a78bfa' : 'var(--text-secondary, #888)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: '500', fontSize: '13px', transition: 'all 0.15s' }}
-              >
+              <button key={s.id} onClick={() => setDailySport(s.id)} style={{ padding: '10px', borderRadius: '12px', border: `1px solid ${dailySport === s.id ? '#7c3aed' : 'var(--border-color, #222)'}`, background: dailySport === s.id ? 'rgba(124,58,237,0.15)' : 'var(--bg-secondary, #111)', color: dailySport === s.id ? '#a78bfa' : 'var(--text-secondary, #888)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: '500', fontSize: '13px', transition: 'all 0.15s' }}>
                 {s.icon} {s.label}
-                <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '10px', background: dailySport === s.id ? 'rgba(124,58,237,0.3)' : 'rgba(255,255,255,0.06)', color: dailySport === s.id ? '#c4b5fd' : 'var(--text-secondary, #666)' }}>
-                  {s.count}
-                </span>
+                <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '10px', background: dailySport === s.id ? 'rgba(124,58,237,0.3)' : 'rgba(255,255,255,0.06)', color: dailySport === s.id ? '#c4b5fd' : 'var(--text-secondary, #666)' }}>{s.count}</span>
               </button>
             ))}
           </div>
 
-          {/* Header row */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>
-              {activePicks.length} pick{activePicks.length !== 1 ? 's' : ''}
-            </span>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>{activePicks.length} pick{activePicks.length !== 1 ? 's' : ''}</span>
             <button onClick={load} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <Icon.Refresh /> Refresh
             </button>
@@ -425,9 +413,7 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
 
           {activePicks.length === 0 && (
             <div style={{ textAlign: 'center', padding: '32px 24px' }}>
-              <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px' }}>
-                No {dailySport.toUpperCase()} picks available today.
-              </p>
+              <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px' }}>No {dailySport.toUpperCase()} picks available today.</p>
             </div>
           )}
 
@@ -472,7 +458,7 @@ function PerformanceStats() {
   );
   if (!stats) return null;
 
-  const { summary, by_rating, by_stat, projection_accuracy, insights } = stats;
+  const { summary, by_rating, by_stat, projection_accuracy, twitter, insights } = stats;
 
   if (summary.graded === 0) return (
     <div style={{ textAlign: 'center', padding: '48px 24px' }}>
@@ -546,6 +532,28 @@ function PerformanceStats() {
         })}
       </div>
 
+      {/* Twitter picks performance */}
+      {twitter && (twitter.graded > 0 || twitter.pending > 0) && (
+        <div style={{ background: 'var(--bg-secondary, #111)', border: '1px solid rgba(29,155,240,0.3)', borderRadius: '14px', padding: '16px', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="#1d9bf0"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.736l7.73-8.835L1.254 2.25H8.08l4.261 5.636L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z"/></svg>
+            <span style={{ fontSize: '12px', fontWeight: '500', color: '#1d9bf0', letterSpacing: '0.5px' }}>TWITTER PICKS</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+            {[
+              { label: 'Hit Rate', value: twitter.hit_rate != null ? `${twitter.hit_rate}%` : '—', color: hitRateColor(twitter.hit_rate) },
+              { label: 'Graded',   value: twitter.graded,  color: 'var(--text-primary, #fff)' },
+              { label: 'Pending',  value: twitter.pending, color: 'var(--text-secondary, #888)' },
+            ].map(card => (
+              <div key={card.label} style={{ background: 'var(--bg-primary, #000)', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
+                <div style={{ fontSize: '20px', fontWeight: '500', color: card.color }}>{card.value}</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary, #666)', marginTop: '3px', fontWeight: '500' }}>{card.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {projection_accuracy?.picks_with_data > 0 && (
         <div style={{ background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '14px', padding: '16px', marginBottom: '14px' }}>
           <div style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-secondary, #888)', marginBottom: '12px', letterSpacing: '0.5px' }}>PROJECTION ACCURACY</div>
@@ -576,13 +584,15 @@ function PerformanceStats() {
 }
 
 // ── Game Card ─────────────────────────────────────────────────────────────────
-function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime', oddsMap = {}, cachedAnalysis, onAnalysisUpdate }) {
+function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime', oddsMap = {}, cachedAnalysis, onAnalysisUpdate, onPickIdsUpdate }) {
   const [state, setState]               = useState(cachedAnalysis ? 'done' : 'idle');
   const [analysis, setAnalysis]         = useState(cachedAnalysis || null);
   const [errorMsg, setErrorMsg]         = useState('');
   const [analysisMode, setAnalysisMode] = useState('picks');
   const [collapsed, setCollapsed]       = useState(false);
-  const [pickType, setPickType]         = useState('all'); // 'all' | 'batters' | 'pitchers'
+
+  // ── pitcher/batter toggle for MLB pre-game only ───────────────────────────
+  const [pickType, setPickType] = useState('all'); // 'all' | 'batters' | 'pitchers'
 
   const isMLB = game.league === 'mlb';
   const isNHL = game.league === 'nhl';
@@ -603,7 +613,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
           homeTeam: game.homeTeam, awayTeam: game.awayTeam,
           gameDate: game.gameDate || game.startTime,
           existingLegs, legCount,
-          pickType,   // ← passed through to backend
+          pickType,
         };
       } else if (isNHL) {
         endpoint = '/api/pregame/analyze-nhl';
@@ -619,24 +629,31 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
       setAnalysis(data);
       setState('done');
       if (onAnalysisUpdate) onAnalysisUpdate(game.id, data);
-      if (data.picks?.length > 0) savePicks(data).catch(err => console.warn('[save-picks] failed silently:', err.message));
+      if (data.picks?.length > 0) savePicks(data);
     } catch (err) {
       setErrorMsg(err.message);
       setState('error');
     }
-  }, [game, mode, analysisMode, legCount, isMLB, isNHL, pickType]);  // pickType in deps
+  }, [game, mode, analysisMode, legCount, isMLB, isNHL, pickType]);
 
   const savePicks = async (analysisData) => {
-    await fetch('/api/halftime/save-picks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        gameId: game.id, sport: game.sport, league: game.league,
-        gameName: game.shortName || game.name,
-        gameDate: new Date().toISOString().split('T')[0],
-        picks: analysisData.picks, projections: analysisData.projections || {},
-      }),
-    });
+    try {
+      const res = await fetch('/api/halftime/save-picks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gameId: game.id, sport: game.sport, league: game.league,
+          gameName: game.shortName || game.name,
+          gameDate: new Date().toISOString().split('T')[0],
+          picks: analysisData.picks, projections: analysisData.projections || {},
+        }),
+      });
+      const data = await res.json();
+      // Forward pick_ids map (player:stat → Firestore doc ID) to parent
+      if (data.pick_ids && onPickIdsUpdate) onPickIdsUpdate(data.pick_ids);
+    } catch (err) {
+      console.warn('[save-picks] failed silently:', err.message);
+    }
   };
 
   const gameLegs  = selectedLegs.filter(l => l.gameId === game.id);
@@ -696,23 +713,12 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
                 { id: 'batters',  label: 'Batters',  icon: Icon.Person },
                 { id: 'pitchers', label: 'Pitchers', icon: Icon.Pitch  },
               ].map(opt => (
-                <button
-                  key={opt.id}
-                  onClick={() => setPickType(opt.id)}
-                  style={{
-                    flex: 1, padding: '7px', borderRadius: '8px', border: 'none',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
-                    background: pickType === opt.id ? '#7c3aed' : 'transparent',
-                    color: pickType === opt.id ? '#fff' : 'var(--text-secondary, #888)',
-                    fontWeight: '500', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s',
-                  }}
-                >
+                <button key={opt.id} onClick={() => setPickType(opt.id)} style={{ flex: 1, padding: '7px', borderRadius: '8px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', background: pickType === opt.id ? '#7c3aed' : 'transparent', color: pickType === opt.id ? '#fff' : 'var(--text-secondary, #888)', fontWeight: '500', fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s' }}>
                   {opt.icon && <opt.icon />}{opt.label}
                 </button>
               ))}
             </div>
           )}
-          {/* ─────────────────────────────────────────────────────────────────── */}
 
           {state === 'idle' && (
             <button onClick={() => analyze()} style={{ width: '100%', padding: '13px', borderRadius: '12px', background: '#7c3aed', border: 'none', color: '#fff', fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -822,15 +828,65 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
 }
 
 // ── Parlay Builder ────────────────────────────────────────────────────────────
-function ParlayBuilder({ legs, onRemove }) {
-  const [copied, setCopied] = useState(false);
+function ParlayBuilder({ legs, onRemove, pickIdMap }) {
+  const [copied,  setCopied]  = useState(false);
+  const [marked,  setMarked]  = useState(false);
+  const [marking, setMarking] = useState(false);
+
   const avgRating = legs.length ? Math.round((legs.reduce((s, l) => s + l.rating, 0) / legs.length) * 10) / 10 : 0;
+
+  // Format picks in PaiGrade Twitter style
   const copyParlay = () => {
-    const text = legs.map(l => `${l.player} ${l.direction} ${l.stat} (${l.rating}⭐)`).join('\n');
-    navigator.clipboard.writeText(text);
+    const today = new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+    const lines = [
+      `MLB Picks ${today}`,
+      '',
+      ...legs.map(l => {
+        const statLabel = l.stat === 'H+R+RBI' ? '2+ H+R+RBI' : `1+ ${l.stat}`;
+        return `${l.player} (${l.team}) ${statLabel}`;
+      }),
+      '',
+      '#MLBPicks #FreePicks #BaseballTwitter',
+    ];
+    navigator.clipboard.writeText(lines.join('\n'));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Tag these legs as posted to Twitter in Firestore
+  const markAsPosted = async () => {
+    if (marking || marked) return;
+    setMarking(true);
+    try {
+      // Resolve Firestore doc IDs for selected legs via pickIdMap
+      const pickIds = legs
+        .map(l => {
+          // leg.key is "gameId:player:stat" — pickIdMap uses "player:stat"
+          const parts = l.key.split(':');
+          const mapKey = parts.slice(1).join(':'); // drop gameId prefix
+          return pickIdMap[mapKey] || null;
+        })
+        .filter(Boolean);
+
+      if (pickIds.length === 0) {
+        console.warn('[ParlayBuilder] No Firestore IDs found for selected legs — picks may not have saved yet');
+        setMarking(false);
+        return;
+      }
+
+      await fetch('/api/halftime/save-picks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mark_twitter', pickIds }),
+      });
+
+      setMarked(true);
+    } catch (err) {
+      console.error('[ParlayBuilder] mark_twitter error:', err.message);
+    }
+    setMarking(false);
+  };
+
   if (legs.length === 0) return null;
   return (
     <div style={{ position: 'fixed', bottom: '80px', left: '50%', transform: 'translateX(-50%)', width: 'min(420px, calc(100vw - 32px))', background: '#0f0f14', border: '1px solid rgba(124,58,237,0.3)', borderRadius: '16px', padding: '16px', zIndex: 100, boxShadow: '0 -4px 40px rgba(124,58,237,0.2)', animation: 'slideUp 0.3s ease' }}>
@@ -849,9 +905,14 @@ function ParlayBuilder({ legs, onRemove }) {
           </div>
         ))}
       </div>
-      <button onClick={copyParlay} style={{ width: '100%', padding: '11px', borderRadius: '12px', background: copied ? '#4ade80' : '#7c3aed', border: 'none', color: copied ? '#000' : '#fff', fontWeight: '500', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s' }}>
-        {copied ? '✓ Copied!' : 'Copy Parlay'}
-      </button>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        <button onClick={copyParlay} style={{ padding: '11px', borderRadius: '12px', background: copied ? '#4ade80' : '#7c3aed', border: 'none', color: copied ? '#000' : '#fff', fontWeight: '500', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s' }}>
+          {copied ? '✓ Copied!' : 'Copy for Twitter'}
+        </button>
+        <button onClick={markAsPosted} disabled={marking || marked} style={{ padding: '11px', borderRadius: '12px', background: marked ? 'rgba(74,222,128,0.15)' : 'transparent', border: `1px solid ${marked ? '#4ade80' : 'rgba(255,255,255,0.15)'}`, color: marked ? '#4ade80' : marking ? '#555' : '#aaa', fontWeight: '500', fontSize: '13px', cursor: marked || marking ? 'default' : 'pointer', transition: 'all 0.2s' }}>
+          {marked ? '✓ Posted' : marking ? 'Saving...' : 'Mark as Posted'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -886,6 +947,12 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const [selectedLegs, setSelectedLegs] = useState([]);
   const [errorMsg, setErrorMsg]         = useState('');
   const [legCount, setLegCount]         = useState(4);
+  // Maps "player:stat" → Firestore doc ID — used for Twitter marking
+  const [pickIdMap, setPickIdMap]       = useState({});
+
+  const updatePickIdMap = useCallback((newIds) => {
+    setPickIdMap(prev => ({ ...prev, ...newIds }));
+  }, []);
 
   const [dailyCache, setDailyCache]     = useState({ state: 'idle', nbaPicks: [], mlbPicks: [], nhlPicks: [] });
   const [pregameCache, setPregameCache] = useState({});
@@ -1162,12 +1229,13 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
               oddsMap={oddsMap}
               cachedAnalysis={mode === 'pregame' ? pregameCache[game.id] : null}
               onAnalysisUpdate={mode === 'pregame' ? updatePregameCache : null}
+              onPickIdsUpdate={updatePickIdMap}
             />
           ))}
         </div>
       )}
 
-      <ParlayBuilder legs={selectedLegs} onRemove={removeLeg} />
+      <ParlayBuilder legs={selectedLegs} onRemove={removeLeg} pickIdMap={pickIdMap} />
     </div>
   );
 }
