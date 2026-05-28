@@ -12,6 +12,7 @@
 //   - Pitcher handedness: sourced from MLB Stats API for reliable platoon splits
 //   - Weather: Open-Meteo API, wind/temp/precip applied to hits/runs/TB projections
 //   - Lineup position weighting: batting order slot → runs/RBI multipliers
+//   - pickType param: 'all' | 'batters' | 'pitchers' — filters playerData before Claude
 //
 // BATTERS:
 //   - Season avg hits, total bases, home runs, RBI, runs, HRA (hits+runs+RBI)
@@ -28,7 +29,7 @@
 //   - Rest-day adjustment — short rest penalty, extra rest bonus
 //
 // Usage: POST /api/pregame/analyze-mlb
-// Body: { gameId, sport, league, homeTeam, awayTeam, gameDate, existingLegs?, legCount? }
+// Body: { gameId, sport, league, homeTeam, awayTeam, gameDate, existingLegs?, legCount?, pickType? }
 
 import Anthropic from '@anthropic-ai/sdk';
 import {
@@ -66,9 +67,6 @@ function getParkFactor(teamAbbrev) {
 }
 
 // ─── Lineup position weighting ────────────────────────────────────────────────
-// Batting order slot → multipliers for runs and RBI projections
-// Leadoff hitters score more runs; cleanup hitters drive in more RBI
-
 const LINEUP_SLOT_MULTIPLIERS = {
   1: { runs: 1.10, rbi: 0.90 },
   2: { runs: 1.08, rbi: 0.92 },
@@ -86,17 +84,13 @@ function getLineupMultiplier(slot) {
   return LINEUP_SLOT_MULTIPLIERS[slot] || { runs: 1.0, rbi: 1.0 };
 }
 
-// Fetch batting order slots for a game from the MLB Stats API
-// Returns a map of { playerName (lowercase) -> battingOrder slot }
 async function getBattingOrderSlots(gameDate, homeTeamId, awayTeamId) {
-  // Returns { slotMap, homeConfirmed, awayConfirmed }
-  // homeConfirmed/awayConfirmed = true if that team's lineup has 9+ slots
   const empty = { slotMap: {}, homeConfirmed: false, awayConfirmed: false };
 
   try {
     if (!gameDate) return empty;
 
-    const dateStr = gameDate.substring(0, 10); // YYYY-MM-DD
+    const dateStr = gameDate.substring(0, 10);
     const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}&teamId=${homeTeamId}&hydrate=lineups`;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
@@ -115,7 +109,6 @@ async function getBattingOrderSlots(gameDate, homeTeamId, awayTeamId) {
     const games = data?.dates?.[0]?.games || [];
     if (!games.length) return empty;
 
-    // Find the game matching our teams
     const game = games.find(g => {
       const home = g.teams?.home?.team?.id;
       const away = g.teams?.away?.team?.id;
@@ -452,7 +445,6 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
     const ceiling   = Math.max(...seasonVals);
 
     const rawBlended      = last5Avg != null ? Math.round((last5Avg * 0.6 + seasonAvg * 0.4) * 100) / 100 : seasonAvg;
-    // Hits: full saberMult. Runs/RBI: 50% dampened (indirect relationship via contact quality)
     const statSaberMult   = stat === 'hits' ? saberMult
                           : (stat === 'runs' || stat === 'rbi') ? Math.max(0.92, Math.min(1.08, 1.0 + (saberMult - 1.0) * 0.5))
                           : 1.0;
@@ -619,9 +611,6 @@ function computeRating(proj) {
 }
 
 // ─── Historical hit rates (feedback loop) ────────────────────────────────────
-// Fetches model's historical hit rate by stat type from the stats API.
-// Used to inject performance context into the Claude prompt.
-// Fails silently — if unavailable, prompt proceeds without this data.
 
 async function fetchStatHitRates() {
   try {
@@ -645,7 +634,6 @@ async function fetchStatHitRates() {
 
     if (!data?.success || !data.by_stat) return null;
 
-    // Only include stats with 10+ graded picks to avoid noise
     const rates = {};
     for (const [stat, d] of Object.entries(data.by_stat)) {
       if (d.total >= 10 && d.hitRate != null) {
@@ -745,17 +733,25 @@ async function generateMLBPicks(game, playerData, existingLegs, legCount, statHi
     ? `\nEXISTING LEGS (exclude these players):\n${existingLegs.map((l, i) => `${i + 1}. ${l.player} - ${l.stat}`).join('\n')}\n`
     : '';
 
+  // Build section text based on what playerData contains
+  const hasPitchers = pitchers.length > 0;
+  const hasBatters  = batters.length > 0;
+  const pitcherSection = hasPitchers
+    ? `STARTING PITCHERS:\n${pitcherLines}`
+    : `STARTING PITCHERS:\nNo pitcher data included for this analysis.`;
+  const batterSection = hasBatters
+    ? `BATTERS:\n${batterLines}`
+    : `BATTERS:\nNo batter data included for this analysis.`;
+
   const prompt = `You are an expert sports bettor generating MLB pre-game prop pick recommendations. You have historical projections for batters and pitchers based on season averages and recent form. Each stat already has a pre-computed star rating — use that rating exactly, do not override it.
 
 GAME: ${game.awayTeam?.name ?? 'Away'} @ ${game.homeTeam?.name ?? 'Home'}
 DATE: ${game.gameDate}
 ${existingLegsText}
 
-STARTING PITCHERS:
-${pitcherLines || 'No pitcher data available'}
+${pitcherSection}
 
-BATTERS:
-${batterLines || 'No batter data available'}
+${batterSection}
 
 HOW TO USE THESE PROJECTIONS:
 
@@ -869,11 +865,11 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { gameId, league = 'mlb', homeTeam, awayTeam, gameDate, existingLegs, legCount = 4, mode = 'picks' } = req.body;
+  const { gameId, league = 'mlb', homeTeam, awayTeam, gameDate, existingLegs, legCount = 4, mode = 'picks', pickType = 'all' } = req.body;
   if (!gameId) return res.status(400).json({ error: 'Missing required field: gameId' });
 
   try {
-    console.log(`[analyze-mlb] Analyzing ${gameId} (MLB) mode=${mode}`);
+    console.log(`[analyze-mlb] Analyzing ${gameId} (MLB) mode=${mode} pickType=${pickType}`);
 
     const resolvedHomeId = homeTeam?.id || await findTeamId(league, homeTeam?.abbreviation);
     const resolvedAwayId = awayTeam?.id || await findTeamId(league, awayTeam?.abbreviation);
@@ -900,7 +896,6 @@ export default async function handler(req, res) {
 
     console.log(`[analyze-mlb] Analyzing ${allPlayers.length} players (${homePitchers.length + awayPitchers.length} pitchers, ${homeBatters.length + awayBatters.length} batters)`);
 
-    // Fetch lineup slots and gamelogs in parallel
     const mlbHomeId = resolvedHomeId;
     const mlbAwayId = resolvedAwayId;
 
@@ -943,7 +938,6 @@ export default async function handler(req, res) {
       const gamelog = gamelogResults[i];
       if (!gamelog || gamelog.gamesPlayed < 1) return null;
 
-      // Lineup confirmation filter — only for batters, only when lineup is confirmed for their team
       if (!p.isPitcher) {
         const teamConfirmed = p.isHome ? homeLineupConfirmed : awayLineupConfirmed;
         const inLineup = lineupSlotMap[p.name?.toLowerCase()] != null;
@@ -1001,7 +995,22 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Could not build projections for any players in this game' });
     }
 
-    // Fetch historical hit rates for feedback loop — fails silently
+    // ─── pickType filter — applied AFTER projections are built ───────────────
+    // 'batters'  → only send batter data to Claude (faster, cheaper, focused)
+    // 'pitchers' → only send pitcher data to Claude
+    // 'all'      → send everything (default)
+    const filteredPlayerData = pickType === 'batters'
+      ? playerData.filter(p => !p.isPitcher)
+      : pickType === 'pitchers'
+        ? playerData.filter(p => p.isPitcher)
+        : playerData;
+
+    console.log(`[analyze-mlb] pickType=${pickType} → sending ${filteredPlayerData.length}/${playerData.length} players to Claude`);
+
+    if (filteredPlayerData.length === 0) {
+      return res.status(404).json({ error: `No ${pickType} data available for this game` });
+    }
+
     const statHitRates = await fetchStatHitRates().catch(() => null);
     if (statHitRates) {
       const summary = Object.entries(statHitRates).map(([s, d]) => `${s}=${d.hitRate}%`).join(' ');
@@ -1011,7 +1020,7 @@ export default async function handler(req, res) {
     }
 
     const targetLegCount = mode === 'daily' ? 2 : legCount;
-    const picks = await generateMLBPicks({ homeTeam, awayTeam, gameDate }, playerData, existingLegs || [], targetLegCount, statHitRates);
+    const picks = await generateMLBPicks({ homeTeam, awayTeam, gameDate }, filteredPlayerData, existingLegs || [], targetLegCount, statHitRates);
 
     const picksWithMeta = (picks.picks || []).map(pick => ({
       ...pick, hasRealLine: false, model: 'claude-haiku-4-5-20251001', sport: 'mlb',
@@ -1020,7 +1029,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       success: true, gameId,
       game: { homeTeam, awayTeam, league, gameDate },
-      mode, ...picks, picks: picksWithMeta,
+      mode, pickType, ...picks, picks: picksWithMeta,
       player_count: playerData.length,
       analyzed_at: new Date().toISOString(),
     });
