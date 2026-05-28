@@ -440,7 +440,10 @@ function buildBatterProjection(gamelog, opponentERA, sabermetrics = null, starte
     const ceiling   = Math.max(...seasonVals);
 
     const rawBlended      = last5Avg != null ? Math.round((last5Avg * 0.6 + seasonAvg * 0.4) * 100) / 100 : seasonAvg;
-    const statSaberMult   = stat === 'hits' ? saberMult : 1.0;
+    // Hits: full saberMult. Runs/RBI: 50% dampened (indirect relationship via contact quality)
+    const statSaberMult   = stat === 'hits' ? saberMult
+                          : (stat === 'runs' || stat === 'rbi') ? Math.max(0.92, Math.min(1.08, 1.0 + (saberMult - 1.0) * 0.5))
+                          : 1.0;
     const statParkMult    = ['hits', 'runs', 'totalBases'].includes(stat) ? parkMult : 1.0;
     const statWeatherMult = ['hits', 'runs', 'totalBases'].includes(stat) ? cappedWeatherMult : 1.0;
     const statLineupMult  = stat === 'runs' ? lineupMult.runs : stat === 'rbi' ? lineupMult.rbi : 1.0;
@@ -725,7 +728,7 @@ BASEBALL-SPECIFIC FACTORS:
 SABERMETRIC FACTORS (when provided):
 - Batter BA vs xBA: if actual BA well below xBA (>20 pts), positive regression signal = more hits incoming
 - Platoon split vs today's starter handedness = most relevant split to cite
-- Batter sabermetric multiplier already applied to hits blended projection
+- Batter sabermetric multiplier applied to hits (full weight), runs and RBI (50% dampened — indirect effect)
 
 OPPOSING PITCHER SABERMETRIC FACTORS (when provided):
 - High pitcher K% (>26%) suppresses hits — factor into hits prop confidence
