@@ -5,6 +5,9 @@
 //
 // Usage: POST /api/halftime/save-picks
 // Body: { gameId, sport, league, gameName, gameDate, picks, projections }
+//
+// Also handles: POST /api/halftime/save-picks { action: 'mark_twitter', pickIds: [...] }
+// Marks specific picks as posted to Twitter for separate hit rate tracking.
 
 import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
@@ -23,6 +26,32 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // ── Mark existing picks as posted to Twitter ─────────────────────────────
+  if (req.body.action === 'mark_twitter') {
+    const { pickIds } = req.body;
+    if (!pickIds?.length) {
+      return res.status(400).json({ error: 'Missing pickIds' });
+    }
+
+    try {
+      const batch = db.batch();
+      for (const id of pickIds) {
+        const ref = db.collection('halftime_picks').doc(id);
+        batch.update(ref, {
+          posted_to_twitter: true,
+          twitter_posted_at: FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      console.log(`[save-picks] Marked ${pickIds.length} picks as posted to Twitter`);
+      return res.status(200).json({ success: true, marked: pickIds.length });
+    } catch (err) {
+      console.error('[save-picks] mark_twitter error:', err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  // ── Save new picks ────────────────────────────────────────────────────────
   const { gameId, sport, league, gameName, gameDate, picks, projections } = req.body;
 
   if (!gameId || !picks?.length) {
@@ -41,9 +70,22 @@ export default async function handler(req, res) {
       existingSnap.docs.map(d => `${d.data().player}:${d.data().stat}`)
     );
 
+    // Also collect existing doc IDs by key so we can return them for Twitter marking
+    const existingIdsByKey = {};
+    existingSnap.docs.forEach(d => {
+      const key = `${d.data().player}:${d.data().stat}`;
+      existingIdsByKey[key] = d.id;
+    });
+
     const batch = db.batch();
     const savedIds = [];
+    const savedKeys = {};  // key → docId, for all picks (new + existing)
     let skipped = 0;
+
+    // Include existing picks in the key→id map so UI can mark them as Twitter posts
+    Object.entries(existingIdsByKey).forEach(([key, id]) => {
+      savedKeys[key] = id;
+    });
 
     for (const pick of picks) {
       const pickKey = `${pick.player}:${pick.stat}`;
@@ -52,11 +94,11 @@ export default async function handler(req, res) {
         continue; // already saved — skip duplicate
       }
 
-      // Look up this player's projection snapshot if available
       const playerProj = projections?.[pick.player] || null;
 
       const docRef = db.collection('halftime_picks').doc();
       savedIds.push(docRef.id);
+      savedKeys[pickKey] = docRef.id;
 
       batch.set(docRef, {
         // Game context
@@ -70,13 +112,13 @@ export default async function handler(req, res) {
         player:    pick.player,
         team:      pick.team,
         stat:      pick.stat,
-        direction: pick.direction,  // "Over" | "Under"
-        rating:    pick.rating,     // 1-5
+        direction: pick.direction,
+        rating:    pick.rating,
         rationale: pick.rationale,
         rating_reason: pick.rating_reason,
         risk_flags: pick.risk_flags || [],
         model:     pick.model || null,
-        
+
         // Projection snapshot at time of recommendation
         projection: playerProj ? {
           conservative:              playerProj.conservative              || null,
@@ -89,13 +131,16 @@ export default async function handler(req, res) {
           seasonAvg:                 playerProj.seasonAvg                 || null,
         } : null,
 
+        // Twitter tracking
+        posted_to_twitter: false,
+        twitter_posted_at: null,
+
         // Result (filled by cron after game ends)
-        status:       'pending',   // pending | hit | miss | void
-        actual_value: null,        // final stat value from ESPN box score
-        hit:          null,        // true | false | null
-        // How far off was the blended projection?
-        projection_error: null,    // actual_value - blended_projection
-        projection_error_pct: null,// % error
+        status:       'pending',
+        actual_value: null,
+        hit:          null,
+        projection_error: null,
+        projection_error_pct: null,
 
         created_at:   FieldValue.serverTimestamp(),
         graded_at:    null,
@@ -111,6 +156,8 @@ export default async function handler(req, res) {
       saved: savedIds.length,
       skipped,
       ids: savedIds,
+      // Return key→id map so UI can mark specific picks as Twitter posts
+      pick_ids: savedKeys,
     });
 
   } catch (err) {
