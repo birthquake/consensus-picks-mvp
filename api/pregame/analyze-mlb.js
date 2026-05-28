@@ -89,8 +89,12 @@ function getLineupMultiplier(slot) {
 // Fetch batting order slots for a game from the MLB Stats API
 // Returns a map of { playerName (lowercase) -> battingOrder slot }
 async function getBattingOrderSlots(gameDate, homeTeamId, awayTeamId) {
+  // Returns { slotMap, homeConfirmed, awayConfirmed }
+  // homeConfirmed/awayConfirmed = true if that team's lineup has 9+ slots
+  const empty = { slotMap: {}, homeConfirmed: false, awayConfirmed: false };
+
   try {
-    if (!gameDate) return {};
+    if (!gameDate) return empty;
 
     const dateStr = gameDate.substring(0, 10); // YYYY-MM-DD
     const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}&teamId=${homeTeamId}&hydrate=lineups`;
@@ -101,15 +105,15 @@ async function getBattingOrderSlots(gameDate, homeTeamId, awayTeamId) {
     try {
       const res = await fetch(url, { signal: ctrl.signal });
       clearTimeout(timer);
-      if (!res.ok) return {};
+      if (!res.ok) return empty;
       data = await res.json();
     } catch {
       clearTimeout(timer);
-      return {};
+      return empty;
     }
 
     const games = data?.dates?.[0]?.games || [];
-    if (!games.length) return {};
+    if (!games.length) return empty;
 
     // Find the game matching our teams
     const game = games.find(g => {
@@ -119,31 +123,39 @@ async function getBattingOrderSlots(gameDate, homeTeamId, awayTeamId) {
              (home === awayTeamId || away === awayTeamId);
     }) || games[0];
 
-    if (!game) return {};
+    if (!game) return empty;
 
     const slotMap = {};
     const lineups = game.lineups;
     if (!lineups) {
       console.log('[analyze-mlb] Lineup slots: not yet confirmed');
-      return {};
+      return empty;
     }
 
-    const processLineup = (players) => {
+    let homeSlotCount = 0, awaySlotCount = 0;
+
+    const processLineup = (players, isHome) => {
       if (!Array.isArray(players)) return;
       players.forEach(p => {
         const name = p.person?.fullName?.toLowerCase();
         const slot = p.battingOrder ? Math.floor(parseInt(p.battingOrder) / 100) : null;
-        if (name && slot) slotMap[name] = slot;
+        if (name && slot) {
+          slotMap[name] = slot;
+          if (isHome) homeSlotCount++; else awaySlotCount++;
+        }
       });
     };
 
-    processLineup(lineups.homePlayers);
-    processLineup(lineups.awayPlayers);
+    processLineup(lineups.homePlayers, true);
+    processLineup(lineups.awayPlayers, false);
 
-    return slotMap;
+    const homeConfirmed = homeSlotCount >= 9;
+    const awayConfirmed = awaySlotCount >= 9;
+
+    return { slotMap, homeConfirmed, awayConfirmed };
   } catch (err) {
     console.log(`[analyze-mlb] getBattingOrderSlots error: ${err.message}`);
-    return {};
+    return empty;
   }
 }
 
@@ -842,13 +854,14 @@ export default async function handler(req, res) {
     const mlbHomeId = resolvedHomeId;
     const mlbAwayId = resolvedAwayId;
 
-    const [gamelogResults, lineupSlotMap] = await Promise.all([
+    const [gamelogResults, lineupResult] = await Promise.all([
       Promise.all(allPlayers.map(p => getPlayerGamelog(league, p.id, p.isPitcher).catch(() => null))),
-      getBattingOrderSlots(gameDate, mlbHomeId, mlbAwayId).catch(() => ({})),
+      getBattingOrderSlots(gameDate, mlbHomeId, mlbAwayId).catch(() => ({ slotMap: {}, homeConfirmed: false, awayConfirmed: false })),
     ]);
 
+    const { slotMap: lineupSlotMap, homeConfirmed: homeLineupConfirmed, awayConfirmed: awayLineupConfirmed } = lineupResult;
     const slotsFound = Object.keys(lineupSlotMap).length;
-    console.log(`[analyze-mlb] Lineup slots: ${slotsFound} confirmed`);
+    console.log(`[analyze-mlb] Lineup slots: ${slotsFound} confirmed (home: ${homeLineupConfirmed}, away: ${awayLineupConfirmed})`);
 
     const battersOnly  = allPlayers.map((p, i) => ({ player: p, index: i })).filter(({ player }) => !player.isPitcher);
     const pitchersOnly = allPlayers.map((p, i) => ({ player: p, index: i })).filter(({ player }) => player.isPitcher);
@@ -879,6 +892,16 @@ export default async function handler(req, res) {
     const playerData = allPlayers.map((p, i) => {
       const gamelog = gamelogResults[i];
       if (!gamelog || gamelog.gamesPlayed < 1) return null;
+
+      // Lineup confirmation filter — only for batters, only when lineup is confirmed for their team
+      if (!p.isPitcher) {
+        const teamConfirmed = p.isHome ? homeLineupConfirmed : awayLineupConfirmed;
+        const inLineup = lineupSlotMap[p.name?.toLowerCase()] != null;
+        if (teamConfirmed && !inLineup) {
+          console.log(`[analyze-mlb] Filtered out (not in lineup): ${p.name}`);
+          return null;
+        }
+      }
 
       const opponentERA = p.isPitcher ? null : p.isHome ? homeERA : awayERA;
       const restInfo    = p.isPitcher ? (p.isHome ? homeRest : awayRest) : null;
