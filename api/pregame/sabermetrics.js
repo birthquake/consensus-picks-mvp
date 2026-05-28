@@ -2,10 +2,8 @@
 // Fetches sabermetric data from Baseball Savant (Statcast) for MLB batters.
 //
 // Stats fetched per batter:
-//   - BABIP          : Batting Average on Balls in Play — regression signal
-//   - wRC+           : Weighted Runs Created Plus — overall offensive value (100 = avg)
-//   - Hard Hit %     : % of batted balls hit 95+ mph — quality of contact
-//   - xBA            : Expected Batting Average based on exit velocity + launch angle
+//   - xBA vs BA      : Expected vs Actual Batting Average — regression signal
+//   - xwOBA          : Expected Weighted On-Base Average
 //   - Platoon splits : AVG vs LHP and vs RHP — used to adjust projection vs today's starter
 //
 // All data is season-level from the current year.
@@ -112,6 +110,10 @@ async function getMlbamId(playerName) {
 }
 
 // ─── Statcast season-level batting stats ─────────────────────────────────────
+// Baseball Savant expected statistics leaderboard.
+// Columns available: last_name, first_name, player_id, year, pa, bip,
+//   ba, est_ba, est_ba_minus_ba_diff, slg, est_slg, est_slg_minus_slg_diff,
+//   woba, est_woba, est_woba_minus_woba_diff
 
 async function fetchStatcastBatter(mlbamId, playerName) {
   try {
@@ -129,9 +131,7 @@ async function fetchStatcastBatter(mlbamId, playerName) {
     }
 
     const rows = parseCSV(text);
-    console.log(`[sabermetrics] Statcast leaderboard: ${rows.length} rows, columns: ${Object.keys(rows[0] || {}).join(', ')}`);
-    
-    const row = rows.find(r =>
+    const row  = rows.find(r =>
       String(r.player_id) === String(mlbamId) ||
       String(r.mlbam_id)  === String(mlbamId)
     );
@@ -141,19 +141,14 @@ async function fetchStatcastBatter(mlbamId, playerName) {
       return null;
     }
 
-    console.log(`[sabermetrics] Got Statcast data for ${playerName}: xba=${row.xba} babip=${row.babip}`);
+    console.log(`[sabermetrics] Got Statcast data for ${playerName}: xba=${row.est_ba} ba=${row.ba}`);
     return {
-      xba:         safeFloat(row.xba  || row.est_ba),
-      xslg:        safeFloat(row.xslg || row.est_slg),
-      xwoba:       safeFloat(row.xwoba),
-      babip:       safeFloat(row.babip),
-      wrcPlus:     safeFloat(row['wRC+'] || row.wrc_plus),
-      hardHitPct:  safeFloat(row['Hard%'] || row.hard_hit_percent),
-      avgExitVelo: safeFloat(row.avg_hit_speed || row.launch_speed),
-      barrelPct:   safeFloat(row['Barrel%'] || row.barrel_batted_rate),
-      kPct:        safeFloat(row['K%'] || row.strikeout_percent),
-      bbPct:       safeFloat(row['BB%'] || row.walk_percent),
-      pa:          safeFloat(row.pa),
+      xba:   safeFloat(row.est_ba),
+      xslg:  safeFloat(row.est_slg),
+      xwoba: safeFloat(row.est_woba),
+      ba:    safeFloat(row.ba),
+      pa:    safeFloat(row.pa),
+      bip:   safeFloat(row.bip),
     };
   } catch (err) {
     console.log(`[sabermetrics] fetchStatcastBatter error: ${err.message}`);
@@ -238,15 +233,17 @@ export async function getSabermetrics(playerName) {
 
 export function getBabipMultiplier(sabermetrics) {
   if (!sabermetrics?.statcast) return 1.0;
-  const { babip, xba } = sabermetrics.statcast;
-  if (babip == null) return 1.0;
+  const { ba, xba } = sabermetrics.statcast;
 
-  const expectedBabip = xba != null ? xba + 0.05 : MLB_LEAGUE_AVG.babip;
-  const diff = babip - expectedBabip;
+  // Use actual BA vs expected BA (xBA) as regression signal
+  // If actual BA is well below xBA, player is due for positive regression
+  if (ba == null || xba == null) return 1.0;
 
-  if (diff < -0.020) return 1.06;
+  const diff = ba - xba;
+
+  if (diff < -0.020) return 1.06;  // hitting well below expected — regression upward
   if (diff < -0.010) return 1.03;
-  if (diff > 0.020)  return 0.97;
+  if (diff > 0.020)  return 0.97;  // hitting well above expected — regression downward
   if (diff > 0.010)  return 0.99;
   return 1.0;
 }
@@ -265,14 +262,8 @@ export function getPlatoonMultiplier(sabermetrics, starterHand) {
 }
 
 export function getHardHitMultiplier(sabermetrics) {
-  if (!sabermetrics?.statcast?.hardHitPct) return 1.0;
-  const { hardHitPct } = sabermetrics.statcast;
-  const diff = hardHitPct - MLB_LEAGUE_AVG.hardHitPct;
-
-  if (diff > 10)  return 1.05;
-  if (diff > 5)   return 1.03;
-  if (diff < -10) return 0.95;
-  if (diff < -5)  return 0.97;
+  // Hard hit % not available on this leaderboard endpoint
+  // Returning 1.0 until we source this from a different endpoint
   return 1.0;
 }
 
@@ -292,11 +283,14 @@ export function formatSabermetricsForPrompt(sabermetrics, starterHand) {
   const s = sabermetrics.statcast;
 
   if (s) {
-    if (s.babip != null)      lines.push(`BABIP: ${s.babip} (lg avg ${MLB_LEAGUE_AVG.babip})`);
-    if (s.xba != null)        lines.push(`xBA: ${s.xba}`);
-    if (s.wrcPlus != null)    lines.push(`wRC+: ${s.wrcPlus} (100=avg)`);
-    if (s.hardHitPct != null) lines.push(`Hard Hit%: ${s.hardHitPct}% (lg avg ${MLB_LEAGUE_AVG.hardHitPct}%)`);
-    if (s.barrelPct != null)  lines.push(`Barrel%: ${s.barrelPct}%`);
+    if (s.ba != null && s.xba != null) {
+      const diff   = Math.round((s.ba - s.xba) * 1000) / 1000;
+      const signal = diff < -0.020 ? ' ↑ regression upside'
+                   : diff > 0.020  ? ' ↓ regression risk'
+                   : '';
+      lines.push(`BA: ${s.ba} vs xBA: ${s.xba} (diff: ${diff > 0 ? '+' : ''}${diff}${signal})`);
+    }
+    if (s.xwoba != null) lines.push(`xwOBA: ${s.xwoba}`);
   }
 
   if (sabermetrics.platoon && starterHand) {
