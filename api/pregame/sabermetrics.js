@@ -468,7 +468,6 @@ export function formatPitcherSabermetricsForPrompt(pitcherSaber) {
 // All data is season-level from the current year.
 // Failures are handled gracefully — returns null per player on any error.
 
-const CURRENT_YEAR = new Date().getFullYear();
 
 const MLB_LEAGUE_AVG = {
   babip:      0.298,
