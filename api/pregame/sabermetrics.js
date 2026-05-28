@@ -9,6 +9,7 @@
 // PITCHER stats:
 //   - K%             : Strikeout rate — suppresses batter hits, boosts K props
 //   - BB%            : Walk rate — affects plate appearance quality
+//   - Hard Hit% allowed : Quality of contact allowed
 //   - xBA against    : Expected BA against — best direct input for batter hits adjustment
 //   - FIP            : Fielding Independent Pitching — true skill vs ERA
 //
@@ -74,6 +75,7 @@ function safeFloat(val) {
 }
 
 // ─── Player ID lookup via MLB Stats API ───────────────────────────────────────
+// Returns { id, pitchHand } — pitchHand is 'R', 'L', or null
 
 async function getMlbamId(playerName) {
   try {
@@ -88,13 +90,14 @@ async function getMlbamId(playerName) {
           p.fullName?.toLowerCase() === playerName.toLowerCase()
         ) || people[0];
         if (match?.id) {
-          console.log(`[sabermetrics] Found MLBAM ID ${match.id} for ${playerName}`);
-          return match.id;
+          const pitchHand = match.pitchHand?.code || null;
+          console.log(`[sabermetrics] Found MLBAM ID ${match.id} for ${playerName} (throws: ${pitchHand ?? 'unknown'})`);
+          return { id: match.id, pitchHand };
         }
       }
     }
 
-    // Fallback: Baseball Savant search
+    // Fallback: Baseball Savant search (no handedness available here)
     const savantUrl = `https://baseballsavant.mlb.com/player/search-all?q=${encoded}&type=batter`;
     const savantRes = await fetchWithTimeout(savantUrl, 5000);
     if (savantRes) {
@@ -106,7 +109,7 @@ async function getMlbamId(playerName) {
         const id = match?.id || match?.player_id;
         if (id) {
           console.log(`[sabermetrics] Found MLBAM ID ${id} for ${playerName} via Savant`);
-          return id;
+          return { id, pitchHand: null };
         }
       }
     }
@@ -191,7 +194,7 @@ async function fetchStatcastPitcher(mlbamId, playerName) {
   }
 }
 
-async function fetchPitcherRateStats(mlbamId, playerName) {
+async function fetchPitcherRateStat(mlbamId, playerName) {
   try {
     const url = `https://statsapi.mlb.com/api/v1/people/${mlbamId}/stats?stats=season&group=pitching&season=${CURRENT_YEAR}&gameType=R`;
     const res = await fetchWithTimeout(url, 6000);
@@ -201,7 +204,7 @@ async function fetchPitcherRateStats(mlbamId, playerName) {
     const splits = data?.stats?.[0]?.splits || [];
     if (!splits.length) return null;
 
-    const s  = splits[0]?.stat;
+    const s = splits[0]?.stat;
     if (!s) return null;
 
     const bf    = safeFloat(s.battersFaced) || safeFloat(s.atBats);
@@ -221,7 +224,7 @@ async function fetchPitcherRateStats(mlbamId, playerName) {
       bf,
     };
   } catch (err) {
-    console.log(`[sabermetrics] fetchPitcherRateStats error for ${playerName}: ${err.message}`);
+    console.log(`[sabermetrics] fetchPitcherRateStat error for ${playerName}: ${err.message}`);
     return null;
   }
 }
@@ -276,8 +279,9 @@ async function fetchPlatoonSplits(mlbamId, playerName) {
 
 export async function getSabermetrics(playerName) {
   try {
-    const mlbamId = await getMlbamId(playerName);
-    if (!mlbamId) return null;
+    const result = await getMlbamId(playerName);
+    if (!result) return null;
+    const { id: mlbamId } = result;
 
     const [statcast, platoon] = await Promise.all([
       fetchStatcastBatter(mlbamId, playerName),
@@ -298,12 +302,13 @@ export async function getSabermetrics(playerName) {
 
 export async function getPitcherSabermetrics(playerName) {
   try {
-    const mlbamId = await getMlbamId(playerName);
-    if (!mlbamId) return null;
+    const result = await getMlbamId(playerName);
+    if (!result) return null;
+    const { id: mlbamId, pitchHand } = result;
 
     const [statcast, rateStats] = await Promise.all([
       fetchStatcastPitcher(mlbamId, playerName),
-      fetchPitcherRateStats(mlbamId, playerName),
+      fetchPitcherRateStat(mlbamId, playerName),
     ]);
 
     if (!statcast && !rateStats) {
@@ -311,7 +316,7 @@ export async function getPitcherSabermetrics(playerName) {
       return null;
     }
 
-    return { mlbamId, statcast, rateStats };
+    return { mlbamId, pitchHand, statcast, rateStats };
   } catch (err) {
     console.log(`[sabermetrics] getPitcherSabermetrics error for ${playerName}: ${err.message}`);
     return null;
@@ -346,14 +351,6 @@ export function getPlatoonMultiplier(sabermetrics, starterHand) {
   return Math.max(0.88, Math.min(1.12, ratio));
 }
 
-export function getSabermetricMultiplier(sabermetrics, starterHand) {
-  const babip   = getBabipMultiplier(sabermetrics);
-  const platoon = getPlatoonMultiplier(sabermetrics, starterHand);
-  return Math.max(0.85, Math.min(1.15, babip * platoon));
-}
-
-// ─── Pitcher adjustment helpers (affect batter projections) ──────────────────
-
 export function getPitcherKMultiplier(pitcherSaber) {
   if (!pitcherSaber?.rateStats?.kPct) return 1.0;
   const diff = pitcherSaber.rateStats.kPct - MLB_LEAGUE_AVG.pitcherKPct;
@@ -380,6 +377,12 @@ export function getPitcherMultiplierForBatters(pitcherSaber) {
   if (!pitcherSaber) return 1.0;
   const combined = getPitcherKMultiplier(pitcherSaber) * getPitcherXbaMultiplier(pitcherSaber);
   return Math.max(0.90, Math.min(1.10, combined));
+}
+
+export function getSabermetricMultiplier(sabermetrics, starterHand) {
+  const babip   = getBabipMultiplier(sabermetrics);
+  const platoon = getPlatoonMultiplier(sabermetrics, starterHand);
+  return Math.max(0.85, Math.min(1.15, babip * platoon));
 }
 
 // ─── Prompt formatting ────────────────────────────────────────────────────────
