@@ -175,8 +175,10 @@ function PickCard({ pick, isSelected, onToggle, index }) {
           </div>
           <div style={{ marginTop: '3px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '13px', color: '#60a5fa', fontWeight: '500' }}>
-              {pick.direction} {pick.hasRealLine ? pick.realLine : (pick.threshold != null ? pick.threshold : '')} {pick.stat}
-              {pick.hasRealLine && <span style={{ fontSize: '10px', fontWeight: '500', marginLeft: '5px', padding: '1px 5px', borderRadius: '6px', background: 'rgba(74,222,128,0.12)', color: '#4ade80' }}>{pick.book || 'live'}</span>}
+{pick.stat === 'H+R+RBI'
+  ? `${Math.ceil(pick.threshold + 0.5)}+ H+R+RBI`
+  : `${pick.direction} ${pick.hasRealLine ? pick.realLine : (pick.threshold != null ? pick.threshold : '')} ${pick.stat}`
+}              {pick.hasRealLine && <span style={{ fontSize: '10px', fontWeight: '500', marginLeft: '5px', padding: '1px 5px', borderRadius: '6px', background: 'rgba(74,222,128,0.12)', color: '#4ade80' }}>{pick.book || 'live'}</span>}
               {pick.projection != null && <span style={{ color: '#818cf8', fontWeight: '400', fontSize: '11px', marginLeft: '4px' }}>(proj: {pick.projection}{pick.hasRealLine && pick.lineGap != null ? ` · edge ${pick.lineGap > 0 ? '+' : ''}${pick.lineGap}` : ''})</span>}
             </span>
             {pick.risk_flags?.length > 0 && (
