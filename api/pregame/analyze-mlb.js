@@ -589,15 +589,29 @@ function computeRating(proj) {
   if (!proj) return 3;
   let score = 0;
 
-  // Edge vs threshold — tightened to require a larger edge for top bonus
-  const edgePct = proj.threshold > 0 ? proj.edge / proj.threshold : 0;
-  if (edgePct > 0.40) score += 2;       // was >0.30 — now requires bigger edge for +2
-  else if (edgePct > 0.20) score += 1;  // was >0.15 — tightened slightly
+  // Absolute edge thresholds by stat type — ratio was meaningless against low sportsbook minimums
+  const edge = proj.edge ?? 0;
+  const stat = proj.stat ?? '';
+  let edgeHigh, edgeMid;
+  if (stat === 'hits') {
+    edgeHigh = 1.00; edgeMid = 0.50;
+  } else if (stat === 'hra') {
+    edgeHigh = 1.20; edgeMid = 0.70;
+  } else if (stat === 'runs' || stat === 'rbi') {
+    edgeHigh = 0.60; edgeMid = 0.30;
+  } else {
+    // pitchers and other stats — fall back to ratio-based
+    const edgePct = proj.threshold > 0 ? edge / proj.threshold : 0;
+    edgeHigh = proj.threshold * 0.40;
+    edgeMid  = proj.threshold * 0.20;
+  }
+  if (edge > edgeHigh) score += 2;
+  else if (edge > edgeMid) score += 1;
 
   if (proj.trend === 'up')   score += 1;
   if (proj.trend === 'down') score -= 1;
-  if (proj.stdDev != null && proj.stdDev < proj.edge) score += 1;
-  if (proj.floor != null && proj.floor >= proj.threshold) score += 1; // was +2 — reduced so floor alone can't dominate
+  if (proj.stdDev != null && proj.stdDev < edge) score += 1;
+  if (proj.floor != null && proj.floor >= proj.threshold) score += 1;
 
   if (proj.oppMult != null)     { if (proj.oppMult > 1.08)     score += 1; if (proj.oppMult < 0.92)     score -= 1; }
   if (proj.saberMult != null)   { if (proj.saberMult > 1.05)   score += 1; if (proj.saberMult < 0.95)   score -= 1; }
@@ -608,8 +622,7 @@ function computeRating(proj) {
   if (proj.isExtraRest) score += 1;
   if (proj.sampleSize != null && proj.sampleSize < 10) score -= 1;
 
-  // Steeper curve: 5 stars now requires score >= 3 above baseline (was 2)
-  // Baseline 3, so: score -2→1★, score -1→2★, score 0→3★, score 1-2→4★, score 3+→5★
+  // 5 stars requires score >= 3 above baseline; 4 stars requires score >= 1
   const raw = score + 3;
   if (raw >= 6) return 5;
   if (raw >= 4) return 4;
