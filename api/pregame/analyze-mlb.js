@@ -589,14 +589,15 @@ function computeRating(proj) {
   if (!proj) return 3;
   let score = 0;
 
+  // Edge vs threshold — tightened to require a larger edge for top bonus
   const edgePct = proj.threshold > 0 ? proj.edge / proj.threshold : 0;
-  if (edgePct > 0.30) score += 2;
-  else if (edgePct > 0.15) score += 1;
+  if (edgePct > 0.40) score += 2;       // was >0.30 — now requires bigger edge for +2
+  else if (edgePct > 0.20) score += 1;  // was >0.15 — tightened slightly
 
   if (proj.trend === 'up')   score += 1;
   if (proj.trend === 'down') score -= 1;
   if (proj.stdDev != null && proj.stdDev < proj.edge) score += 1;
-  if (proj.floor != null && proj.floor >= proj.threshold) score += 2;
+  if (proj.floor != null && proj.floor >= proj.threshold) score += 1; // was +2 — reduced so floor alone can't dominate
 
   if (proj.oppMult != null)     { if (proj.oppMult > 1.08)     score += 1; if (proj.oppMult < 0.92)     score -= 1; }
   if (proj.saberMult != null)   { if (proj.saberMult > 1.05)   score += 1; if (proj.saberMult < 0.95)   score -= 1; }
@@ -607,9 +608,15 @@ function computeRating(proj) {
   if (proj.isExtraRest) score += 1;
   if (proj.sampleSize != null && proj.sampleSize < 10) score -= 1;
 
-  return Math.max(1, Math.min(5, score + 3));
+  // Steeper curve: 5 stars now requires score >= 3 above baseline (was 2)
+  // Baseline 3, so: score -2→1★, score -1→2★, score 0→3★, score 1-2→4★, score 3+→5★
+  const raw = score + 3;
+  if (raw >= 6) return 5;
+  if (raw >= 4) return 4;
+  if (raw >= 3) return 3;
+  if (raw >= 2) return 2;
+  return 1;
 }
-
 // ─── Historical hit rates (feedback loop) ────────────────────────────────────
 
 async function fetchStatHitRates() {
