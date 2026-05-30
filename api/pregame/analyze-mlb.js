@@ -337,6 +337,72 @@ async function getPitcherRestDays(league, teamId, gameDate) {
   };
 }
 
+// ─── Probable pitcher lookup (MLB Stats API) ──────────────────────────────────
+
+async function getProbablePitchers(gameDate, homeAbbrev, awayAbbrev, homeRoster, awayRoster) {
+  try {
+    const dateStr = gameDate ? gameDate.substring(0, 10) : new Date().toISOString().substring(0, 10);
+    const url     = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}&hydrate=probablePitcher`;
+
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const res   = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      console.log(`[analyze-mlb] Probable pitcher fetch failed: HTTP ${res.status}`);
+      return { homeProbable: null, awayProbable: null };
+    }
+
+    const data  = await res.json();
+    const games = data?.dates?.[0]?.games ?? [];
+
+    // Normalize team abbrev for matching
+    const norm = s => (s || '').toUpperCase().replace(/\s+/g, '');
+    const homeNorm = norm(homeAbbrev);
+    const awayNorm = norm(awayAbbrev);
+
+    // MLB Stats API uses different abbrevs in some cases — match on both teams
+    const game = games.find(g => {
+      const h = norm(g.teams?.home?.team?.abbreviation);
+      const a = norm(g.teams?.away?.team?.abbreviation);
+      return (h === homeNorm || h.includes(homeNorm) || homeNorm.includes(h)) &&
+             (a === awayNorm || a.includes(awayNorm) || awayNorm.includes(a));
+    });
+
+    if (!game) {
+      console.log(`[analyze-mlb] No MLB Stats API game found for ${awayAbbrev} @ ${homeAbbrev} on ${dateStr}`);
+      return { homeProbable: null, awayProbable: null };
+    }
+
+    const homePitcherName = game.teams?.home?.probablePitcher?.fullName ?? null;
+    const awayPitcherName = game.teams?.away?.probablePitcher?.fullName ?? null;
+
+    console.log(`[analyze-mlb] Probable pitchers — home: ${homePitcherName ?? 'TBD'}, away: ${awayPitcherName ?? 'TBD'}`);
+
+    // Match names back to ESPN roster players
+    const normName = s => (s || '').toLowerCase().replace(/[^a-z ]/g, '').trim();
+
+    const findInRoster = (roster, name) => {
+      if (!name) return null;
+      const n = normName(name);
+      return roster.find(p => normName(p.name) === n || normName(p.name).includes(n.split(' ').pop()));
+    };
+
+    const homeProbable = findInRoster(homeRoster, homePitcherName);
+    const awayProbable = findInRoster(awayRoster, awayPitcherName);
+
+    if (homePitcherName && !homeProbable) console.log(`[analyze-mlb] Could not match home pitcher ${homePitcherName} to ESPN roster — falling back`);
+    if (awayPitcherName && !awayProbable) console.log(`[analyze-mlb] Could not match away pitcher ${awayPitcherName} to ESPN roster — falling back`);
+
+    return { homeProbable, awayProbable, homePitcherName, awayPitcherName };
+
+  } catch (err) {
+    console.log(`[analyze-mlb] getProbablePitchers error: ${err.message}`);
+    return { homeProbable: null, awayProbable: null };
+  }
+}
+
 // ─── Gamelog fetching ─────────────────────────────────────────────────────────
 
 async function getPlayerGamelog(league, athleteId, isPitcher) {
@@ -895,7 +961,7 @@ export default async function handler(req, res) {
     const resolvedAwayId = awayTeam?.id || await findTeamId(league, awayTeam?.abbreviation);
     console.log(`[analyze-mlb] homeId: ${resolvedHomeId}, awayId: ${resolvedAwayId}`);
 
-    const [homeRoster, awayRoster, homeERA, awayERA, homeRest, awayRest] = await Promise.all([
+const [homeRoster, awayRoster, homeERA, awayERA, homeRest, awayRest] = await Promise.all([
       resolvedHomeId ? getTeamRoster(league, resolvedHomeId)                                            : [],
       resolvedAwayId ? getTeamRoster(league, resolvedAwayId)                                            : [],
       resolvedAwayId ? getTeamPitchingStats(league, resolvedAwayId).catch(() => null)                   : null,
@@ -908,10 +974,13 @@ export default async function handler(req, res) {
     console.log(`[analyze-mlb] awayERA (faces home batters): ${homeERA?.era ?? 'n/a'}, homeERA (faces away batters): ${awayERA?.era ?? 'n/a'}`);
     console.log(`[analyze-mlb] homeRest: ${homeRest?.daysSinceLastGame ?? 'n/a'}d, awayRest: ${awayRest?.daysSinceLastGame ?? 'n/a'}d`);
 
+    // Use MLB Stats API probable pitchers instead of ESPN roster position (unreliable)
+    const { homeProbable, awayProbable } = await getProbablePitchers(gameDate, homeTeam?.abbreviation, awayTeam?.abbreviation, homeRoster, awayRoster);
+
     const homeBatters  = homeRoster.filter(p => !p.isPitcher).slice(0, 9).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
     const awayBatters  = awayRoster.filter(p => !p.isPitcher).slice(0, 9).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation || 'AWY' }));
-    const homePitchers = homeRoster.filter(p => p.isStarter).slice(0, 1).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
-    const awayPitchers = awayRoster.filter(p => p.isStarter).slice(0, 1).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation || 'AWY' }));
+    const homePitchers = homeProbable ? [{ ...homeProbable, isHome: true,  isPitcher: true, teamAbbrev: homeTeam?.abbreviation || 'HME' }] : homeRoster.filter(p => p.isStarter).slice(0, 1).map(p => ({ ...p, isHome: true,  teamAbbrev: homeTeam?.abbreviation || 'HME' }));
+    const awayPitchers = awayProbable ? [{ ...awayProbable, isHome: false, isPitcher: true, teamAbbrev: awayTeam?.abbreviation || 'AWY' }] : awayRoster.filter(p => p.isStarter).slice(0, 1).map(p => ({ ...p, isHome: false, teamAbbrev: awayTeam?.abbreviation || 'AWY' }));
     const allPlayers   = [...homePitchers, ...awayPitchers, ...homeBatters, ...awayBatters];
 
     console.log(`[analyze-mlb] Analyzing ${allPlayers.length} players (${homePitchers.length + awayPitchers.length} pitchers, ${homeBatters.length + awayBatters.length} batters)`);
