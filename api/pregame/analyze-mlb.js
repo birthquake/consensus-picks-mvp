@@ -41,6 +41,7 @@ import {
   formatPitcherSabermetricsForPrompt,
 } from './sabermetrics.js';
 import { getGameWeather, getWeatherMultiplier, formatWeatherForPrompt } from './weather.js';
+import { getGameOdds, getLine } from './odds.js';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -953,6 +954,10 @@ export default async function handler(req, res) {
     const weatherStr  = formatWeatherForPrompt(weather);
     if (weatherStr) console.log(`[analyze-mlb] Weather: ${weatherStr}`);
 
+    const oddsMap = await getGameOdds(homeTeam?.displayName || homeTeam?.abbreviation, awayTeam?.displayName || awayTeam?.abbreviation).catch(() => null);
+    if (oddsMap) console.log(`[analyze-mlb] Odds: loaded ${Object.keys(oddsMap).length} lines`);
+    else console.log(`[analyze-mlb] Odds: unavailable — using internal thresholds`);
+
     const playerData = allPlayers.map((p, i) => {
       const gamelog = gamelogResults[i];
       if (!gamelog || gamelog.gamesPlayed < 1) return null;
@@ -984,7 +989,25 @@ export default async function handler(req, res) {
         ? buildPitcherProjection(gamelog, restInfo)
         : buildBatterProjection(gamelog, opponentERA, sabermetrics, starterHand, pitcherSaber, parkFactor, weatherMult, lineupSlot);
 
-      if (!projections || Object.keys(projections).length === 0) return null;
+if (!projections || Object.keys(projections).length === 0) return null;
+
+      // Overwrite internal thresholds with real sportsbook lines where available
+      if (oddsMap) {
+        const statsToUpdate = p.isPitcher ? PITCHER_STATS : [...BATTER_STATS, 'hra'];
+        for (const stat of statsToUpdate) {
+          if (!projections[stat]) continue;
+          const realLine = getLine(oddsMap, p.name, stat);
+          if (realLine != null) {
+            const oldThreshold = projections[stat].threshold;
+            projections[stat].threshold = realLine;
+            projections[stat].edge = Math.round((projections[stat].blended - realLine) * 100) / 100;
+            projections[stat]._usedRealLine = true;
+            if (oldThreshold !== realLine) {
+              console.log(`[odds] ${p.name} ${stat}: line ${oldThreshold} → ${realLine} (edge now ${projections[stat].edge})`);
+            }
+          }
+        }
+      }
 
       const statsToRate = p.isPitcher ? PITCHER_STATS : BATTER_STATS;
       for (const stat of statsToRate) {
