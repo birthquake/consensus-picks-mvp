@@ -585,13 +585,12 @@ function buildPitcherProjection(gamelog, restInfo) {
 
 // ─── Data-driven star rating ──────────────────────────────────────────────────
 
-function computeRating(proj) {
+function computeRating(proj, stat = '') {
   if (!proj) return 3;
   let score = 0;
 
   // Absolute edge thresholds by stat type — ratio was meaningless against low sportsbook minimums
   const edge = proj.edge ?? 0;
-  const stat = proj.stat ?? '';
   let edgeHigh, edgeMid;
   if (stat === 'hits') {
     edgeHigh = 1.00; edgeMid = 0.50;
@@ -989,9 +988,9 @@ export default async function handler(req, res) {
 
       const statsToRate = p.isPitcher ? PITCHER_STATS : BATTER_STATS;
       for (const stat of statsToRate) {
-        if (projections[stat]) projections[stat]._computedRating = computeRating(projections[stat]);
+        if (projections[stat]) projections[stat]._computedRating = computeRating(projections[stat], stat);
       }
-      if (projections.hra) projections.hra._computedRating = computeRating(projections.hra);
+      if (projections.hra) projections.hra._computedRating = computeRating(projections.hra, 'hra');
 
       return { ...p, projections, gamesPlayed: gamelog.gamesPlayed, sabermetrics, starterHand, pitcherSaber, weatherStr: !p.isPitcher ? weatherStr : null, lineupSlot };
     }).filter(Boolean);
