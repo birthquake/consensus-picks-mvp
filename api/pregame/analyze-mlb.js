@@ -1137,13 +1137,30 @@ if (!projections || Object.keys(projections).length === 0) return null;
       ...pick, hasRealLine: false, model: 'claude-haiku-4-5-20251001', sport: 'mlb',
     }));
 
+    const projectionsMap = {};
+for (const p of playerData) {
+  const key = p.name;
+  const proj = p.projections;
+  if (!proj) continue;
+  // Find the best projection to save (hits for batters, strikeouts for pitchers)
+  const primaryStat = p.isPitcher ? 'strikeouts' : 'hits';
+  if (proj[primaryStat]) {
+    projectionsMap[key] = {
+      blended:      proj[primaryStat].blended,
+      conservative: proj[primaryStat].threshold,
+      seasonAvg:    proj[primaryStat].seasonAvg,
+    };
+  }
+}
+    
     return res.status(200).json({
-      success: true, gameId,
-      game: { homeTeam, awayTeam, league, gameDate },
-      mode, pickType, ...picks, picks: picksWithMeta,
-      player_count: playerData.length,
-      analyzed_at: new Date().toISOString(),
-    });
+  success: true, gameId,
+  game: { homeTeam, awayTeam, league, gameDate },
+  mode, pickType, ...picks, picks: picksWithMeta,
+  projections: projectionsMap,
+  player_count: playerData.length,
+  analyzed_at: new Date().toISOString(),
+});
 
   } catch (err) {
     console.error('[analyze-mlb] Error:', err.message);
