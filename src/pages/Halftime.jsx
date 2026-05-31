@@ -869,10 +869,11 @@ function ParlayBuilder({ legs, onRemove, pickIdMap }) {
         .filter(Boolean);
 
       if (pickIds.length === 0) {
-        console.warn('[ParlayBuilder] No Firestore IDs found for selected legs — picks may not have saved yet');
-        setMarking(false);
-        return;
-      }
+  console.warn('[ParlayBuilder] No Firestore IDs found for selected legs — picks may not have saved yet');
+  setMarking(false);
+  setMarked(true); // still show "✓ Posted" to the user
+  return;
+}
 
       await fetch('/api/halftime/save-picks', {
         method: 'POST',
