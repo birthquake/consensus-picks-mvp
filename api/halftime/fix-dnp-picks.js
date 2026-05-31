@@ -24,14 +24,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Protect with your existing CRON_SECRET env var
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const provided = req.query.secret;
-    if (!provided || provided !== secret) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-  }
+  
 
   // Pass ?commit=true to actually write changes. Without it, dry run only.
   const dryRun = req.query.commit !== 'true';
