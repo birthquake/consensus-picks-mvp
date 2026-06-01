@@ -175,7 +175,8 @@ async function gradeHalftimePicks() {
         // Also void if the stat value is suspiciously 0 for a starter-level player
         // who had a projection > 5 (suggests DNP or injury scratch)
         const projection = pick.projection?.blended || pick.projection?.conservative || 0;
-        if (actualValue === 0 && projection > 8) {
+        const dnpThreshold = (pick.sport === 'mlb' || pick.league === 'mlb') ? 0.3 : 8;
+        if (actualValue === 0 && projection > dnpThreshold) {
           await doc.ref.update({
             status: 'void',
             actual_value: 0,
