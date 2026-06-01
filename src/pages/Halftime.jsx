@@ -316,13 +316,42 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
         return picks.slice(0, Math.max(legCount * 2, 10));
       };
 
-      const nba = collectPicks(nbaResults, 'nba');
-      const mlb = collectPicks(mlbResults, 'mlb');
-      const nhl = collectPicks(nhlResults, 'nhl');
-      setNbaPicks(nba);
-      setMlbPicks(mlb);
-      setNhlPicks(nhl);
-      setState(nba.length > 0 || mlb.length > 0 || nhl.length > 0 ? 'done' : 'empty');
+      // Save picks to Firestore before filtering down to top N
+const saveGamePicks = async (result, game, sport) => {
+  if (!result?.success || !result.picks?.length) return;
+  try {
+    await fetch('/api/halftime/save-picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gameId:    game.id,
+        sport:     sport,
+        league:    game.league,
+        gameName:  game.shortName || game.name,
+        gameDate:  new Date().toISOString().split('T')[0],
+        picks:     result.picks,
+        projections: result.projections || {},
+      }),
+    });
+  } catch (err) {
+    console.warn('[DailyCard] savePicks failed silently:', err.message);
+  }
+};
+
+// Save all picks to Firestore in parallel
+await Promise.all([
+  ...nbaGames.map((game, i) => saveGamePicks(nbaResults[i], game, 'nba')),
+  ...mlbGames.map((game, i) => saveGamePicks(mlbResults[i], game, 'mlb')),
+  ...nhlGames.map((game, i) => saveGamePicks(nhlResults[i], game, 'nhl')),
+]);
+
+const nba = collectPicks(nbaResults, 'nba');
+const mlb = collectPicks(mlbResults, 'mlb');
+const nhl = collectPicks(nhlResults, 'nhl');
+setNbaPicks(nba);
+setMlbPicks(mlb);
+setNhlPicks(nhl);
+setState(nba.length > 0 || mlb.length > 0 || nhl.length > 0 ? 'done' : 'empty');
     } catch (err) {
       console.error('[DailyCard]', err);
       setState('error');
