@@ -39,9 +39,9 @@ import {
   getPitcherMultiplierForBatters,
   formatSabermetricsForPrompt,
   formatPitcherSabermetricsForPrompt,
-} from './sabermetrics.js';
-import { getGameWeather, getWeatherMultiplier, formatWeatherForPrompt } from './weather.js';
-import { getGameOdds, getLine } from './odds.js';
+} from '../../lib/sabermetrics.js';
+import { getGameWeather, getWeatherMultiplier, formatWeatherForPrompt } from '../../lib/weather.js';
+import { getGameOdds, getLine } from '../../lib/mlb-odds.js';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
