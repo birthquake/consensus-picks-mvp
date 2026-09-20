@@ -8,15 +8,15 @@
 //   - Variance (std dev over season) + floor detection (worst of last 5 games)
 //   - Trend detection → last 3 vs season, up/down/neutral
 //   - Bye-week / rest detection → mild positive bump for players coming off 10+ days rest
+//   - Opponent defense adjustment → yards allowed per game, aggregated from the opponent's
+//     own box scores this season (see lib/nfl-team-defense.js), applied as a ±15% multiplier
 //   - Recency filter → skip players whose last gamelog game is 21+ days old (injured/inactive,
 //     tolerant of a single bye week which is ~14 days)
 //   - Data-driven star rating, same approach as analyze-mlb.js / analyze-nhl.js
 //
 // NOT included in this version:
-//   - Opponent defensive adjustment — ESPN's team statistics endpoint for NFL only exposes
-//     a team's own offensive output plus turnover-style defensive stats (tackles/sacks/INTs),
-//     not yards allowed. True opponent defense would require aggregating box scores across
-//     each team's full schedule — out of scope for now.
+//   - Week 1 opponent defense — no completed games exist yet to derive yards-allowed from,
+//     so the multiplier stays neutral (1.0) until a team has at least one completed game.
 //   - Real sportsbook lines — computed thresholds only, same as analyze-nhl.js.
 //
 // ESPN gamelog structure (confirmed against live API):
@@ -33,6 +33,7 @@
 //   receivingTouchdowns, longReception, rushingAttempts, rushingYards, ...
 
 import Anthropic from "@anthropic-ai/sdk";
+import { getTeamContext, getPassDefenseMultiplier, getRushDefenseMultiplier } from "../../lib/nfl-team-defense.js";
 
 const client = new Anthropic();
 
@@ -78,13 +79,6 @@ async function fetchJSON(url, timeoutMs = 6000) {
   }
 }
 
-function formatDate(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}${mm}${dd}`;
-}
-
 async function findTeamId(abbreviation) {
   const data = await fetchJSON("https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=50");
   const teams = data?.sports?.[0]?.leagues?.[0]?.teams ?? [];
@@ -114,36 +108,6 @@ async function getTeamRoster(teamId) {
     }
   }
   return players;
-}
-
-// Bye-week / rest detection — NFL plays weekly, so "back-to-back" doesn't apply.
-// A gap of 10+ days before the target game means the team is coming off a bye —
-// treated as a mild positive signal (fresher legs), not a risk flag.
-async function getTeamLastGameInfo(teamId, gameDate) {
-  const target = gameDate ? new Date(gameDate) : new Date();
-  const yyyy = target.getFullYear();
-
-  const data = await fetchJSON(
-    `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${teamId}/schedule?season=${yyyy}`
-  );
-
-  const events = data?.events ?? [];
-  const targetStr = formatDate(target);
-  const completed = events.filter(e => {
-    const eDate = e.date?.substring(0, 10).replace(/-/g, '');
-    return eDate < targetStr && e.competitions?.[0]?.status?.type?.completed;
-  });
-
-  if (!completed.length) return null;
-  const lastGame = completed[completed.length - 1];
-  const lastGameDate = new Date(lastGame.date);
-  const diffDays = (target - lastGameDate) / (1000 * 60 * 60 * 24);
-
-  return {
-    lastGameDate: lastGame.date,
-    daysSinceLastGame: Math.floor(diffDays),
-    cameOffBye: diffDays >= 10,
-  };
 }
 
 async function getPlayerGamelog(playerId) {
@@ -220,7 +184,7 @@ function trend(recent, season, key) {
 
 // ─── Projection builder ───────────────────────────────────────────────────────
 
-function buildPlayerProjection(player, gameStats, gamesPlayed, restInfo, statsToProject) {
+function buildPlayerProjection(player, gameStats, gamesPlayed, restInfo, opponentDefense, statsToProject) {
   // NFL's 17-game season means the first couple weeks only have 1 logged game per
   // player — don't hard-block on sample size, the computeRating small-sample
   // penalty already lowers confidence instead.
@@ -248,6 +212,14 @@ function buildPlayerProjection(player, gameStats, gamesPlayed, restInfo, statsTo
     let blended = recentAvg != null ? (recentAvg * 0.55 + seasonAvgVal * 0.45) : seasonAvgVal;
     if (restInfo?.cameOffBye) blended *= 1.03;
 
+    // Opponent defense: a defense that allows more passing yards than average
+    // boosts both the QB's passing yards and the pass-catchers' receiving yards;
+    // rushing yards allowed only applies to the rushing-yards prop.
+    const oppMult = stat === 'rushingYards'
+      ? getRushDefenseMultiplier(opponentDefense)
+      : getPassDefenseMultiplier(opponentDefense);
+    blended *= oppMult;
+
     const sd    = stdDev(season, stat);
     const floor = last5.length ? Math.min(...last5.map(g => g[stat] ?? 0)) : null;
     const trendDir = trend(recent3, season, stat);
@@ -267,6 +239,8 @@ function buildPlayerProjection(player, gameStats, gamesPlayed, restInfo, statsTo
       trend: trendDir,
       sampleSize: season.length,
       cameOffBye: !!restInfo?.cameOffBye,
+      oppMult: Math.round(oppMult * 100) / 100,
+      oppDefenseAllowed: opponentDefense ?? null,
     };
   }
 
@@ -291,6 +265,7 @@ function computeRating(proj, stat) {
   if (proj.floor != null && proj.floor >= proj.threshold) score += 1;
   if (proj.cameOffBye) score += 1;
   if (proj.sampleSize != null && proj.sampleSize < 3) score -= 1;
+  if (proj.oppMult != null) { if (proj.oppMult > 1.08) score += 1; if (proj.oppMult < 0.92) score -= 1; }
 
   return Math.max(1, Math.min(5, score + 3));
 }
@@ -305,12 +280,15 @@ function formatPlayerForPrompt(p) {
     const s = p.projections[stat];
     const label = STAT_LABELS[stat] ?? stat;
     const trendIcon = s.trend === 'up' ? 'TRENDING UP' : s.trend === 'down' ? 'TRENDING DOWN' : 'NEUTRAL';
+    const oppLine = s.oppMult != null && s.oppMult !== 1.0
+      ? `\n    Opp defense: ${stat === 'rushingYards' ? (s.oppDefenseAllowed?.rushYardsAllowedPerGame ?? '?') : (s.oppDefenseAllowed?.passYardsAllowedPerGame ?? '?')} yds/g allowed (mult: ${s.oppMult}x)`
+      : '';
     lines.push(
       `  ${label.toUpperCase()}:
     Projection: ${s.blended} (L3=${s.recentAvg ?? '?'} Season=${s.seasonAvg ?? '?'})
     Suggested threshold: Over ${s.threshold} | Edge: ${s.edge}
     Variance (std dev): ${s.stdDev ?? '?'} | Floor (last 5): ${s.floor ?? '?'}
-    Trend: ${trendIcon} | Sample: ${s.sampleSize} games`
+    Trend: ${trendIcon} | Sample: ${s.sampleSize} games${oppLine}`
     );
   }
 
@@ -334,7 +312,8 @@ GAME: ${awayTeam} @ ${homeTeam}
 ${existingLegsText}
 DATA KEY: ✅OFF-BYE = team coming off a bye week (extra rest, mild positive signal),
 σ = std dev over the season, floor = worst output in last 5 games,
-L3 = last 3 games average
+L3 = last 3 games average, opp defense mult = opponent's yards-allowed vs league average
+(>1.0 = weak defense, boosts projection; <1.0 = strong defense, suppresses it)
 
 QUARTERBACKS:
 ${section(qbs)}
@@ -351,6 +330,7 @@ HOW TO USE THESE PROJECTIONS:
 - Floor >= threshold is a strong signal — player has not gone below the line in last 5 games
 - Low σ relative to the edge = more predictable — prefer these
 - ✅OFF-BYE players get a small positive bump already baked into the projection
+- Opponent defense multiplier is already baked into the projection — cite it when it's a meaningful factor (mult > 1.08 or < 0.92)
 - Small sample size (<3 games) should lower confidence — mention in risk_flags
 
 For each pick provide:
@@ -410,6 +390,7 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
       const risk_flags = Array.isArray(p.risk_flags) ? [...p.risk_flags] : [];
       if (proj.sampleSize != null && proj.sampleSize < 3) risk_flags.push('small sample size');
       if (proj.trend === 'down') risk_flags.push('trending down');
+      if (proj.oppMult != null && proj.oppMult < 0.92) risk_flags.push('strong opponent defense');
 
       return {
         player:        p.player,
@@ -428,6 +409,7 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
         sport:         'nfl',
         cameOffBye:    !!proj.cameOffBye,
         trend:         proj.trend ?? 'neutral',
+        oppMult:       proj.oppMult ?? 1.0,
       };
     });
 
@@ -457,11 +439,11 @@ export default async function handler(req, res) {
       });
     }
 
-    const [homeRoster, awayRoster, homeRestInfo, awayRestInfo] = await Promise.all([
+    const [homeRoster, awayRoster, homeContext, awayContext] = await Promise.all([
       getTeamRoster(homeId),
       getTeamRoster(awayId),
-      getTeamLastGameInfo(homeId, gameDate).catch(() => null),
-      getTeamLastGameInfo(awayId, gameDate).catch(() => null),
+      getTeamContext(homeId, gameDate).catch(() => null),
+      getTeamContext(awayId, gameDate).catch(() => null),
     ]);
 
     function trimRoster(roster) {
@@ -476,7 +458,7 @@ export default async function handler(req, res) {
 
     const targetDate = gameDate ? new Date(gameDate) : new Date();
 
-    async function fetchProjections(players, teamAbbrev, restInfo) {
+    async function fetchProjections(players, teamAbbrev, restInfo, opponentDefense) {
       const results = await Promise.all(
         players.map(async (p) => {
           const log = await getPlayerGamelog(p.id);
@@ -489,7 +471,7 @@ export default async function handler(req, res) {
           }
 
           const statsToProject = p.isQB ? QB_STATS : p.isRB ? RB_STATS : RECEIVER_STATS;
-          const built = buildPlayerProjection(p, log.gameStats, log.gamesPlayed, restInfo, statsToProject);
+          const built = buildPlayerProjection(p, log.gameStats, log.gamesPlayed, restInfo, opponentDefense, statsToProject);
           if (built.skipped) return null;
 
           // Drop any stat that doesn't clear its own threshold (e.g. a single-game
@@ -507,9 +489,10 @@ export default async function handler(req, res) {
       return results.filter(Boolean);
     }
 
+    // Home players face the away team's defense, and vice versa
     const [homeProjected, awayProjected] = await Promise.all([
-      fetchProjections(homePlayers, homeTeam, homeRestInfo),
-      fetchProjections(awayPlayers, awayTeam, awayRestInfo),
+      fetchProjections(homePlayers, homeTeam, homeContext, awayContext?.defenseAllowed),
+      fetchProjections(awayPlayers, awayTeam, awayContext, homeContext?.defenseAllowed),
     ]);
 
     const playerData = [...homeProjected, ...awayProjected];
@@ -537,8 +520,10 @@ export default async function handler(req, res) {
         homeRosterSize: homePlayers.length,
         awayRosterSize: awayPlayers.length,
         qualifiedPlayers: playerData.length,
-        homeCameOffBye: !!homeRestInfo?.cameOffBye,
-        awayCameOffBye: !!awayRestInfo?.cameOffBye,
+        homeCameOffBye: !!homeContext?.cameOffBye,
+        awayCameOffBye: !!awayContext?.cameOffBye,
+        homeDefenseAllowed: homeContext?.defenseAllowed ?? null,
+        awayDefenseAllowed: awayContext?.defenseAllowed ?? null,
       },
     });
   } catch (err) {
