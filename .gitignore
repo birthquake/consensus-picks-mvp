@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+.vercel/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
