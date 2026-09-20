@@ -12,6 +12,7 @@ const SPORT_CONFIG = {
   nba: { sport: 'basketball', league: 'nba', label: 'NBA' },
   mlb: { sport: 'baseball',   league: 'mlb', label: 'MLB' },
   nhl: { sport: 'hockey',     league: 'nhl', label: 'NHL' },
+  nfl: { sport: 'football',   league: 'nfl', label: 'NFL' },
 };
 
 async function fetchWithTimeout(url, ms = 5000) {
@@ -77,6 +78,56 @@ export default async function handler(req, res) {
 
   if (!config) {
     return res.status(400).json({ error: `Unsupported sport: ${sportKey}` });
+  }
+
+  // NFL plays weekly, not daily — use ESPN's current-week scoreboard instead of
+  // the today/tomorrow window the other sports use.
+  if (sportKey === 'nfl') {
+    try {
+      const thisWeekData = await fetchWithTimeout(
+        `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard`
+      );
+
+      const weekNumber  = thisWeekData?.week?.number ?? null;
+      const weekEvents  = (thisWeekData?.events || []).map(e => extractGameData(e, config));
+      const preThisWeek = weekEvents.filter(g => g.state === 'pre');
+      const liveThisWeek = weekEvents.filter(g => g.state === 'in');
+
+      let games = [];
+      let context = '';
+
+      if (preThisWeek.length > 0) {
+        games = preThisWeek;
+        context = `pre-game week ${weekNumber ?? '?'}`;
+      } else if (liveThisWeek.length > 0) {
+        games = liveThisWeek;
+        context = `live week ${weekNumber ?? '?'}`;
+      } else if (weekNumber != null) {
+        const nextWeekData = await fetchWithTimeout(
+          `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?week=${weekNumber + 1}&seasontype=2`
+        );
+        const nextWeekEvents = (nextWeekData?.events || []).map(e => extractGameData(e, config));
+        games = nextWeekEvents.filter(g => g.state === 'pre');
+        context = `pre-game week ${weekNumber + 1}`;
+      }
+
+      console.log(`[pregame/scan] NFL: found ${games.length} games (context: ${context})`);
+
+      return res.status(200).json({
+        success:     true,
+        games,
+        total:       games.length,
+        context,
+        today_count: weekEvents.length,
+        scanned_at:  new Date().toISOString(),
+        sport:       config.label,
+        oddsMap:     {},
+        odds_players: 0,
+      });
+    } catch (err) {
+      console.error('[pregame/scan] NFL error:', err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
   }
 
   try {
