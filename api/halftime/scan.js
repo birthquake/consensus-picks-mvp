@@ -9,6 +9,7 @@ const SPORT_CONFIG = {
   nba: { sport: 'basketball', league: 'nba', label: 'NBA' },
   nhl: { sport: 'hockey',     league: 'nhl', label: 'NHL' },
   mlb: { sport: 'baseball',   league: 'mlb', label: 'MLB' },
+  nfl: { sport: 'football',   league: 'nfl', label: 'NFL' },
 };
 
 async function fetchWithTimeout(url, ms = 5000) {
@@ -50,6 +51,10 @@ function extractGameData(event, config) {
     else if (period) phaseLabel = `P${period}`;
   } else if (config.league === 'mlb') {
     phaseLabel = description || `Inning ${period}`;
+  } else if (config.league === 'nfl') {
+    if (description.toLowerCase().includes('halftime')) phaseLabel = 'Halftime';
+    else if (period > 4) phaseLabel = 'OT';
+    else if (period) phaseLabel = `Q${period}`;
   }
 
   return {

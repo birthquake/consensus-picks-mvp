@@ -663,7 +663,11 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
     setCollapsed(false);
     try {
       let endpoint, body;
-      if (mode === 'halftime') {
+      if (mode === 'halftime' && isNFL) {
+        setErrorMsg("Live analysis isn't available for NFL yet — try Pre-Game picks instead.");
+        setState('error');
+        return;
+      } else if (mode === 'halftime') {
         endpoint = '/api/halftime/analyze';
         body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount, mode: analysisMode, oddsMap };
       } else if (isMLB) {
@@ -1036,7 +1040,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setLiveGames([]);
       try {
-        const res  = await fetch('/api/halftime/scan?sports=nba,mlb');
+        const res  = await fetch('/api/halftime/scan?sports=nba,mlb,nfl');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setLiveGames(data.games);
