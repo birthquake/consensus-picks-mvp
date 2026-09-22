@@ -664,9 +664,8 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
     try {
       let endpoint, body;
       if (mode === 'halftime' && isNFL) {
-        setErrorMsg("Live analysis isn't available for NFL yet — try Pre-Game picks instead.");
-        setState('error');
-        return;
+        endpoint = '/api/halftime/analyze-nfl';
+        body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam.abbreviation, awayTeam: game.awayTeam.abbreviation, existingLegs, legCount };
       } else if (mode === 'halftime') {
         endpoint = '/api/halftime/analyze';
         body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount, mode: analysisMode, oddsMap };
