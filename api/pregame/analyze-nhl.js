@@ -61,6 +61,15 @@ async function findTeamId(abbreviation) {
   return match?.team?.id ?? null;
 }
 
+// Injury designations that mean a player shouldn't be recommended for pregame props.
+// Questionable/Day-To-Day are kept — real-world Q-tags play more often than not, and
+// pregame picks already carry inherent uncertainty.
+const EXCLUDED_INJURY_STATUSES = new Set(['Out', 'Doubtful', 'Injured Reserve', 'Suspension']);
+
+function isPlayerOut(injuries) {
+  return (injuries || []).some(inj => EXCLUDED_INJURY_STATUSES.has(inj?.status));
+}
+
 async function getTeamRoster(teamId) {
   const data = await fetchJSON(
     `https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/${teamId}/roster`
@@ -69,6 +78,7 @@ async function getTeamRoster(teamId) {
   for (const group of data?.athletes ?? []) {
     for (const p of group?.items ?? []) {
       const posAbbr = p?.position?.abbreviation?.toUpperCase() ?? "";
+      if (isPlayerOut(p.injuries)) continue;
       players.push({
         id: p.id,
         name: p.fullName,
@@ -461,7 +471,49 @@ function computeRating(pick, proj) {
 
 // ─── Pick generator ───────────────────────────────────────────────────────────
 
-async function generateNHLPicks(homeTeam, awayTeam, homeProjections, awayProjections, legCount) {
+// ─── Historical hit rates (feedback loop) ────────────────────────────────────
+// /api/halftime/stats aggregates by_stat across EVERY sport's saved picks (keyed
+// by whatever literal string is in pick.stat) — filter to this sport's own labels
+// so e.g. MLB's "Hits" hit rate doesn't show up as noise in the NHL prompt.
+const NHL_STAT_LABELS = new Set(['shots', 'points', 'goals', 'assists', 'saves']);
+
+async function fetchStatHitRates() {
+  try {
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : 'https://consensus-picks-mvp.vercel.app';
+
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+
+    let data;
+    try {
+      const res = await fetch(`${baseUrl}/api/halftime/stats?days=90`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      data = await res.json();
+    } catch {
+      clearTimeout(timer);
+      return null;
+    }
+
+    if (!data?.success || !data.by_stat) return null;
+
+    const rates = {};
+    for (const [stat, d] of Object.entries(data.by_stat)) {
+      if (NHL_STAT_LABELS.has(stat) && d.total >= 10 && d.hitRate != null) {
+        rates[stat] = { hitRate: d.hitRate, total: d.total };
+      }
+    }
+
+    return Object.keys(rates).length >= 2 ? rates : null;
+  } catch (err) {
+    console.log(`[analyze-nhl] fetchStatHitRates error: ${err.message}`);
+    return null;
+  }
+}
+
+async function generateNHLPicks(homeTeam, awayTeam, homeProjections, awayProjections, legCount, statHitRates = null) {
 
   function skaterLine(p, proj) {
     if (proj.skipped) return null;
@@ -537,7 +589,11 @@ INSTRUCTIONS:
 - Avoid ⚠️LIKELY-BACKUP goalies entirely
 - Defensemen (D) have fewer scoring opportunities — weight shots over points for them
 - 1-sentence rationale citing the most relevant factor (trend, floor, opponent, TOI)
-- Return ONLY a JSON array, no markdown, no preamble:
+${statHitRates ? `
+HISTORICAL HIT RATES BY STAT (last 90 days, 10+ sample):
+${Object.entries(statHitRates).map(([stat, d]) => `- ${stat}: ${d.hitRate}% (${d.total} picks)`).join('\n')}
+Use this to calibrate confidence — favor stat types hitting above 60%, be cautious below 50%.
+` : ''}- Return ONLY a JSON array, no markdown, no preamble:
 
 [
   {
@@ -693,7 +749,13 @@ export default async function handler(req, res) {
       fetchProjections(awayPlayers, homeDefense, awayB2B),
     ]);
 
-    const picks = await generateNHLPicks(homeTeam, awayTeam, homeProjections, awayProjections, legCount);
+    const statHitRates = await fetchStatHitRates().catch(() => null);
+    if (statHitRates) {
+      const summary = Object.entries(statHitRates).map(([s, d]) => `${s}=${d.hitRate}%`).join(' ');
+      console.log(`[analyze-nhl] Stat hit rates: ${summary} (${Object.keys(statHitRates).length} stats)`);
+    }
+
+    const picks = await generateNHLPicks(homeTeam, awayTeam, homeProjections, awayProjections, legCount, statHitRates);
 
     const projectionsMap = {};
     for (const { player, proj } of [...homeProjections, ...awayProjections]) {

@@ -698,6 +698,11 @@ function computeRating(proj, stat = '') {
 }
 // ─── Historical hit rates (feedback loop) ────────────────────────────────────
 
+// /api/halftime/stats aggregates by_stat across EVERY sport's saved picks (keyed
+// by whatever literal string is in pick.stat) — filter to this sport's own labels
+// so e.g. NBA's "Points" hit rate doesn't show up as noise in the MLB prompt.
+const MLB_STAT_LABELS = new Set(['Hits', 'Total Bases', 'Home Runs', 'RBI', 'Runs', 'H+R+RBI', 'Strikeouts', 'Outs Recorded', 'Walks']);
+
 async function fetchStatHitRates() {
   try {
     const baseUrl = process.env.VERCEL_URL
@@ -722,7 +727,7 @@ async function fetchStatHitRates() {
 
     const rates = {};
     for (const [stat, d] of Object.entries(data.by_stat)) {
-      if (d.total >= 10 && d.hitRate != null) {
+      if (MLB_STAT_LABELS.has(stat) && d.total >= 10 && d.hitRate != null) {
         rates[stat] = { hitRate: d.hitRate, total: d.total };
       }
     }

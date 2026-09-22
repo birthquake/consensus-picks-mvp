@@ -79,6 +79,15 @@ async function findTeamId(sport, league, abbreviation) {
   }
 }
 
+// Injury designations that mean a player shouldn't be recommended for pregame props.
+// Questionable/Day-To-Day are kept — real-world Q-tags play more often than not, and
+// pregame picks already carry inherent uncertainty.
+const EXCLUDED_INJURY_STATUSES = new Set(['Out', 'Doubtful', 'Injured Reserve', 'Suspension']);
+
+function isPlayerOut(injuries) {
+  return (injuries || []).some(inj => EXCLUDED_INJURY_STATUSES.has(inj?.status));
+}
+
 async function getTeamRoster(sport, league, teamId) {
   const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams/${teamId}/roster`;
   const data = await fetchWithTimeout(url, 5000);
@@ -88,30 +97,24 @@ async function getTeamRoster(sport, league, teamId) {
   const isFlat = athletes.length > 0 && (athletes[0].id || athletes[0].fullName);
   const players = [];
 
+  const pushPlayer = (p) => {
+    if (!p.id) return;
+    players.push({
+      id: p.id,
+      name: p.displayName || p.fullName,
+      position: p.position?.abbreviation,
+      jersey: p.jersey,
+      status: p.status?.type?.description || p.status?.description || p.status || null,
+      isOut: isPlayerOut(p.injuries),
+    });
+  };
+
   if (isFlat) {
-    for (const p of athletes) {
-      if (!p.id) continue;
-      players.push({
-        id: p.id,
-        name: p.displayName || p.fullName,
-        position: p.position?.abbreviation,
-        jersey: p.jersey,
-        status: p.status?.type?.description || p.status?.description || p.status || null,
-      });
-    }
+    for (const p of athletes) pushPlayer(p);
   } else {
     for (const group of athletes) {
       const items = group.items || group.athletes || group.entries || [];
-      for (const p of items) {
-        if (!p.id) continue;
-        players.push({
-          id: p.id,
-          name: p.displayName || p.fullName,
-          position: p.position?.abbreviation,
-          jersey: p.jersey,
-          status: p.status?.type?.description || p.status?.description || p.status || null,
-        });
-      }
+      for (const p of items) pushPlayer(p);
     }
   }
 
@@ -594,37 +597,6 @@ function buildMatchupContext(homeTeamId, awayTeamId, standingsMap) {
   };
 }
 
-async function getOpponentDefenseRating(sport, league, opponentTeamId, stat) {
-  return null;
-}
-
-// ─── Injury & Transaction Checks ──────────────────────────────────────────────
-
-// Hardcoded NBA injury blacklist - Players out for remainder of 2025-26 season (Oct 1 return date)
-// Source: ESPN.com/nba/injuries (updated Mar 30, 2026)
-// BACKLOG: Update this list after 2026-27 season starts (see BACKLOG_UPDATE_INJURY_BLACKLIST.md)
-const NBA_SEASON_OUT_BLACKLIST = new Set([
-  'Egor Demin', 'Day\'Ron Sharpe', 'Jaden Ivey', 'Jalen Smith', 'Zach Collins', 'Noa Essengue',
-  'Kyrie Irving', 'Dereck Lively II',
-  'Moses Moody', 'Jimmy Butler III',
-  'Steven Adams',
-  'Ivica Zubac', 'Tyrese Haliburton',
-  'Yanic Konan Niederhauser', 'Bradley Beal',
-  'Jaylen Wells', 'Zach Edey', 'Ja Morant', 'Brandon Clarke', 'Santi Aldama', 'Scotty Pippen Jr.', 'Kentavious Caldwell-Pope',
-  'Kevin Porter Jr.',
-  'Thomas Sorber',
-  'Damian Lillard',
-  'Drew Eubanks', 'De\'Andre Hunter', 'Domantas Sabonis', 'Zach LaVine',
-  'David Jones Garcia',
-  'Jusuf Nurkic', 'Jaren Jackson Jr.', 'Walker Kessler',
-  'Cam Whitmore'
-]);
-
-function isPlayerSeasonOut(playerName) {
-  if (!playerName) return false;
-  return NBA_SEASON_OUT_BLACKLIST.has(playerName);
-}
-
 // ─── Projection engine ────────────────────────────────────────────────────────
 
 function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, opponentContext, matchupContext) {
@@ -746,6 +718,43 @@ function buildPreGameProjection(player, seasonAvg, historicalForm, isHome, oppon
   }
 
   return projections;
+}
+
+// ─── Data-driven star rating ──────────────────────────────────────────────────
+// Same approach as analyze-mlb.js / analyze-nhl.js / analyze-nfl.js — replaces
+// Claude's subjective confidence with a score computed from the projection itself.
+
+const EDGE_THRESHOLDS = {
+  points:   { high: 8,   mid: 4 },
+  rebounds: { high: 3,   mid: 1.5 },
+  assists:  { high: 2.5, mid: 1.5 },
+  steals:   { high: 1,   mid: 0.5 },
+  blocks:   { high: 1,   mid: 0.5 },
+};
+
+function computeRating(proj, stat) {
+  if (!proj) return 3;
+  let score = 0;
+  const edgeCfg = EDGE_THRESHOLDS[stat] ?? { high: 4, mid: 2 };
+  const edge = proj.edge ?? 0;
+
+  if (edge > edgeCfg.high) score += 2;
+  else if (edge > edgeCfg.mid) score += 1;
+
+  if (proj.trend === 'up') score += 1;
+  else if (proj.trend === 'down') score -= 1;
+
+  if (proj.stdDev != null && proj.stdDev < edge) score += 1;
+  if (proj.belowFloor) score += 1;
+  if (proj.isBackToBack) score -= 1;
+  if (proj.sampleSize != null && proj.sampleSize < 3) score -= 1;
+
+  if (proj.defenseRating === 'elite') score -= 1;
+  else if (proj.defenseRating === 'poor' || proj.defenseRating === 'bottom-tier') score += 1;
+
+  if (proj.blowoutRisk === 'high') score -= 1;
+
+  return Math.max(1, Math.min(5, score + 3));
 }
 
 // ─── Claude prompts ───────────────────────────────────────────────────────────
@@ -883,7 +892,49 @@ Return ONLY valid JSON, no markdown:
   return result;
 }
 
-async function generatePreGamePicks(game, playerData, existingLegs, legCount, matchupContext = null, oddsMap = {}) {
+// ─── Historical hit rates (feedback loop) ────────────────────────────────────
+// /api/halftime/stats aggregates by_stat across EVERY sport's saved picks (keyed
+// by whatever literal string is in pick.stat) — filter to this sport's own labels
+// so e.g. MLB's "Hits" hit rate doesn't show up as noise in the NBA prompt.
+const NBA_STAT_LABELS = new Set(['Points', 'Rebounds', 'Assists', 'Steals', 'Blocks']);
+
+async function fetchStatHitRates() {
+  try {
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : 'https://consensus-picks-mvp.vercel.app';
+
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+
+    let data;
+    try {
+      const res = await fetch(`${baseUrl}/api/halftime/stats?days=90`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      data = await res.json();
+    } catch {
+      clearTimeout(timer);
+      return null;
+    }
+
+    if (!data?.success || !data.by_stat) return null;
+
+    const rates = {};
+    for (const [stat, d] of Object.entries(data.by_stat)) {
+      if (NBA_STAT_LABELS.has(stat) && d.total >= 10 && d.hitRate != null) {
+        rates[stat] = { hitRate: d.hitRate, total: d.total };
+      }
+    }
+
+    return Object.keys(rates).length >= 2 ? rates : null;
+  } catch (err) {
+    console.log(`[pregame/analyze] fetchStatHitRates error: ${err.message}`);
+    return null;
+  }
+}
+
+async function generatePreGamePicks(game, playerData, existingLegs, legCount, matchupContext = null, oddsMap = {}, statHitRates = null) {
   const playerLines = playerData.map(p => {
     const proj = p.projections;
     if (!proj || Object.keys(proj).length === 0) return null;
@@ -910,7 +961,8 @@ async function generatePreGamePicks(game, playerData, existingLegs, legCount, ma
     Suggested threshold: Over ${s.threshold} | Cushion: ${s.cushion} | Edge: ${s.edge}
     Variance (std dev): ${s.stdDev ?? '?'} | Floor: ${s.floor ?? '?'} | Ceiling: ${s.ceiling ?? '?'}
     Trend: ${trendIcon} | ${location} | Rest: ${s.daysSinceLastGame ?? '?'}d since last game
-    Adjustments: location ${s.locationAdj > 0 ? '+' : ''}${s.locationAdj} | rest ${s.restAdj > 0 ? '+' : ''}${s.restAdj} | trend ${s.trendAdj > 0 ? '+' : ''}${s.trendAdj}`
+    Adjustments: location ${s.locationAdj > 0 ? '+' : ''}${s.locationAdj} | rest ${s.restAdj > 0 ? '+' : ''}${s.restAdj} | trend ${s.trendAdj > 0 ? '+' : ''}${s.trendAdj}
+    Star rating: ${s._computedRating ?? '?'}`
       );
     }
 
@@ -957,14 +1009,7 @@ MINIMUM SPORTSBOOK THRESHOLDS (never recommend below these):
 If the suggested threshold falls below these minimums, round UP to the minimum.
 If even at the minimum the projection does not offer meaningful edge, skip that pick entirely.
 
-RATING FRAMEWORK (1-5 stars):
-5 stars: projection well above threshold + trending up + good rest + below floor flag + favorable defense
-4 stars: projection above threshold + at least 2 positive factors aligned
-3 stars: projection above threshold + mixed signals
-2 stars: projection above threshold but back-to-back OR high variance OR trending down OR high blowout risk
-1 star: only marginal edge or significant risk flags
-DEDUCT 1 star for: high blowout risk for player on favored team, elite opposing defense, low sample size (<3 games)
-ADD 0.5 stars (round up) for: poor/bottom-tier opposing defense, player on underdog team in blowout (more minutes chasing)
+RATING RULE: Use the "Star rating" shown in each stat block exactly as given (integer 1-5). Do not assign your own rating.
 
 FACTORS TO WEIGH:
 - Back-to-back: significant risk -- drop rating by 1 star minimum
@@ -974,7 +1019,10 @@ FACTORS TO WEIGH:
 - If L5 avg is significantly above L10: player is hot, weight threshold closer to L5
 - Consider ALL stat types equally -- points, rebounds, assists, steals, blocks are all valid picks
 
-For each pick provide:
+${statHitRates ? `HISTORICAL HIT RATES BY STAT (last 90 days, 10+ sample):
+${Object.entries(statHitRates).map(([stat, d]) => `- ${stat}: ${d.hitRate}% (${d.total} picks)`).join('\n')}
+Use this to calibrate confidence — favor stat types hitting above 60%, be cautious below 50%. Do not override star ratings, but factor this into rationale and risk_flags.
+` : ''}For each pick provide:
 - player: exact full name
 - team: team abbreviation
 - stat: one of Points, Rebounds, Assists, Steals, Blocks
@@ -983,7 +1031,7 @@ For each pick provide:
 - projection: the blended projection number
 - edge: cushion between projection and threshold
 - rationale: 2-3 sentences citing SPECIFIC numbers
-- rating: 1-5 stars
+- rating: the pre-computed star rating (integer 1-5) — use exactly as given
 - rating_reason: one sentence explaining the rating
 - risk_flags: array of concern strings (empty if clean)
 
@@ -1029,6 +1077,21 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
 }
 
 // ─── Odds attachment ──────────────────────────────────────────────────────────
+
+// Override Claude's returned rating with the pre-computed one, same pattern as
+// analyze-nhl.js / analyze-nfl.js — falls back to Claude's value if no matching
+// projection is found (shouldn't normally happen).
+function applyComputedRatings(picks, playerData) {
+  if (!picks?.length) return picks;
+  const projByPlayer = {};
+  for (const p of playerData) projByPlayer[p.name] = p.projections;
+
+  return picks.map(pick => {
+    const statKey = pick.stat?.toLowerCase();
+    const proj = statKey ? projByPlayer[pick.player]?.[statKey] : null;
+    return proj?._computedRating != null ? { ...pick, rating: proj._computedRating } : pick;
+  });
+}
 
 function attachOdds(picks, oddsMap) {
   if (!oddsMap || !picks?.length) return picks;
@@ -1111,9 +1174,9 @@ export default async function handler(req, res) {
         return null;
       }
 
-      // Check hardcoded injury blacklist (season-out players)
-      if (isPlayerSeasonOut(p.name)) {
-        console.log(`[pregame/analyze] Skipping ${p.name} -- on season-out blacklist (injured/out for remainder of season)`);
+      // Skip players with a live Out/Doubtful/Injured Reserve/Suspension designation
+      if (p.isOut) {
+        console.log(`[pregame/analyze] Skipping ${p.name} -- injury designation excludes them`);
         return null;
       }
 
@@ -1129,19 +1192,15 @@ export default async function handler(req, res) {
         }
       }
 
-      // Skip players with an injury/out status from ESPN roster
-      // Only filter on explicit injury/out keywords, not "reserve" which can be normal
-      const status = (typeof p.status === 'string' ? p.status : '').toLowerCase();
-      if (status.includes('out') || status.includes('injur') || status.includes('ineligible')) {
-        console.log(`[pregame/analyze] Skipping ${p.name} -- status: ${p.status}`);
-        return null;
-      }
-
       const opponentContext = p.isHome
         ? matchupContext?.away?.asOpponent
         : matchupContext?.home?.asOpponent;
       const projections = buildPreGameProjection(p, season, form, p.isHome, opponentContext, matchupContext);
       if (Object.keys(projections).length === 0) return null;
+
+      for (const stat of STAT_KEYS) {
+        if (projections[stat]) projections[stat]._computedRating = computeRating(projections[stat], stat);
+      }
 
       const actualTeam = gamelogResults[i]?.currentTeam || p.teamAbbrev;
 
@@ -1170,6 +1229,12 @@ export default async function handler(req, res) {
       });
     }
 
+    const statHitRates = await fetchStatHitRates().catch(() => null);
+    if (statHitRates) {
+      const summary = Object.entries(statHitRates).map(([s, d]) => `${s}=${d.hitRate}%`).join(' ');
+      console.log(`[pregame/analyze] Stat hit rates: ${summary} (${Object.keys(statHitRates).length} stats)`);
+    }
+
     // CHANGE 3: DYNAMIC LEGCOUNT FOR DAILY MODE
     // Daily card mode
     if (mode === 'daily') {
@@ -1178,7 +1243,7 @@ export default async function handler(req, res) {
       // For MLB/larger rosters: request more picks
       const dynamicLegCount = Math.min(playerData.length > 8 ? 4 : 2, playerData.length);
       console.log(`[pregame/analyze] Daily card mode -- ${playerData.length} players available, requesting ${dynamicLegCount} picks`);
-      
+
       const dailyResult = await generatePreGamePicks(
         { homeTeam, awayTeam, gameDate },
         playerData,
@@ -1186,8 +1251,9 @@ export default async function handler(req, res) {
         dynamicLegCount,
         matchupContext,
         {},
+        statHitRates,
       );
-      const taggedDailyPicks = (dailyResult.picks || []).map(p => ({ ...p, model: 'claude-haiku-4-5-20251001' }));
+      const taggedDailyPicks = applyComputedRatings(dailyResult.picks || [], playerData).map(p => ({ ...p, model: 'claude-haiku-4-5-20251001' }));
       const dailyPicksWithOdds = dailyResult.picks
         ? { ...dailyResult, picks: attachOdds(taggedDailyPicks, {}) }
         : dailyResult;
@@ -1209,9 +1275,10 @@ export default async function handler(req, res) {
       legCount,
       matchupContext,
       oddsMap,
+      statHitRates,
     );
 
-    const taggedPicks = (picks.picks || []).map(p => ({ ...p, model: 'claude-haiku-4-5-20251001' }));
+    const taggedPicks = applyComputedRatings(picks.picks || [], playerData).map(p => ({ ...p, model: 'claude-haiku-4-5-20251001' }));
     const picksWithOdds = picks.picks ? { ...picks, picks: attachOdds(taggedPicks, oddsMap) } : picks;
     return res.status(200).json({
       success: true, gameId,

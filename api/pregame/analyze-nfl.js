@@ -88,6 +88,15 @@ async function findTeamId(abbreviation) {
   return match?.team?.id ?? null;
 }
 
+// Injury designations that mean a player shouldn't be recommended for pregame props.
+// Questionable/Day-To-Day are kept — real-world Q-tags play more often than not, and
+// pregame picks already carry inherent uncertainty.
+const EXCLUDED_INJURY_STATUSES = new Set(['Out', 'Doubtful', 'Injured Reserve', 'Suspension']);
+
+function isPlayerOut(injuries) {
+  return (injuries || []).some(inj => EXCLUDED_INJURY_STATUSES.has(inj?.status));
+}
+
 async function getTeamRoster(teamId) {
   const data = await fetchJSON(
     `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${teamId}/roster`
@@ -97,6 +106,7 @@ async function getTeamRoster(teamId) {
     for (const p of group?.items ?? []) {
       const posAbbr = p?.position?.abbreviation?.toUpperCase() ?? "";
       if (!SKILL_POSITIONS.has(posAbbr)) continue;
+      if (isPlayerOut(p.injuries)) continue;
       players.push({
         id: p.id,
         name: p.fullName,
@@ -295,7 +305,49 @@ function formatPlayerForPrompt(p) {
   return lines.join('\n');
 }
 
-async function generateNFLPicks(homeTeam, awayTeam, playerData, existingLegs, legCount) {
+// ─── Historical hit rates (feedback loop) ────────────────────────────────────
+// /api/halftime/stats aggregates by_stat across EVERY sport's saved picks (keyed
+// by whatever literal string is in pick.stat) — filter to this sport's own labels
+// so e.g. MLB's "Hits" hit rate doesn't show up as noise in the NFL prompt.
+const NFL_STAT_LABELS = new Set(['Passing Yards', 'Rushing Yards', 'Receiving Yards']);
+
+async function fetchStatHitRates() {
+  try {
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : 'https://consensus-picks-mvp.vercel.app';
+
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+
+    let data;
+    try {
+      const res = await fetch(`${baseUrl}/api/halftime/stats?days=90`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      data = await res.json();
+    } catch {
+      clearTimeout(timer);
+      return null;
+    }
+
+    if (!data?.success || !data.by_stat) return null;
+
+    const rates = {};
+    for (const [stat, d] of Object.entries(data.by_stat)) {
+      if (NFL_STAT_LABELS.has(stat) && d.total >= 10 && d.hitRate != null) {
+        rates[stat] = { hitRate: d.hitRate, total: d.total };
+      }
+    }
+
+    return Object.keys(rates).length >= 2 ? rates : null;
+  } catch (err) {
+    console.log(`[analyze-nfl] fetchStatHitRates error: ${err.message}`);
+    return null;
+  }
+}
+
+async function generateNFLPicks(homeTeam, awayTeam, playerData, existingLegs, legCount, statHitRates = null) {
   const qbs       = playerData.filter(p => p.isQB);
   const rbs       = playerData.filter(p => p.isRB);
   const receivers = playerData.filter(p => p.isReceiver);
@@ -333,7 +385,10 @@ HOW TO USE THESE PROJECTIONS:
 - Opponent defense multiplier is already baked into the projection — cite it when it's a meaningful factor (mult > 1.08 or < 0.92)
 - Small sample size (<3 games) should lower confidence — mention in risk_flags
 
-For each pick provide:
+${statHitRates ? `HISTORICAL HIT RATES BY STAT (last 90 days, 10+ sample):
+${Object.entries(statHitRates).map(([stat, d]) => `- ${stat}: ${d.hitRate}% (${d.total} picks)`).join('\n')}
+Use this to calibrate confidence — favor stat types hitting above 60%, be cautious below 50%. Do not override star ratings, but factor this into rationale and risk_flags.
+` : ''}For each pick provide:
 - player, team, position, stat (one of: "Passing Yards", "Rushing Yards", "Receiving Yards")
 - direction (always "Over"), threshold, projection, edge
 - rationale: 1-2 sentences citing SPECIFIC numbers
@@ -503,7 +558,13 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Could not build projections for any players in this game' });
     }
 
-    const picks = await generateNFLPicks(homeTeam, awayTeam, playerData, existingLegs || [], legCount);
+    const statHitRates = await fetchStatHitRates().catch(() => null);
+    if (statHitRates) {
+      const summary = Object.entries(statHitRates).map(([s, d]) => `${s}=${d.hitRate}%`).join(' ');
+      console.log(`[analyze-nfl] Stat hit rates: ${summary} (${Object.keys(statHitRates).length} stats)`);
+    }
+
+    const picks = await generateNFLPicks(homeTeam, awayTeam, playerData, existingLegs || [], legCount, statHitRates);
 
     const projectionsMap = {};
     for (const p of playerData) {
