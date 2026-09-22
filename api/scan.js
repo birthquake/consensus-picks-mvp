@@ -1,12 +1,9 @@
-// FILE LOCATION: api/pregame/scan.js
-// Returns today's scheduled and upcoming NBA games.
-// Unlike halftime/scan which filters for live halftime games,
-// this returns games that haven't started yet (state === 'pre')
-// plus any games in the next 24 hours.
-//
-// Usage: GET /api/pregame/scan?sport=nba
-
-// import { fetchNBAPlayerProps } from '../../lib/odds-client.js'; // DISABLED — conserve API credits
+// FILE LOCATION: api/scan.js
+// Combined pregame + live game scanner (merged from api/pregame/scan.js and
+// api/halftime/scan.js to save a Vercel function slot — Hobby plan caps at 12).
+// Dispatches on the query shape each mode already used before the merge:
+//   ?sport=X        (singular) -> pregame mode: today/tomorrow window (NFL: current week)
+//   ?sports=X,Y,Z    (plural)  -> live mode: games currently in progress
 
 const SPORT_CONFIG = {
   nba: { sport: 'basketball', league: 'nba', label: 'NBA' },
@@ -29,7 +26,16 @@ async function fetchWithTimeout(url, ms = 5000) {
   }
 }
 
-function extractGameData(event, config, targetDate = null) {
+function formatDate(d) {
+  const yyyy = d.getFullYear();
+  const mm   = String(d.getMonth() + 1).padStart(2, '0');
+  const dd   = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}`;
+}
+
+// ─── Pregame mode ───────────────────────────────────────────────────────────
+
+function extractPregameData(event, config) {
   const comp        = event.competitions?.[0];
   const status      = comp?.status;
   const competitors = comp?.competitors || [];
@@ -68,11 +74,7 @@ function extractGameData(event, config, targetDate = null) {
   };
 }
 
-export default async function handler(req, res) {
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
+async function handlePregame(req, res) {
   const sportKey = (req.query.sport || 'nba').toLowerCase();
   const config   = SPORT_CONFIG[sportKey];
 
@@ -89,7 +91,7 @@ export default async function handler(req, res) {
       );
 
       const weekNumber  = thisWeekData?.week?.number ?? null;
-      const weekEvents  = (thisWeekData?.events || []).map(e => extractGameData(e, config));
+      const weekEvents  = (thisWeekData?.events || []).map(e => extractPregameData(e, config));
       const preThisWeek = weekEvents.filter(g => g.state === 'pre');
       const liveThisWeek = weekEvents.filter(g => g.state === 'in');
 
@@ -106,12 +108,12 @@ export default async function handler(req, res) {
         const nextWeekData = await fetchWithTimeout(
           `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard?week=${weekNumber + 1}&seasontype=2`
         );
-        const nextWeekEvents = (nextWeekData?.events || []).map(e => extractGameData(e, config));
+        const nextWeekEvents = (nextWeekData?.events || []).map(e => extractPregameData(e, config));
         games = nextWeekEvents.filter(g => g.state === 'pre');
         context = `pre-game week ${weekNumber + 1}`;
       }
 
-      console.log(`[pregame/scan] NFL: found ${games.length} games (context: ${context})`);
+      console.log(`[scan] NFL: found ${games.length} games (context: ${context})`);
 
       return res.status(200).json({
         success:     true,
@@ -125,7 +127,7 @@ export default async function handler(req, res) {
         odds_players: 0,
       });
     } catch (err) {
-      console.error('[pregame/scan] NFL error:', err.message);
+      console.error('[scan] NFL error:', err.message);
       return res.status(500).json({ success: false, error: err.message });
     }
   }
@@ -147,10 +149,8 @@ export default async function handler(req, res) {
     ]);
 
     // Odds fetching disabled — using calculated thresholds instead
-    const oddsMap = {};
-
-    const todayGames    = (todayData?.events    || []).map(e => extractGameData(e, config));
-    const tomorrowGames = (tomorrowData?.events || []).map(e => extractGameData(e, config));
+    const todayGames    = (todayData?.events    || []).map(e => extractPregameData(e, config));
+    const tomorrowGames = (tomorrowData?.events || []).map(e => extractPregameData(e, config));
 
     // Trust ESPN's scoreboard response — it returns the correct games for the date passed
     // Don't filter by UTC date string (causes issues for evening ET games that are next day UTC)
@@ -180,8 +180,7 @@ export default async function handler(req, res) {
       context = 'pre-game tomorrow (all finished today)';
     }
 
-    console.log(`[pregame/scan] Found ${games.length} games (context: ${context})`);
-    console.log(`[pregame/scan] Odds disabled — using calculated thresholds`);
+    console.log(`[scan] Found ${games.length} games (context: ${context})`);
 
     return res.status(200).json({
       success:     true,
@@ -196,14 +195,119 @@ export default async function handler(req, res) {
     });
 
   } catch (err) {
-    console.error('[pregame/scan] Error:', err.message);
+    console.error('[scan] Error:', err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 }
 
-function formatDate(d) {
-  const yyyy = d.getFullYear();
-  const mm   = String(d.getMonth() + 1).padStart(2, '0');
-  const dd   = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}${mm}${dd}`;
+// ─── Live mode ────────────────────────────────────────────────────────────
+
+function isLive(event) {
+  const state = event.competitions?.[0]?.status?.type?.state;
+  return state === 'in';
+}
+
+function extractLiveGameData(event, config) {
+  const comp = event.competitions?.[0];
+  const status = comp?.status;
+  const competitors = comp?.competitors || [];
+  const home = competitors.find(c => c.homeAway === 'home');
+  const away = competitors.find(c => c.homeAway === 'away');
+
+  const period = status?.period;
+  const description = status?.type?.description || '';
+
+  // Human-readable game phase label
+  let phaseLabel = description;
+  if (config.league === 'nba') {
+    if (description.toLowerCase().includes('halftime')) phaseLabel = 'Halftime';
+    else if (period) phaseLabel = `Q${period}`;
+  } else if (config.league === 'nhl') {
+    if (description.toLowerCase().includes('intermission')) phaseLabel = `Intermission`;
+    else if (period) phaseLabel = `P${period}`;
+  } else if (config.league === 'mlb') {
+    phaseLabel = description || `Inning ${period}`;
+  } else if (config.league === 'nfl') {
+    if (description.toLowerCase().includes('halftime')) phaseLabel = 'Halftime';
+    else if (period > 4) phaseLabel = 'OT';
+    else if (period) phaseLabel = `Q${period}`;
+  }
+
+  return {
+    id: event.id,
+    sport: config.sport,
+    league: config.league,
+    label: config.label,
+    name: event.name,
+    shortName: event.shortName,
+    homeTeam: {
+      id: home?.team?.id,
+      name: home?.team?.displayName,
+      abbreviation: home?.team?.abbreviation,
+      score: parseInt(home?.score || '0'),
+      logo: home?.team?.logo,
+    },
+    awayTeam: {
+      id: away?.team?.id,
+      name: away?.team?.displayName,
+      abbreviation: away?.team?.abbreviation,
+      score: parseInt(away?.score || '0'),
+      logo: away?.team?.logo,
+    },
+    period,
+    clock: status?.displayClock,
+    statusDescription: phaseLabel,
+    isHalftime: description.toLowerCase().includes('halftime') || description.toLowerCase().includes('intermission'),
+    startTime: comp?.date,
+    venue: comp?.venue?.fullName || null,
+    scoreDiff: Math.abs(parseInt(home?.score || '0') - parseInt(away?.score || '0')),
+  };
+}
+
+async function handleLive(req, res) {
+  const requestedSports = (req.query.sports || 'nba,nhl').split(',').map(s => s.trim().toLowerCase());
+
+  try {
+    const scoreboard_fetches = requestedSports.map(async (sportKey) => {
+      const config = SPORT_CONFIG[sportKey];
+      if (!config) return [];
+
+      const url = `https://site.api.espn.com/apis/site/v2/sports/${config.sport}/${config.league}/scoreboard`;
+      const data = await fetchWithTimeout(url);
+      if (!data?.events) return [];
+
+      const liveGames = data.events.filter(e => isLive(e));
+      return liveGames.map(e => extractLiveGameData(e, config));
+    });
+
+    const results = await Promise.all(scoreboard_fetches);
+    const games = results.flat();
+
+    console.log(`[scan] Found ${games.length} live games across ${requestedSports.join(', ')}`);
+
+    return res.status(200).json({
+      success: true,
+      games,
+      total: games.length,
+      scanned_at: new Date().toISOString(),
+      sports_scanned: requestedSports,
+    });
+
+  } catch (err) {
+    console.error('[scan] Live error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+// ─── Handler ──────────────────────────────────────────────────────────────
+
+export default async function handler(req, res) {
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  if (req.query.sports != null) {
+    return handleLive(req, res);
+  }
+  return handlePregame(req, res);
 }

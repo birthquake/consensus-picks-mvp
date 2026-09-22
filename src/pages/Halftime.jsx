@@ -263,10 +263,10 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
     setNflPicks([]);
     try {
       const [nbaScan, mlbScan, nhlScan, nflScan] = await Promise.all([
-        fetch('/api/pregame/scan?sport=nba').then(r => r.json()).catch(() => null),
-        fetch('/api/pregame/scan?sport=mlb').then(r => r.json()).catch(() => null),
-        fetch('/api/pregame/scan?sport=nhl').then(r => r.json()).catch(() => null),
-        fetch('/api/pregame/scan?sport=nfl').then(r => r.json()).catch(() => null),
+        fetch('/api/scan?sport=nba').then(r => r.json()).catch(() => null),
+        fetch('/api/scan?sport=mlb').then(r => r.json()).catch(() => null),
+        fetch('/api/scan?sport=nhl').then(r => r.json()).catch(() => null),
+        fetch('/api/scan?sport=nfl').then(r => r.json()).catch(() => null),
       ]);
 
       const nbaGames = nbaScan?.success ? nbaScan.games || [] : [];
@@ -666,6 +666,12 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
       if (mode === 'halftime' && isNFL) {
         endpoint = '/api/halftime/analyze-nfl';
         body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam.abbreviation, awayTeam: game.awayTeam.abbreviation, existingLegs, legCount };
+      } else if (mode === 'halftime' && isMLB) {
+        endpoint = '/api/halftime/analyze-mlb';
+        body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam.abbreviation, awayTeam: game.awayTeam.abbreviation, gameDate: game.gameDate || game.startTime, existingLegs, legCount };
+      } else if (mode === 'halftime' && isNHL) {
+        endpoint = '/api/halftime/analyze-nhl';
+        body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam.abbreviation, awayTeam: game.awayTeam.abbreviation, existingLegs, legCount };
       } else if (mode === 'halftime') {
         endpoint = '/api/halftime/analyze';
         body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount, mode: analysisMode, oddsMap };
@@ -1039,7 +1045,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setLiveGames([]);
       try {
-        const res  = await fetch('/api/halftime/scan?sports=nba,mlb,nfl');
+        const res  = await fetch('/api/scan?sports=nba,mlb,nhl,nfl');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setLiveGames(data.games);
@@ -1057,7 +1063,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setNbaGames([]);
       try {
-        const res  = await fetch('/api/pregame/scan?sport=nba');
+        const res  = await fetch('/api/scan?sport=nba');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setNbaGames(data.games);
@@ -1073,7 +1079,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setMlbGames([]);
       try {
-        const res  = await fetch('/api/pregame/scan?sport=mlb');
+        const res  = await fetch('/api/scan?sport=mlb');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setMlbGames(data.games);
@@ -1088,7 +1094,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setNhlGames([]);
       try {
-        const res  = await fetch('/api/pregame/scan?sport=nhl');
+        const res  = await fetch('/api/scan?sport=nhl');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setNhlGames(data.games);
@@ -1103,7 +1109,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setNflGames([]);
       try {
-        const res  = await fetch('/api/pregame/scan?sport=nfl');
+        const res  = await fetch('/api/scan?sport=nfl');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setNflGames(data.games);
