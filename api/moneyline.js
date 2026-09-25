@@ -1,15 +1,15 @@
 // FILE LOCATION: api/moneyline.js
 // Game-outcome (moneyline) picks — no player props, since props aren't legal
-// betting products in every state. NFL + NBA today; response shape is
-// league-agnostic so MLB/NHL can be added the same way later.
+// betting products in every state. NFL + NBA + MLB + NHL.
 //
-// Usage: GET /api/moneyline?sport=nfl | GET /api/moneyline?sport=nba
+// Usage: GET /api/moneyline?sport=nfl|nba|mlb|nhl
 //
 // Methodology: unlike every other analyzer in this app, this doesn't build a
 // projection from scratch — ESPN's own game summary endpoint already carries
 // two things that make this tractable, for every sport it covers:
 //   - `predictor`: ESPN's own power-rating win probability for each team
-//     (FPI for NFL, BPI for NBA — pregame only; null once a game finishes)
+//     (FPI for NFL, BPI for NBA, "Matchup Predictor" for MLB/NHL — pregame
+//     only; null once a game finishes)
 //   - `pickcenter`: real DraftKings moneyline odds, free, no API key
 // The "pick" is a straight comparison: does ESPN's model win probability
 // diverge meaningfully from what the real market is pricing in (the
@@ -19,12 +19,22 @@
 // player level. No per-player fetching needed, so this is one lightweight
 // endpoint rather than the two-step scan/analyze flow the prop analyzers use.
 //
-// NBA note: the regular season hadn't started when NBA support was added
-// (only preseason games existed, which have no real BPI/lines posted) — the
-// same graceful "skip if predictor/pickcenter missing" handling that covers
-// early-week NFL games before lines post also covers this, so picks will
-// just start appearing once the season is underway and ESPN populates both
-// fields, no code change needed.
+// Known methodology gaps (not yet addressed, apply equally to all 4 sports):
+//   - No outcome tracking/backtesting — the 6pp edge threshold is a reasoned
+//     starting heuristic, not one validated against actual results yet.
+//   - No confidence discount for how much in-season data the power rating
+//     has (an early-season divergence is a weaker signal than a midseason
+//     one) — the player-prop analyzers all penalize small samples; this
+//     doesn't yet.
+//   - Single-book, single-snapshot pricing — no line-movement/CLV awareness.
+//
+// NBA/NHL note: added while each was still in preseason (no real BPI/lines
+// posted yet). The same graceful "skip if predictor/pickcenter missing"
+// handling that covers early-week NFL games before lines post also covers
+// this, so picks will just start appearing once each season is underway —
+// confirmed structurally (verified live that both `predictor` and
+// `pickcenter` are valid fields on their game summaries) but not against
+// real numbers the way NFL/MLB were (both in-season when added/verified).
 
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -35,6 +45,8 @@ const MIN_EDGE_PP = 6; // minimum edge (percentage points) to surface a pick at 
 const SPORT_CONFIG = {
   nfl: { sport: 'football',   league: 'nfl', label: 'NFL', cadence: 'weekly' },
   nba: { sport: 'basketball', league: 'nba', label: 'NBA', cadence: 'daily' },
+  mlb: { sport: 'baseball',   league: 'mlb', label: 'MLB', cadence: 'daily' },
+  nhl: { sport: 'hockey',     league: 'nhl', label: 'NHL', cadence: 'daily' },
 };
 
 async function fetchWithTimeout(url, ms = 6000) {

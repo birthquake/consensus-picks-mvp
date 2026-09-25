@@ -523,8 +523,8 @@ function MoneylineCard({ pick, index }) {
 const MONEYLINE_SPORTS = [
   { id: 'nfl', label: 'NFL', icon: <Icon.Football />,   available: true },
   { id: 'nba', label: 'NBA', icon: <Icon.Basketball />, available: true },
-  { id: 'mlb', label: 'MLB', icon: <Icon.Baseball />,   available: false },
-  { id: 'nhl', label: 'NHL', icon: <Icon.Hockey />,     available: false },
+  { id: 'mlb', label: 'MLB', icon: <Icon.Baseball />,   available: true },
+  { id: 'nhl', label: 'NHL', icon: <Icon.Hockey />,     available: true },
 ];
 
 function MoneylinePicks() {
