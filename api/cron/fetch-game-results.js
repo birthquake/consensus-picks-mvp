@@ -89,6 +89,9 @@ export default async function handler(req, res) {
     // Grade pending halftime picks
     const halftimeResults = await gradeHalftimePicks();
 
+    // Grade pending moneyline picks
+    const moneylineResults = await gradeMoneylinePicks();
+
     return res.status(200).json({
       success: true,
       processed: totalProcessed,
@@ -96,6 +99,7 @@ export default async function handler(req, res) {
       skipped: totalSkipped,
       errors,
       halftime: halftimeResults,
+      moneyline: moneylineResults,
     });
 
   } catch (err) {
@@ -222,6 +226,104 @@ async function gradeHalftimePicks() {
   }
 
   console.log(`[gradeHalftimePicks] Graded: ${results.graded}/${results.processed}`);
+  return results;
+}
+
+// ─── Moneyline pick grading ───────────────────────────────────────────────────
+
+async function fetchWithTimeout(url, ms = 6000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ms);
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function gradeMoneylinePicks() {
+  const results = { processed: 0, graded: 0, skipped: 0, errors: [] };
+
+  try {
+    const snapshot = await db
+      .collection('moneyline_picks')
+      .where('status', '==', 'pending')
+      .get();
+
+    results.processed = snapshot.docs.length;
+
+    for (const doc of snapshot.docs) {
+      const pick = doc.data();
+
+      try {
+        const summary = await fetchWithTimeout(
+          `https://site.api.espn.com/apis/site/v2/sports/${pick.sport}/${pick.league}/summary?event=${pick.gameId}`
+        );
+
+        if (!summary) { results.skipped++; continue; }
+
+        const comp = summary.header?.competitions?.[0];
+        const statusType = comp?.status?.type;
+
+        if (!statusType?.completed) { results.skipped++; continue; }
+
+        const name = statusType.name || '';
+        if (name.includes('POSTPONED') || name.includes('CANCELED') || name.includes('CANCELLED')) {
+          await doc.ref.update({
+            status: 'void',
+            graded_at: new Date(),
+            grade_note: 'Game postponed/cancelled',
+          });
+          results.graded++;
+          continue;
+        }
+
+        const home = comp?.competitors?.find(c => c.homeAway === 'home');
+        const away = comp?.competitors?.find(c => c.homeAway === 'away');
+        const homeScore = parseInt(home?.score, 10);
+        const awayScore = parseInt(away?.score, 10);
+
+        if (isNaN(homeScore) || isNaN(awayScore)) { results.skipped++; continue; }
+
+        if (homeScore === awayScore) {
+          await doc.ref.update({
+            status: 'void',
+            graded_at: new Date(),
+            grade_note: 'Unresolvable tie',
+          });
+          results.graded++;
+          continue;
+        }
+
+        const winner = homeScore > awayScore ? home : away;
+        const actualWinnerAbbrev = winner?.team?.abbreviation;
+        const hit = actualWinnerAbbrev === pick.teamAbbrev;
+
+        await doc.ref.update({
+          status: hit ? 'hit' : 'miss',
+          actual_winner: actualWinnerAbbrev,
+          hit,
+          graded_at: new Date(),
+        });
+
+        results.graded++;
+        console.log(`✅ Moneyline pick graded: ${pick.team} vs ${pick.opponent} → winner ${actualWinnerAbbrev} (${hit ? 'HIT' : 'MISS'})`);
+
+      } catch (err) {
+        results.errors.push({ id: doc.id, team: pick.team, error: err.message });
+        console.error(`❌ Error grading moneyline pick ${doc.id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('[gradeMoneylinePicks] Fatal:', err.message);
+    results.errors.push({ error: err.message });
+  }
+
+  console.log(`[gradeMoneylinePicks] Graded: ${results.graded}/${results.processed}`);
   return results;
 }
 

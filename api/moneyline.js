@@ -19,14 +19,23 @@
 // player level. No per-player fetching needed, so this is one lightweight
 // endpoint rather than the two-step scan/analyze flow the prop analyzers use.
 //
-// Known methodology gaps (not yet addressed, apply equally to all 4 sports):
-//   - No outcome tracking/backtesting — the 6pp edge threshold is a reasoned
-//     starting heuristic, not one validated against actual results yet.
-//   - No confidence discount for how much in-season data the power rating
-//     has (an early-season divergence is a weaker signal than a midseason
-//     one) — the player-prop analyzers all penalize small samples; this
-//     doesn't yet.
-//   - Single-book, single-snapshot pricing — no line-movement/CLV awareness.
+// Outcome tracking: every generated pick is saved server-side (not
+// frontend-triggered like player props) to the `moneyline_picks` Firestore
+// collection, de-duped by gameId. Graded daily by gradeMoneylinePicks() in
+// api/cron/fetch-game-results.js, same cron that already grades
+// halftime_picks. `?stats=true` returns aggregate accuracy for a sport.
+//
+// In-season sample-size confidence: both teams' current-season record is
+// already present on the same summary response used for predictor/pickcenter
+// (header.competitions[0].competitors[].record) — no extra fetch needed.
+// computeRating() docks the rating when either team has fewer games played
+// than THIN_DATA_THRESHOLD, since a power rating leaning mostly on
+// preseason priors is a weaker signal than one with real current-season data
+// behind it — same "small sample" penalty pattern every player-prop
+// computeRating already applies.
+//
+// Remaining known gap: single-book (DraftKings), single-snapshot pricing —
+// no line-movement/CLV awareness. Not yet addressed.
 //
 // NBA/NHL note: added while each was still in preseason (no real BPI/lines
 // posted yet). The same graceful "skip if predictor/pickcenter missing"
@@ -37,16 +46,29 @@
 // real numbers the way NFL/MLB were (both in-season when added/verified).
 
 import Anthropic from '@anthropic-ai/sdk';
+import { initializeApp, cert, getApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{}');
+let firebaseApp;
+try { firebaseApp = getApp(); } catch {
+  firebaseApp = initializeApp({ credential: cert(serviceAccount) });
+}
+const db = getFirestore(firebaseApp);
+
 const MIN_EDGE_PP = 6; // minimum edge (percentage points) to surface a pick at all
 
+// Games played before a power rating has enough current-season data to
+// trust — roughly the first ~10-15% of each sport's season length.
+const THIN_DATA_THRESHOLD = { nfl: 3, nba: 8, mlb: 15, nhl: 8 };
+
 const SPORT_CONFIG = {
-  nfl: { sport: 'football',   league: 'nfl', label: 'NFL', cadence: 'weekly' },
-  nba: { sport: 'basketball', league: 'nba', label: 'NBA', cadence: 'daily' },
-  mlb: { sport: 'baseball',   league: 'mlb', label: 'MLB', cadence: 'daily' },
-  nhl: { sport: 'hockey',     league: 'nhl', label: 'NHL', cadence: 'daily' },
+  nfl: { key: 'nfl', sport: 'football',   league: 'nfl', label: 'NFL', cadence: 'weekly' },
+  nba: { key: 'nba', sport: 'basketball', league: 'nba', label: 'NBA', cadence: 'daily' },
+  mlb: { key: 'mlb', sport: 'baseball',   league: 'mlb', label: 'MLB', cadence: 'daily' },
+  nhl: { key: 'nhl', sport: 'hockey',     league: 'nhl', label: 'NHL', cadence: 'daily' },
 };
 
 async function fetchWithTimeout(url, ms = 6000) {
@@ -80,10 +102,22 @@ function devig(homeImplied, awayImplied) {
   return { home: homeImplied / sum, away: awayImplied / sum };
 }
 
-function computeRating(edgePP) {
-  if (edgePP >= 12) return 5;
-  if (edgePP >= 9)  return 4;
-  return 3; // MIN_EDGE_PP (6) is the floor for being included at all
+function computeRating(edgePP, gamesPlayed, threshold) {
+  let score = edgePP >= 12 ? 5 : edgePP >= 9 ? 4 : 3; // MIN_EDGE_PP (6) is the floor for being included at all
+  if (gamesPlayed != null && threshold != null && gamesPlayed < threshold) score -= 1;
+  return Math.max(1, Math.min(5, score));
+}
+
+// Parses the "total" record (e.g. "2-0") off a competitor into games played.
+// Field name differs by endpoint — scoreboard events use `records`, summary
+// competitors use `record` — so check both.
+function getGamesPlayed(competitor) {
+  const records = competitor?.records ?? competitor?.record ?? [];
+  const total = records.find(r => r.type === 'total');
+  if (!total?.summary) return null;
+  const parts = total.summary.split('-').map(n => parseInt(n, 10));
+  if (parts.some(isNaN)) return null;
+  return parts.reduce((a, b) => a + b, 0);
 }
 
 // ─── Games to check ───────────────────────────────────────────────────────────
@@ -168,8 +202,18 @@ async function buildGamePick(event, cfg) {
   const pickTeam = pickHome ? home : away;
   const oppTeam  = pickHome ? away : home;
 
+  // Reliability of the divergence is capped by whichever team's rating has
+  // less current-season data behind it.
+  const gamesPlayed = Math.min(
+    getGamesPlayed(home) ?? 0,
+    getGamesPlayed(away) ?? 0,
+  );
+  const threshold = THIN_DATA_THRESHOLD[cfg.key];
+
   return {
     gameId: event.id,
+    sport: cfg.sport,
+    league: cfg.league,
     team: pickTeam?.team?.displayName,
     teamAbbrev: pickTeam?.team?.abbreviation,
     opponent: oppTeam?.team?.displayName,
@@ -179,7 +223,8 @@ async function buildGamePick(event, cfg) {
     fpiProb: Math.round((pickHome ? fpiHome : fpiAway) * 10) / 10,
     marketProb: Math.round((pickHome ? marketHome : marketAway) * 1000) / 10,
     edge: Math.round(edgePP * 10) / 10,
-    rating: computeRating(edgePP),
+    rating: computeRating(edgePP, gamesPlayed, threshold),
+    gamesPlayed,
     gameDate: comp?.date,
     shortName: event.shortName,
   };
@@ -214,6 +259,90 @@ Return ONLY a JSON array of rationale strings, in the same order, no markdown:
   }
 }
 
+// ─── Outcome tracking ─────────────────────────────────────────────────────────
+
+// Saves generated picks server-side (not frontend-triggered like player
+// props) so every pick gets tracked regardless of whether anyone views the
+// page. De-duped by gameId — one pick per game, so no composite key needed.
+async function saveMoneylinePicks(picks, sportKey) {
+  if (picks.length === 0) return;
+
+  try {
+    const existingSnap = await db
+      .collection('moneyline_picks')
+      .where('sport', '==', sportKey)
+      .where('status', '==', 'pending')
+      .get();
+    const existingGameIds = new Set(existingSnap.docs.map(d => d.data().gameId));
+
+    const batch = db.batch();
+    let saved = 0;
+    for (const p of picks) {
+      if (existingGameIds.has(p.gameId)) continue;
+      const docRef = db.collection('moneyline_picks').doc();
+      batch.set(docRef, {
+        gameId: p.gameId,
+        sportKey,
+        sport: p.sport,
+        league: p.league,
+        team: p.team,
+        teamAbbrev: p.teamAbbrev,
+        opponent: p.opponent,
+        opponentAbbrev: p.opponentAbbrev,
+        isHome: p.isHome,
+        moneyLine: p.moneyLine,
+        fpiProb: p.fpiProb,
+        marketProb: p.marketProb,
+        edge: p.edge,
+        rating: p.rating,
+        rationale: p.rationale ?? null,
+        gamesPlayed: p.gamesPlayed,
+        gameDate: p.gameDate,
+        shortName: p.shortName,
+        status: 'pending',
+        actual_winner: null,
+        hit: null,
+        created_at: new Date(),
+        graded_at: null,
+      });
+      saved++;
+    }
+    if (saved > 0) await batch.commit();
+    console.log(`[moneyline] Saved ${saved}/${picks.length} new picks for ${sportKey} (${picks.length - saved} already tracked)`);
+  } catch (err) {
+    // Tracking is best-effort — never let a save failure break the picks response
+    console.error('[moneyline] saveMoneylinePicks failed:', err.message);
+  }
+}
+
+async function getMoneylineStats(sportKey) {
+  const snap = await db.collection('moneyline_picks').where('sport', '==', sportKey).get();
+  const all = snap.docs.map(d => d.data());
+  const graded = all.filter(p => p.status === 'hit' || p.status === 'miss');
+  const hits = graded.filter(p => p.hit === true);
+
+  const byRating = {};
+  for (let r = 1; r <= 5; r++) {
+    const rGraded = graded.filter(p => p.rating === r);
+    const rHits = rGraded.filter(p => p.hit);
+    byRating[r] = {
+      total: rGraded.length,
+      hits: rHits.length,
+      hitRate: rGraded.length > 0 ? Math.round((rHits.length / rGraded.length) * 100) : null,
+    };
+  }
+
+  return {
+    total: all.length,
+    graded: graded.length,
+    pending: all.filter(p => p.status === 'pending').length,
+    hits: hits.length,
+    misses: graded.filter(p => p.hit === false).length,
+    hit_rate: graded.length > 0 ? Math.round((hits.length / graded.length) * 100) : null,
+    by_rating: byRating,
+  };
+}
+
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
@@ -227,6 +356,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: `Unsupported sport: ${sportKey}` });
   }
 
+  if (req.query.stats === 'true') {
+    try {
+      const summary = await getMoneylineStats(sportKey);
+      return res.status(200).json({ success: true, sport: sportKey, summary });
+    } catch (err) {
+      console.error('[moneyline] Stats error:', err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   try {
     const games = await getGamesToCheck(cfg);
     console.log(`[moneyline] ${cfg.label}: checking ${games.length} games`);
@@ -237,6 +376,8 @@ export default async function handler(req, res) {
     console.log(`[moneyline] ${cfg.label}: ${picks.length}/${games.length} games cleared the ${MIN_EDGE_PP}pp edge threshold`);
 
     const picksWithRationale = await attachRationales(picks, cfg.label);
+
+    await saveMoneylinePicks(picksWithRationale, sportKey);
 
     return res.status(200).json({
       success: true,

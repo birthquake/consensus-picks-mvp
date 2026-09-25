@@ -530,11 +530,12 @@ const MONEYLINE_SPORTS = [
 function MoneylinePicks() {
   const [sport, setSport]     = useState('nfl');
   const [data, setData]       = useState(null);
+  const [stats, setStats]     = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
 
   const load = async (s) => {
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setStats(null);
     try {
       const res  = await fetch(`/api/moneyline?sport=${s}`);
       const json = await res.json();
@@ -542,6 +543,13 @@ function MoneylinePicks() {
       setData(json);
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
+
+    // Stats badge — fetched separately so a stats failure never blocks picks
+    try {
+      const res  = await fetch(`/api/moneyline?sport=${s}&stats=true`);
+      const json = await res.json();
+      if (res.ok && json.success) setStats(json.summary);
+    } catch { /* badge is best-effort */ }
   };
 
   useEffect(() => { load(sport); }, [sport]);
@@ -596,13 +604,20 @@ function MoneylinePicks() {
   return (
     <div>
       {sportSelector}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', gap: '8px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>
           {data.picks.length} pick{data.picks.length !== 1 ? 's' : ''} · {data.games_checked} games checked
         </span>
-        <button onClick={() => load(sport)} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <Icon.Refresh /> Refresh
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {stats && stats.graded > 0 && (
+            <span style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-secondary, #888)', background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '8px', padding: '5px 10px' }}>
+              {stats.hits}-{stats.misses}{stats.hit_rate != null ? ` · ${stats.hit_rate}%` : ''}
+            </span>
+          )}
+          <button onClick={() => load(sport)} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Icon.Refresh /> Refresh
+          </button>
+        </div>
       </div>
 
       {data.picks.length === 0 ? (
