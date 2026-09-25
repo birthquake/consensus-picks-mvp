@@ -520,15 +520,23 @@ function MoneylineCard({ pick, index }) {
   );
 }
 
+const MONEYLINE_SPORTS = [
+  { id: 'nfl', label: 'NFL', icon: <Icon.Football />,   available: true },
+  { id: 'nba', label: 'NBA', icon: <Icon.Basketball />, available: false },
+  { id: 'mlb', label: 'MLB', icon: <Icon.Baseball />,   available: false },
+  { id: 'nhl', label: 'NHL', icon: <Icon.Hockey />,     available: false },
+];
+
 function MoneylinePicks() {
+  const [sport, setSport]     = useState('nfl');
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
 
-  const load = async () => {
+  const load = async (s) => {
     setLoading(true); setError('');
     try {
-      const res  = await fetch('/api/moneyline?sport=nfl');
+      const res  = await fetch(`/api/moneyline?sport=${s}`);
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Failed to load moneyline picks');
       setData(json);
@@ -536,29 +544,63 @@ function MoneylinePicks() {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(sport); }, [sport]);
+
+  const sportLabel = MONEYLINE_SPORTS.find(s => s.id === sport)?.label ?? sport.toUpperCase();
+
+  const sportSelector = (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+      {MONEYLINE_SPORTS.map(s => (
+        <button
+          key={s.id}
+          disabled={!s.available}
+          onClick={() => s.available && setSport(s.id)}
+          style={{
+            padding: '10px', borderRadius: '12px',
+            border: `1px solid ${sport === s.id ? '#7c3aed' : 'var(--border-color, #222)'}`,
+            background: sport === s.id ? 'rgba(124,58,237,0.15)' : 'var(--bg-secondary, #111)',
+            color: !s.available ? 'var(--text-tertiary, #555)' : sport === s.id ? '#a78bfa' : 'var(--text-secondary, #888)',
+            cursor: s.available ? 'pointer' : 'default',
+            opacity: s.available ? 1 : 0.55,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+            fontWeight: '500', fontSize: '13px', transition: 'all 0.15s',
+          }}
+        >
+          {s.icon} {s.label}
+          {!s.available && <span style={{ fontSize: '9px', fontWeight: '500', padding: '1px 5px', borderRadius: '8px', background: 'rgba(255,255,255,0.08)', color: 'var(--text-tertiary, #666)' }}>Soon</span>}
+        </button>
+      ))}
+    </div>
+  );
 
   if (loading) return (
-    <div style={{ textAlign: 'center', padding: '48px 24px' }}>
-      <div style={{ width: '32px', height: '32px', margin: '0 auto 12px', border: '2px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
-      <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>Checking FPI vs. the real moneyline for this week's games...</p>
+    <div>
+      {sportSelector}
+      <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+        <div style={{ width: '32px', height: '32px', margin: '0 auto 12px', border: '2px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
+        <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>Checking FPI vs. the real moneyline for this week's {sportLabel} games...</p>
+      </div>
     </div>
   );
   if (error) return (
-    <div style={{ textAlign: 'center', padding: '32px 24px' }}>
-      <p style={{ color: '#f87171', fontSize: '13px', marginBottom: '12px' }}>{error}</p>
-      <button onClick={load} style={{ background: 'transparent', border: '1px solid #f87171', borderRadius: '10px', color: '#f87171', padding: '6px 16px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
+    <div>
+      {sportSelector}
+      <div style={{ textAlign: 'center', padding: '32px 24px' }}>
+        <p style={{ color: '#f87171', fontSize: '13px', marginBottom: '12px' }}>{error}</p>
+        <button onClick={() => load(sport)} style={{ background: 'transparent', border: '1px solid #f87171', borderRadius: '10px', color: '#f87171', padding: '6px 16px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
+      </div>
     </div>
   );
-  if (!data) return null;
+  if (!data) return sportSelector;
 
   return (
     <div>
+      {sportSelector}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
         <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>
           {data.picks.length} pick{data.picks.length !== 1 ? 's' : ''} · {data.games_checked} games checked
         </span>
-        <button onClick={load} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <button onClick={() => load(sport)} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
           <Icon.Refresh /> Refresh
         </button>
       </div>
@@ -567,7 +609,7 @@ function MoneylinePicks() {
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ width: '48px', height: '48px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}><Icon.Target /></div>
           <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>No value this week</h3>
-          <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.6' }}>Checked {data.games_checked} games — none where ESPN's FPI diverges meaningfully from the real moneyline. That's expected most weeks; markets are usually efficient.</p>
+          <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.6' }}>Checked {data.games_checked} {sportLabel} games — none where ESPN's FPI diverges meaningfully from the real moneyline. That's expected most weeks; markets are usually efficient.</p>
         </div>
       ) : (
         data.picks.map((pick, i) => <MoneylineCard key={pick.gameId} pick={pick} index={i} />)
