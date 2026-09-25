@@ -1,15 +1,15 @@
 // FILE LOCATION: api/moneyline.js
 // Game-outcome (moneyline) picks — no player props, since props aren't legal
-// betting products in every state. NFL only for now; the response shape is
-// league-agnostic so other sports can be added the same way later.
+// betting products in every state. NFL + NBA today; response shape is
+// league-agnostic so MLB/NHL can be added the same way later.
 //
-// Usage: GET /api/moneyline?sport=nfl
+// Usage: GET /api/moneyline?sport=nfl | GET /api/moneyline?sport=nba
 //
 // Methodology: unlike every other analyzer in this app, this doesn't build a
 // projection from scratch — ESPN's own game summary endpoint already carries
-// two things that make this tractable:
-//   - `predictor`: ESPN's own FPI-based win probability for each team
-//     (pregame only; null once a game finishes)
+// two things that make this tractable, for every sport it covers:
+//   - `predictor`: ESPN's own power-rating win probability for each team
+//     (FPI for NFL, BPI for NBA — pregame only; null once a game finishes)
 //   - `pickcenter`: real DraftKings moneyline odds, free, no API key
 // The "pick" is a straight comparison: does ESPN's model win probability
 // diverge meaningfully from what the real market is pricing in (the
@@ -18,12 +18,24 @@
 // uses (e.g. MLB's real-odds overlay), just at the game level instead of the
 // player level. No per-player fetching needed, so this is one lightweight
 // endpoint rather than the two-step scan/analyze flow the prop analyzers use.
+//
+// NBA note: the regular season hadn't started when NBA support was added
+// (only preseason games existed, which have no real BPI/lines posted) — the
+// same graceful "skip if predictor/pickcenter missing" handling that covers
+// early-week NFL games before lines post also covers this, so picks will
+// just start appearing once the season is underway and ESPN populates both
+// fields, no code change needed.
 
 import Anthropic from '@anthropic-ai/sdk';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const MIN_EDGE_PP = 6; // minimum edge (percentage points) to surface a pick at all
+
+const SPORT_CONFIG = {
+  nfl: { sport: 'football',   league: 'nfl', label: 'NFL', cadence: 'weekly' },
+  nba: { sport: 'basketball', league: 'nba', label: 'NBA', cadence: 'daily' },
+};
 
 async function fetchWithTimeout(url, ms = 6000) {
   const ctrl = new AbortController();
@@ -62,11 +74,13 @@ function computeRating(edgePP) {
   return 3; // MIN_EDGE_PP (6) is the floor for being included at all
 }
 
-// ─── NFL weekly scoreboard (mirrors api/scan.js's NFL branch) ────────────────
+// ─── Games to check ───────────────────────────────────────────────────────────
 
-async function getThisWeeksGames() {
+// Weekly-cadence sports (NFL): mirrors api/scan.js's NFL branch — current
+// week's scoreboard, falling forward to next week if this week is done.
+async function getWeeksGames(cfg) {
   const thisWeekData = await fetchWithTimeout(
-    'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard'
+    `https://site.api.espn.com/apis/site/v2/sports/${cfg.sport}/${cfg.league}/scoreboard`
   );
   const weekNumber = thisWeekData?.week?.number ?? null;
   let events = thisWeekData?.events ?? [];
@@ -74,7 +88,7 @@ async function getThisWeeksGames() {
 
   if (pre.length === 0 && weekNumber != null) {
     const nextWeekData = await fetchWithTimeout(
-      `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?week=${weekNumber + 1}&seasontype=2`
+      `https://site.api.espn.com/apis/site/v2/sports/${cfg.sport}/${cfg.league}/scoreboard?week=${weekNumber + 1}&seasontype=2`
     );
     events = nextWeekData?.events ?? [];
     pre = events.filter(e => e.competitions?.[0]?.status?.type?.state === 'pre');
@@ -83,15 +97,39 @@ async function getThisWeeksGames() {
   return pre;
 }
 
+// Daily-cadence sports (NBA, and MLB/NHL later): today's games, falling
+// forward to tomorrow's if today's slate is done — same ET-date handling
+// api/scan.js uses for its non-NFL branch.
+async function getDaysGames(cfg) {
+  const nowET    = new Date(Date.now() - 4 * 60 * 60 * 1000);
+  const fmt = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const today    = fmt(nowET);
+  const tomorrow = fmt(new Date(nowET.getTime() + 86400000));
+
+  const [todayData, tomorrowData] = await Promise.all([
+    fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${cfg.sport}/${cfg.league}/scoreboard?dates=${today}`),
+    fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${cfg.sport}/${cfg.league}/scoreboard?dates=${tomorrow}`),
+  ]);
+
+  const preToday    = (todayData?.events ?? []).filter(e => e.competitions?.[0]?.status?.type?.state === 'pre');
+  const preTomorrow = (tomorrowData?.events ?? []).filter(e => e.competitions?.[0]?.status?.type?.state === 'pre');
+
+  return preToday.length > 0 ? preToday : preTomorrow;
+}
+
+async function getGamesToCheck(cfg) {
+  return cfg.cadence === 'weekly' ? getWeeksGames(cfg) : getDaysGames(cfg);
+}
+
 // ─── Per-game pick ────────────────────────────────────────────────────────────
 
-async function buildGamePick(event) {
+async function buildGamePick(event, cfg) {
   const comp = event.competitions?.[0];
   const home = comp?.competitors?.find(c => c.homeAway === 'home');
   const away = comp?.competitors?.find(c => c.homeAway === 'away');
 
   const summary = await fetchWithTimeout(
-    `https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${event.id}`
+    `https://site.api.espn.com/apis/site/v2/sports/${cfg.sport}/${cfg.league}/summary?event=${event.id}`
   );
   if (!summary) return null;
 
@@ -137,10 +175,10 @@ async function buildGamePick(event) {
 
 // ─── Claude rationale (one batched call for the whole week) ──────────────────
 
-async function attachRationales(picks) {
+async function attachRationales(picks, label) {
   if (picks.length === 0) return picks;
 
-  const prompt = `You are an expert sports bettor. For each NFL moneyline pick below, the team, edge, and star rating are already finally determined — do not change them. Write a 1-2 sentence rationale for each pick, citing the specific numbers (ESPN's FPI win probability vs. the market-implied probability from the actual moneyline).
+  const prompt = `You are an expert sports bettor. For each ${label} moneyline pick below, the team, edge, and star rating are already finally determined — do not change them. Write a 1-2 sentence rationale for each pick, citing the specific numbers (ESPN's power-rating win probability vs. the market-implied probability from the actual moneyline).
 
 PICKS:
 ${picks.map((p, i) => `${i + 1}. ${p.team} (${p.isHome ? 'home' : 'away'}) ML ${p.moneyLine > 0 ? '+' : ''}${p.moneyLine} vs ${p.opponent} — FPI: ${p.fpiProb}% | Market (de-vigged): ${p.marketProb}% | Edge: +${p.edge}pp | Rating: ${p.rating}★`).join('\n')}
@@ -171,25 +209,26 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const sport = (req.query.sport || 'nfl').toLowerCase();
-  if (sport !== 'nfl') {
-    return res.status(400).json({ error: `Unsupported sport: ${sport}` });
+  const sportKey = (req.query.sport || 'nfl').toLowerCase();
+  const cfg = SPORT_CONFIG[sportKey];
+  if (!cfg) {
+    return res.status(400).json({ error: `Unsupported sport: ${sportKey}` });
   }
 
   try {
-    const games = await getThisWeeksGames();
-    console.log(`[moneyline] Checking ${games.length} games this week`);
+    const games = await getGamesToCheck(cfg);
+    console.log(`[moneyline] ${cfg.label}: checking ${games.length} games`);
 
-    const results = await Promise.all(games.map(e => buildGamePick(e).catch(() => null)));
+    const results = await Promise.all(games.map(e => buildGamePick(e, cfg).catch(() => null)));
     const picks = results.filter(Boolean).sort((a, b) => b.edge - a.edge);
 
-    console.log(`[moneyline] ${picks.length}/${games.length} games cleared the ${MIN_EDGE_PP}pp edge threshold`);
+    console.log(`[moneyline] ${cfg.label}: ${picks.length}/${games.length} games cleared the ${MIN_EDGE_PP}pp edge threshold`);
 
-    const picksWithRationale = await attachRationales(picks);
+    const picksWithRationale = await attachRationales(picks, cfg.label);
 
     return res.status(200).json({
       success: true,
-      sport: 'nfl',
+      sport: sportKey,
       games_checked: games.length,
       picks: picksWithRationale,
       scanned_at: new Date().toISOString(),
