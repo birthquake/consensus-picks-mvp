@@ -346,7 +346,7 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
 const saveGamePicks = async (result, game, sport) => {
   if (!result?.success || !result.picks?.length) return;
   try {
-    await fetch('/api/halftime/save-picks', {
+    await fetch('/api/halftime/picks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -483,6 +483,99 @@ setState(nba.length > 0 || mlb.length > 0 || nhl.length > 0 || nfl.length > 0 ? 
   );
 }
 
+// ── Moneyline Picks ────────────────────────────────────────────────────────────
+function MoneylineCard({ pick, index }) {
+  const ratingColor = pick.rating >= 4 ? '#4ade80' : pick.rating >= 3 ? '#fbbf24' : '#f87171';
+  const ratingBg    = pick.rating >= 4 ? 'rgba(74,222,128,0.08)' : pick.rating >= 3 ? 'rgba(251,191,36,0.08)' : 'rgba(248,113,113,0.08)';
+  const mlDisplay   = pick.moneyLine > 0 ? `+${pick.moneyLine}` : pick.moneyLine;
+
+  return (
+    <div style={{ background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '16px', overflow: 'hidden', animation: `fadeUp 0.3s ease ${index * 0.06}s both`, marginBottom: '12px' }}>
+      <style>{`@keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }`}</style>
+      <div style={{ padding: '16px', display: 'flex', gap: '12px' }}>
+        <div style={{ background: ratingBg, border: `1px solid ${ratingColor}22`, borderRadius: '12px', padding: '8px 10px', flexShrink: 0, textAlign: 'center', minWidth: '42px' }}>
+          <div style={{ color: ratingColor, fontWeight: '500', fontSize: '18px', lineHeight: 1 }}>{pick.rating}</div>
+          <StarRating rating={pick.rating} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+            <span style={{ fontWeight: '500', fontSize: '15px', color: 'var(--text-primary, #fff)' }}>{pick.team}</span>
+            <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', borderRadius: '20px' }}>{pick.isHome ? 'HOME' : 'AWAY'}</span>
+            <span style={{ fontSize: '13px', color: '#60a5fa', fontWeight: '500' }}>ML {mlDisplay}</span>
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', marginBottom: '8px' }}>
+            vs {pick.opponent} · {pick.shortName}
+          </div>
+          <div style={{ display: 'flex', gap: '14px', marginBottom: '8px', fontSize: '12px' }}>
+            <span style={{ color: 'var(--text-secondary, #888)' }}>FPI <span style={{ color: 'var(--text-primary, #fff)', fontWeight: '500' }}>{pick.fpiProb}%</span></span>
+            <span style={{ color: 'var(--text-secondary, #888)' }}>Market <span style={{ color: 'var(--text-primary, #fff)', fontWeight: '500' }}>{pick.marketProb}%</span></span>
+            <span style={{ color: '#4ade80', fontWeight: '500' }}>+{pick.edge}pp edge</span>
+          </div>
+          {pick.rationale && (
+            <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #aaa)', lineHeight: '1.5' }}>{pick.rationale}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MoneylinePicks() {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState('');
+
+  const load = async () => {
+    setLoading(true); setError('');
+    try {
+      const res  = await fetch('/api/moneyline?sport=nfl');
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || 'Failed to load moneyline picks');
+      setData(json);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  if (loading) return (
+    <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+      <div style={{ width: '32px', height: '32px', margin: '0 auto 12px', border: '2px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
+      <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>Checking FPI vs. the real moneyline for this week's games...</p>
+    </div>
+  );
+  if (error) return (
+    <div style={{ textAlign: 'center', padding: '32px 24px' }}>
+      <p style={{ color: '#f87171', fontSize: '13px', marginBottom: '12px' }}>{error}</p>
+      <button onClick={load} style={{ background: 'transparent', border: '1px solid #f87171', borderRadius: '10px', color: '#f87171', padding: '6px 16px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
+    </div>
+  );
+  if (!data) return null;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+        <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>
+          {data.picks.length} pick{data.picks.length !== 1 ? 's' : ''} · {data.games_checked} games checked
+        </span>
+        <button onClick={load} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <Icon.Refresh /> Refresh
+        </button>
+      </div>
+
+      {data.picks.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+          <div style={{ width: '48px', height: '48px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}><Icon.Target /></div>
+          <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>No value this week</h3>
+          <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.6' }}>Checked {data.games_checked} games — none where ESPN's FPI diverges meaningfully from the real moneyline. That's expected most weeks; markets are usually efficient.</p>
+        </div>
+      ) : (
+        data.picks.map((pick, i) => <MoneylineCard key={pick.gameId} pick={pick} index={i} />)
+      )}
+    </div>
+  );
+}
+
 // ── Performance Stats ─────────────────────────────────────────────────────────
 function PerformanceStats() {
   const [stats, setStats]     = useState(null);
@@ -493,7 +586,7 @@ function PerformanceStats() {
   const load = async (d) => {
     setLoading(true); setError('');
     try {
-      const res  = await fetch(`/api/halftime/stats?days=${d}`);
+      const res  = await fetch(`/api/halftime/picks?days=${d}`);
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load stats');
       setStats(data);
@@ -710,7 +803,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
 
   const savePicks = async (analysisData) => {
     try {
-      const res = await fetch('/api/halftime/save-picks', {
+      const res = await fetch('/api/halftime/picks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -948,7 +1041,7 @@ function ParlayBuilder({ legs, onRemove, pickIdMap }) {
   return;
 }
 
-      await fetch('/api/halftime/save-picks', {
+      await fetch('/api/halftime/picks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'mark_twitter', pickIds }),
@@ -1143,10 +1236,11 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
   const removeLeg = (key) => setSelectedLegs(prev => prev.filter(l => l.key !== key));
 
   const TABS = [
-    { id: 'daily',       label: 'Daily',    icon: <Icon.Zap /> },
-    { id: 'pregame',     label: 'Pre-Game', icon: <Icon.Clock /> },
-    { id: 'halftime',    label: 'Live',     icon: <Icon.Activity /> },
-    { id: 'performance', label: 'Stats',    icon: <Icon.BarChart /> },
+    { id: 'daily',       label: 'Daily',     icon: <Icon.Zap /> },
+    { id: 'pregame',     label: 'Pre-Game',  icon: <Icon.Clock /> },
+    { id: 'halftime',    label: 'Live',      icon: <Icon.Activity /> },
+    { id: 'moneyline',   label: 'Moneyline', icon: <Icon.Target /> },
+    { id: 'performance', label: 'Stats',     icon: <Icon.BarChart /> },
   ];
 
   return (
@@ -1160,17 +1254,18 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
               <span style={{ fontSize: '12px', color: '#a78bfa', fontWeight: '500' }}>PaiGrade</span>
             </div>
             <h2 style={{ margin: '0 0 4px', fontSize: '22px', fontWeight: '500', color: 'var(--text-primary, #fff)' }}>
-              {mode === 'daily' ? 'Daily Card' : mode === 'pregame' ? 'Pre-Game Picks' : mode === 'halftime' ? 'Live Picks' : 'Performance'}
+              {mode === 'daily' ? 'Daily Card' : mode === 'pregame' ? 'Pre-Game Picks' : mode === 'halftime' ? 'Live Picks' : mode === 'moneyline' ? 'Moneyline' : 'Performance'}
             </h2>
             <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.5' }}>
               {mode === 'daily' ? "Top picks across today's full slate — NBA + MLB + NHL + NFL"
                 : mode === 'pregame' ? 'Pre-game prop picks from historical projections'
                 : mode === 'halftime' ? 'In-game prop picks built from live box scores + recent form'
+                : mode === 'moneyline' ? 'Game-winner picks — ESPN’s FPI vs. the real moneyline'
                 : 'Pick accuracy and projection tracking over time'}
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginTop: '2px' }}>
-            {lastScanned && mode !== 'daily' && mode !== 'performance' && (
+            {lastScanned && mode !== 'daily' && mode !== 'performance' && mode !== 'moneyline' && (
               <button onClick={scan} disabled={scanState === 'scanning'} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '10px', color: 'var(--text-secondary, #888)', padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '500' }}>
                 <Icon.Refresh /> Refresh
               </button>
@@ -1189,7 +1284,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
         </div>
 
         {/* Tab tiles */}
-        <div style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+        <div style={{ marginTop: '16px', display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
           {TABS.map(t => (
             <button key={t.id} onClick={() => switchMode(t.id)} style={{ background: mode === t.id ? '#7c3aed' : 'var(--bg-secondary, #1a1a2e)', border: `1px solid ${mode === t.id ? '#7c3aed' : 'var(--border-color, #2a2a3e)'}`, borderRadius: '12px', padding: '10px 6px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'all 0.15s', color: mode === t.id ? '#fff' : '#888' }}>
               {t.icon}
@@ -1198,7 +1293,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
           ))}
         </div>
 
-        {lastScanned && mode !== 'daily' && mode !== 'performance' && (
+        {lastScanned && mode !== 'daily' && mode !== 'performance' && mode !== 'moneyline' && (
           <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-tertiary, #555)' }}>
             Last scanned {lastScanned.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </div>
@@ -1222,7 +1317,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
         )}
 
         {/* Leg count slider */}
-        {mode !== 'daily' && mode !== 'performance' && (
+        {mode !== 'daily' && mode !== 'performance' && mode !== 'moneyline' && (
           <div style={{ marginTop: '14px', padding: '10px 14px', background: 'var(--bg-secondary, #111)', border: '1px solid var(--border-color, #222)', borderRadius: '12px' }}>
             <style>{`
               .leg-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; outline: none; cursor: pointer; background: linear-gradient(to right, #7c3aed ${(legCount - 2) / 3 * 100}%, var(--border-color, #333) ${(legCount - 2) / 3 * 100}%); }              .leg-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #7c3aed; border: 2px solid #fff; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
@@ -1241,7 +1336,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       </div>
 
       {/* Idle */}
-      {mode !== 'performance' && mode !== 'daily' && scanState === 'idle' && (
+      {mode !== 'performance' && mode !== 'daily' && mode !== 'moneyline' && scanState === 'idle' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ width: '64px', height: '64px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}>
             {pregameSport === 'mlb' ? <Icon.BaseballLg /> : pregameSport === 'nhl' ? <Icon.Hockey /> : pregameSport === 'nfl' ? <Icon.Football /> : <Icon.Basketball />}
@@ -1262,7 +1357,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       )}
 
       {/* Scanning */}
-      {mode !== 'performance' && mode !== 'daily' && scanState === 'scanning' && (
+      {mode !== 'performance' && mode !== 'daily' && mode !== 'moneyline' && scanState === 'scanning' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ width: '40px', height: '40px', margin: '0 auto 16px', border: '3px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
           <p style={{ color: 'var(--text-secondary, #888)', fontSize: '14px', margin: 0 }}>
@@ -1272,7 +1367,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       )}
 
       {/* Error */}
-      {mode !== 'performance' && mode !== 'daily' && scanState === 'error' && (
+      {mode !== 'performance' && mode !== 'daily' && mode !== 'moneyline' && scanState === 'error' && (
         <div style={{ textAlign: 'center', padding: '32px 24px' }}>
           <p style={{ color: '#f87171', marginBottom: '12px', fontSize: '14px' }}>{errorMsg}</p>
           <button onClick={scan} style={{ padding: '10px 24px', borderRadius: '10px', background: 'transparent', border: '1px solid #f87171', color: '#f87171', cursor: 'pointer', fontWeight: '500' }}>Try Again</button>
@@ -1280,7 +1375,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       )}
 
       {/* Empty */}
-      {mode !== 'performance' && mode !== 'daily' && scanState === 'empty' && (
+      {mode !== 'performance' && mode !== 'daily' && mode !== 'moneyline' && scanState === 'empty' && (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>No games right now</h3>
           <p style={{ margin: '0 0 20px', color: 'var(--text-secondary, #888)', fontSize: '14px' }}>
@@ -1298,6 +1393,8 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
 
       {mode === 'performance' && <PerformanceStats />}
 
+      {mode === 'moneyline' && <MoneylinePicks />}
+
       {mode === 'daily' && (
         <DailyCard
           legCount={legCount}
@@ -1308,7 +1405,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
         />
       )}
 
-      {mode !== 'performance' && mode !== 'daily' && scanState === 'done' && games.length > 0 && (
+      {mode !== 'performance' && mode !== 'daily' && mode !== 'moneyline' && scanState === 'done' && games.length > 0 && (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>
             <div style={{ width: '8px', height: '8px', background: '#4ade80', borderRadius: '50%' }}/>
