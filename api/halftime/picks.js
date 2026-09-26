@@ -169,25 +169,6 @@ async function handleSave(req, res) {
 // ─── GET: stats ─────────────────────────────────────────────────────────────
 
 async function handleStats(req, res) {
-  // TEMP DEBUG — sample raw pending picks to diagnose why grading is stuck.
-  // Remove once the stuck-backlog investigation is done.
-  if (req.query.debug === 'true') {
-    try {
-      const snap = await db.collection('halftime_picks').where('status', '==', 'pending').limit(15).get();
-      const sample = snap.docs.map(d => {
-        const p = d.data();
-        return {
-          id: d.id, player: p.player, stat: p.stat, sport: p.sport, league: p.league,
-          gameId: p.gameId, gameDate: p.gameDate, direction: p.direction,
-          created_at: p.created_at?.toDate?.() ?? p.created_at ?? null,
-        };
-      });
-      return res.status(200).json({ success: true, sample_count: sample.length, sample });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
   const days = parseInt(req.query.days || '30');
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
