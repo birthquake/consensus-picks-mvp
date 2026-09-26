@@ -511,7 +511,11 @@ export default async function handler(req, res) {
     console.log(`[moneyline] ${cfg.label}: checking ${games.length} games`);
 
     const results = await mapWithConcurrency(games, 15, e => buildGamePick(e, cfg).catch(() => null));
-    const picks = results.filter(Boolean).sort((a, b) => b.edge - a.edge);
+    // Rating no longer scales monotonically with edge (see computeRating's
+    // sweet-spot reshape), so sorting by raw edge alone would put outlier,
+    // lower-confidence picks ahead of higher-rated ones — sort by rating
+    // first, edge as the tiebreaker within the same rating.
+    const picks = results.filter(Boolean).sort((a, b) => b.rating - a.rating || b.edge - a.edge);
 
     console.log(`[moneyline] ${cfg.label}: ${picks.length}/${games.length} games cleared the ${MIN_EDGE_PP}pp edge threshold`);
 
