@@ -72,15 +72,6 @@ const SPORT_CONFIG = {
   ncaaf: { key: 'ncaaf', sport: 'football',   league: 'college-football', label: 'NCAAF', cadence: 'ncaaf' },
 };
 
-// ESPN's internal conference "group" IDs — confirmed live against
-// sports.core.api.espn.com's groups endpoint (not guessed). Used both to
-// scope the scoreboard fetch to a single conference and to validate the
-// `?conference=` query param.
-const NCAAF_CONFERENCES = {
-  ACC: 1, BIG12: 4, BIG10: 5, SEC: 8, PAC12: 9,
-  CUSA: 12, MAC: 15, MWC: 17, INDEPENDENTS: 18, SUNBELT: 37, AAC: 151,
-};
-
 // Runs async work over a list with bounded concurrency — needed for NCAAF,
 // where a single Saturday can have 60+ games and firing them all at once
 // via Promise.all risks overwhelming the function/ESPN. Other sports' slates
@@ -353,43 +344,161 @@ Return ONLY a JSON array of rationale strings, in the same order, no markdown:
 
 // ─── NCAAF conference tagging ─────────────────────────────────────────────────
 
-// Attaches each pick's (and its opponent's) conference so the frontend can
-// filter Top 25 / conference client-side against one already-loaded result
-// set instead of re-scanning the whole slate per pill click. Neither the
-// scoreboard nor summary team objects carry conference inline, but a team's
-// own profile endpoint does (team.groups.id) — reliably, unlike inferring it
-// from which conference's `groups=` scoreboard filter happens to return a
-// given team (that also returns any team's cross-conference opponents).
-// Only looks up teams that actually appear in the picks being returned
-// (typically ~25 picks × 2 teams), not all ~130 teams playing that week.
-async function attachNcaafConferences(picks) {
-  if (picks.length === 0) return picks;
+// Static team ID -> conference map, built once from ESPN's authoritative
+// conference-teams rosters (sports.core.api.espn.com groups/{id}/teams) rather
+// than looked up live per request. A live per-pick lookup (one fetch per team
+// appearing in the returned picks, ~25-50 teams) was adding 10+ seconds to
+// every scan on top of the already-slow 65-game NCAAF pass — measured live at
+// 14-19s total, uncomfortably close to Vercel's 60s ceiling. Conference
+// membership doesn't change mid-season, so there's nothing live to check;
+// this eliminates that cost entirely. Regenerate before a future season if
+// conferences realign (rare mid-season).
+const NCAAF_TEAM_CONFERENCE = {
+  2: "SEC",
+  5: "AAC",
+  6: "SUNBELT",
+  8: "SEC",
+  9: "BIG12",
+  12: "BIG12",
+  16: "MAC",
+  21: "PAC12",
+  23: "MWC",
+  24: "ACC",
+  25: "ACC",
+  26: "BIG10",
+  30: "BIG10",
+  36: "PAC12",
+  38: "BIG12",
+  41: "INDEPENDENTS",
+  48: "CUSA",
+  52: "ACC",
+  55: "CUSA",
+  57: "SEC",
+  58: "AAC",
+  59: "ACC",
+  61: "SEC",
+  62: "MWC",
+  66: "BIG12",
+  68: "PAC12",
+  77: "BIG10",
+  84: "BIG10",
+  87: "INDEPENDENTS",
+  96: "SEC",
+  97: "ACC",
+  98: "CUSA",
+  99: "SEC",
+  103: "ACC",
+  113: "MAC",
+  120: "BIG10",
+  127: "BIG10",
+  130: "BIG10",
+  135: "BIG10",
+  142: "SEC",
+  145: "SEC",
+  150: "ACC",
+  151: "AAC",
+  152: "ACC",
+  153: "ACC",
+  154: "ACC",
+  158: "BIG10",
+  164: "BIG10",
+  166: "CUSA",
+  167: "MWC",
+  183: "ACC",
+  189: "MAC",
+  193: "MAC",
+  194: "BIG10",
+  195: "MAC",
+  197: "BIG12",
+  201: "SEC",
+  202: "AAC",
+  204: "PAC12",
+  213: "BIG10",
+  218: "AAC",
+  221: "ACC",
+  228: "ACC",
+  235: "AAC",
+  238: "SEC",
+  239: "BIG12",
+  242: "AAC",
+  245: "SEC",
+  248: "BIG12",
+  249: "AAC",
+  251: "SEC",
+  252: "BIG12",
+  254: "BIG12",
+  256: "SUNBELT",
+  258: "ACC",
+  259: "ACC",
+  264: "BIG10",
+  265: "PAC12",
+  275: "BIG10",
+  276: "SUNBELT",
+  277: "BIG12",
+  278: "PAC12",
+  290: "SUNBELT",
+  295: "SUNBELT",
+  309: "SUNBELT",
+  324: "SUNBELT",
+  326: "PAC12",
+  328: "PAC12",
+  333: "SEC",
+  338: "CUSA",
+  344: "SEC",
+  349: "AAC",
+  356: "BIG10",
+  2005: "MWC",
+  2006: "MAC",
+  2026: "SUNBELT",
+  2032: "SUNBELT",
+  2050: "MAC",
+  2084: "MAC",
+  2116: "BIG12",
+  2117: "MAC",
+  2132: "BIG12",
+  2199: "MAC",
+  2226: "AAC",
+  2229: "CUSA",
+  2247: "SUNBELT",
+  2294: "BIG10",
+  2305: "BIG12",
+  2306: "BIG12",
+  2309: "MAC",
+  2335: "CUSA",
+  2348: "SUNBELT",
+  2390: "ACC",
+  2393: "CUSA",
+  2426: "AAC",
+  2429: "AAC",
+  2433: "SUNBELT",
+  2439: "MWC",
+  2440: "MWC",
+  2449: "MWC",
+  2459: "MWC",
+  2483: "BIG10",
+  2509: "BIG10",
+  2534: "CUSA",
+  2567: "ACC",
+  2572: "SUNBELT",
+  2579: "SEC",
+  2623: "CUSA",
+  2628: "BIG12",
+  2633: "SEC",
+  2636: "AAC",
+  2638: "MWC",
+  2641: "BIG12",
+  2649: "MAC",
+  2653: "SUNBELT",
+  2655: "AAC",
+  2711: "MAC",
+  2751: "MWC",
+};
 
-  const ids = [...new Set(picks.flatMap(p => [p.teamId, p.opponentTeamId]).filter(Boolean))];
-  const groupIdToLabel = Object.fromEntries(
-    Object.entries(NCAAF_CONFERENCES).map(([label, gid]) => [String(gid), label])
-  );
-
-  const profiles = await mapWithConcurrency(ids, 15, async (id) => {
-    const data = await fetchWithTimeout(
-      `https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams/${id}`
-    );
-    // Some teams' immediate group is a sub-division (e.g. a Sun Belt East/West
-    // split) rather than the conference itself — its `parent.id` is the
-    // conference in that case, so check both.
-    const g = data?.team?.groups;
-    const label = [g?.id, g?.parent?.id]
-      .filter(Boolean)
-      .map(gid => groupIdToLabel[String(gid)])
-      .find(Boolean) ?? null;
-    return [id, label];
-  });
-  const idToConference = Object.fromEntries(profiles);
-
+function attachNcaafConferences(picks) {
   return picks.map(p => ({
     ...p,
-    conference: p.teamId ? idToConference[p.teamId] ?? null : null,
-    opponentConference: p.opponentTeamId ? idToConference[p.opponentTeamId] ?? null : null,
+    conference: p.teamId ? NCAAF_TEAM_CONFERENCE[p.teamId] ?? null : null,
+    opponentConference: p.opponentTeamId ? NCAAF_TEAM_CONFERENCE[p.opponentTeamId] ?? null : null,
   }));
 }
 
@@ -519,8 +628,8 @@ export default async function handler(req, res) {
 
     console.log(`[moneyline] ${cfg.label}: ${picks.length}/${games.length} games cleared the ${MIN_EDGE_PP}pp edge threshold`);
 
-    let picksWithRationale = await attachRationales(picks, cfg.label);
-    if (cfg.cadence === 'ncaaf') picksWithRationale = await attachNcaafConferences(picksWithRationale);
+    const tagged = cfg.cadence === 'ncaaf' ? attachNcaafConferences(picks) : picks;
+    const picksWithRationale = await attachRationales(tagged, cfg.label);
 
     await saveMoneylinePicks(picksWithRationale, sportKey);
 
