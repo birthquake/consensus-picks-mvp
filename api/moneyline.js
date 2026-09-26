@@ -129,9 +129,21 @@ function devig(homeImplied, awayImplied) {
   return { home: homeImplied / sum, away: awayImplied / sum };
 }
 
-function computeRating(edgePP, gamesPlayed, threshold) {
-  let score = edgePP >= 12 ? 5 : edgePP >= 9 ? 4 : 3; // MIN_EDGE_PP (6) is the floor for being included at all
+// Confidence peaks in a sweet spot rather than scaling indefinitely with edge
+// size. A very large FPI/market gap is more often a sign the model is missing
+// real-world context a live sportsbook already priced in (injury, unit
+// change, a letdown/lookahead spot) than genuine value the market
+// overlooked — so past a point, more edge means less trust, not more.
+const OUTLIER_EDGE_PP = 20;
+
+function computeRating(edgePP, gamesPlayed, threshold, moveAgainstPick) {
+  let score;
+  if (edgePP >= OUTLIER_EDGE_PP) score = 3;      // extreme outlier — real caution warranted
+  else if (edgePP >= 14)         score = 4;
+  else if (edgePP >= 9)          score = 5;      // sweet spot
+  else                           score = 3;      // MIN_EDGE_PP (6) floor
   if (gamesPlayed != null && threshold != null && gamesPlayed < threshold) score -= 1;
+  if (moveAgainstPick) score -= 1;
   return Math.max(1, Math.min(5, score));
 }
 
@@ -277,6 +289,13 @@ async function buildGamePick(event, cfg) {
   const pickRank = isRanked(pickTeam?.curatedRank?.current) ? pickTeam.curatedRank.current : null;
   const oppRank  = isRanked(oppTeam?.curatedRank?.current)  ? oppTeam.curatedRank.current  : null;
 
+  // Free line-movement signal already on the odds payload: has the picked
+  // team lost favorite status since the line opened? That means real market
+  // money has moved away from this side since open — working against the
+  // pick's thesis — independent of whatever edge FPI still shows now.
+  const pickTeamOdds = pickHome ? pickcenterEntry.homeTeamOdds : pickcenterEntry.awayTeamOdds;
+  const moveAgainstPick = pickTeamOdds?.favoriteAtOpen === true && pickTeamOdds?.favorite === false;
+
   return {
     gameId: event.id,
     sport: cfg.sport,
@@ -292,7 +311,9 @@ async function buildGamePick(event, cfg) {
     fpiProb: Math.round((pickHome ? fpiHome : fpiAway) * 10) / 10,
     marketProb: Math.round((pickHome ? marketHome : marketAway) * 1000) / 10,
     edge: Math.round(edgePP * 10) / 10,
-    rating: computeRating(edgePP, gamesPlayed, threshold),
+    rating: computeRating(edgePP, gamesPlayed, threshold, moveAgainstPick),
+    outlier: edgePP >= OUTLIER_EDGE_PP,
+    lineMovedAgainstPick: moveAgainstPick,
     gamesPlayed,
     rank: pickRank,
     opponentRank: oppRank,
@@ -306,10 +327,10 @@ async function buildGamePick(event, cfg) {
 async function attachRationales(picks, label) {
   if (picks.length === 0) return picks;
 
-  const prompt = `You are an expert sports bettor. For each ${label} moneyline pick below, the team, edge, and star rating are already finally determined — do not change them. Write a 1-2 sentence rationale for each pick, citing the specific numbers (ESPN's power-rating win probability vs. the market-implied probability from the actual moneyline).
+  const prompt = `You are an expert sports bettor. For each ${label} moneyline pick below, the team, edge, and star rating are already finally determined — do not change them. Write a 1-2 sentence rationale for each pick, citing the specific numbers (ESPN's power-rating win probability vs. the market-implied probability from the actual moneyline). When a pick is flagged as an outlier edge or as having the line move against it, note that as a real caveat rather than pure upside — a very large model/market gap is more often a sign the model is missing something than free value, and don't oversell confidence just because the star rating is high.
 
 PICKS:
-${picks.map((p, i) => `${i + 1}. ${p.team} (${p.isHome ? 'home' : 'away'}) ML ${p.moneyLine > 0 ? '+' : ''}${p.moneyLine} vs ${p.opponent} — FPI: ${p.fpiProb}% | Market (de-vigged): ${p.marketProb}% | Edge: +${p.edge}pp | Rating: ${p.rating}★`).join('\n')}
+${picks.map((p, i) => `${i + 1}. ${p.team} (${p.isHome ? 'home' : 'away'}) ML ${p.moneyLine > 0 ? '+' : ''}${p.moneyLine} vs ${p.opponent} — FPI: ${p.fpiProb}% | Market (de-vigged): ${p.marketProb}% | Edge: +${p.edge}pp | Rating: ${p.rating}★${p.outlier ? ' | ⚠️ OUTLIER: unusually large edge for this sport — treat with real caution despite the rating' : ''}${p.lineMovedAgainstPick ? ' | ⚠️ Line has moved away from this side since opening' : ''}`).join('\n')}
 
 Return ONLY a JSON array of rationale strings, in the same order, no markdown:
 ["rationale for pick 1", "rationale for pick 2", ...]`;
@@ -414,6 +435,8 @@ async function saveMoneylinePicks(picks, sportKey) {
         opponentRank: p.opponentRank ?? null,
         conference: p.conference ?? null,
         opponentConference: p.opponentConference ?? null,
+        outlier: p.outlier ?? false,
+        lineMovedAgainstPick: p.lineMovedAgainstPick ?? false,
         gameDate: p.gameDate,
         shortName: p.shortName,
         status: 'pending',

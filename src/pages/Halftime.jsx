@@ -512,6 +512,16 @@ function MoneylineCard({ pick, index }) {
             <span style={{ color: 'var(--text-secondary, #888)' }}>Market <span style={{ color: 'var(--text-primary, #fff)', fontWeight: '500' }}>{pick.marketProb}%</span></span>
             <span style={{ color: '#4ade80', fontWeight: '500' }}>+{pick.edge}pp edge</span>
           </div>
+          {(pick.outlier || pick.lineMovedAgainstPick) && (
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
+              {pick.outlier && (
+                <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(248,113,113,0.12)', color: '#f87171', borderRadius: '20px' }}>⚠ Outlier edge</span>
+              )}
+              {pick.lineMovedAgainstPick && (
+                <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(248,113,113,0.12)', color: '#f87171', borderRadius: '20px' }}>↘ Line moved away since open</span>
+              )}
+            </div>
+          )}
           {pick.rationale && (
             <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #aaa)', lineHeight: '1.5' }}>{pick.rationale}</p>
           )}
