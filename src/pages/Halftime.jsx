@@ -1,7 +1,7 @@
 // FILE LOCATION: src/pages/Halftime.jsx
 // Halftime Picks — live halftime game scanner + rated prop recommendations
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const Icon = {
@@ -555,8 +555,14 @@ function MoneylinePicks() {
   const [stats, setStats]     = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
+  const requestIdRef = useRef(0);
 
   const load = async (s, filter) => {
+    // Guard against out-of-order responses — NCAAF's larger picks list means
+    // its Claude rationale call can take longer than a quicker sport's, so a
+    // request fired before it (and superseded by a later tab switch) can
+    // still resolve after it and overwrite the picks the user is looking at.
+    const requestId = ++requestIdRef.current;
     setLoading(true); setError(''); setStats(null);
     try {
       let url = `/api/moneyline?sport=${s}`;
@@ -565,16 +571,21 @@ function MoneylinePicks() {
       }
       const res  = await fetch(url);
       const json = await res.json();
+      if (requestId !== requestIdRef.current) return; // superseded by a newer request
       if (!res.ok || !json.success) throw new Error(json.error || 'Failed to load moneyline picks');
       setData(json);
-    } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    } catch (err) {
+      if (requestId === requestIdRef.current) setError(err.message);
+    } finally {
+      if (requestId === requestIdRef.current) setLoading(false);
+    }
 
     // Stats badge — fetched separately so a stats failure never blocks picks.
     // Always reflects the whole sport's track record, not the active filter.
     try {
       const res  = await fetch(`/api/moneyline?sport=${s}&stats=true`);
       const json = await res.json();
+      if (requestId !== requestIdRef.current) return; // superseded by a newer request
       if (res.ok && json.success) setStats(json.summary);
     } catch { /* badge is best-effort */ }
   };
