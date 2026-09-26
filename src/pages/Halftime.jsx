@@ -549,7 +549,9 @@ const NCAAF_FILTERS = [
 ];
 
 function MoneylinePicks() {
-  const [sport, setSport]           = useState('nfl');
+  // No default sport — a scan (ESPN fetches + a paid Claude rationale call)
+  // only fires once the user actually picks one, not just from opening the tab.
+  const [sport, setSport]           = useState(null);
   const [ncaafFilter, setNcaafFilter] = useState('all');
   const [data, setData]       = useState(null);
   const [stats, setStats]     = useState(null);
@@ -589,9 +591,9 @@ function MoneylinePicks() {
     } catch { /* badge is best-effort */ }
   };
 
-  useEffect(() => { load(sport); }, [sport]);
+  useEffect(() => { if (sport) load(sport); }, [sport]);
 
-  const sportLabel = MONEYLINE_SPORTS.find(s => s.id === sport)?.label ?? sport.toUpperCase();
+  const sportLabel = MONEYLINE_SPORTS.find(s => s.id === sport)?.label ?? (sport ? sport.toUpperCase() : '');
 
   const visiblePicks = !data?.picks ? [] : sport !== 'ncaaf' || ncaafFilter === 'all'
     ? data.picks
@@ -661,6 +663,15 @@ function MoneylinePicks() {
       <div style={{ textAlign: 'center', padding: '32px 24px' }}>
         <p style={{ color: '#f87171', fontSize: '13px', marginBottom: '12px' }}>{error}</p>
         <button onClick={() => load(sport)} style={{ background: 'transparent', border: '1px solid #f87171', borderRadius: '10px', color: '#f87171', padding: '6px 16px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
+      </div>
+    </div>
+  );
+  if (!sport) return (
+    <div>
+      {sportSelector}
+      <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+        <div style={{ width: '48px', height: '48px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}><Icon.Target /></div>
+        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Pick a sport above to scan for moneyline value.</p>
       </div>
     </div>
   );
