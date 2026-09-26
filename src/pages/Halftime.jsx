@@ -663,6 +663,9 @@ function MoneylinePicks() {
       <div style={{ textAlign: 'center', padding: '48px 24px' }}>
         <div style={{ width: '32px', height: '32px', margin: '0 auto 12px', border: '2px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
         <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>Checking FPI vs. the real moneyline for this week's {sportLabel} games...</p>
+        {sport === 'ncaaf' && (
+          <p style={{ color: 'var(--text-secondary, #666)', fontSize: '12px', margin: '6px 0 0' }}>NCAAF scans ~65 games at once — this can take up to 20 seconds.</p>
+        )}
       </div>
     </div>
   );
