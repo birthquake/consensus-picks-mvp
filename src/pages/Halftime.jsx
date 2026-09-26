@@ -499,12 +499,13 @@ function MoneylineCard({ pick, index }) {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+            {pick.rank && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 6px', background: 'rgba(251,191,36,0.15)', color: '#fbbf24', borderRadius: '6px' }}>#{pick.rank}</span>}
             <span style={{ fontWeight: '500', fontSize: '15px', color: 'var(--text-primary, #fff)' }}>{pick.team}</span>
             <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', borderRadius: '20px' }}>{pick.isHome ? 'HOME' : 'AWAY'}</span>
             <span style={{ fontSize: '13px', color: '#60a5fa', fontWeight: '500' }}>ML {mlDisplay}</span>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', marginBottom: '8px' }}>
-            vs {pick.opponent} · {pick.shortName}
+            vs {pick.opponentRank ? `#${pick.opponentRank} ` : ''}{pick.opponent} · {pick.shortName}
           </div>
           <div style={{ display: 'flex', gap: '14px', marginBottom: '8px', fontSize: '12px' }}>
             <span style={{ color: 'var(--text-secondary, #888)' }}>FPI <span style={{ color: 'var(--text-primary, #fff)', fontWeight: '500' }}>{pick.fpiProb}%</span></span>
@@ -521,30 +522,56 @@ function MoneylineCard({ pick, index }) {
 }
 
 const MONEYLINE_SPORTS = [
-  { id: 'nfl', label: 'NFL', icon: <Icon.Football />,   available: true },
-  { id: 'nba', label: 'NBA', icon: <Icon.Basketball />, available: true },
-  { id: 'mlb', label: 'MLB', icon: <Icon.Baseball />,   available: true },
-  { id: 'nhl', label: 'NHL', icon: <Icon.Hockey />,     available: true },
+  { id: 'nfl',   label: 'NFL',   icon: <Icon.Football />,   available: true },
+  { id: 'nba',   label: 'NBA',   icon: <Icon.Basketball />, available: true },
+  { id: 'mlb',   label: 'MLB',   icon: <Icon.Baseball />,   available: true },
+  { id: 'nhl',   label: 'NHL',   icon: <Icon.Hockey />,     available: true },
+  { id: 'ncaaf', label: 'NCAAF', icon: <Icon.Football />,   available: true },
+];
+
+// IDs match api/moneyline.js's NCAAF_CONFERENCES keys exactly (case-insensitive
+// on the backend) — 'all' and 'top25' are handled specially on the frontend
+// rather than sent as a `conference=` value.
+const NCAAF_FILTERS = [
+  { id: 'all',          label: 'All Games' },
+  { id: 'top25',        label: 'Top 25' },
+  { id: 'SEC',          label: 'SEC' },
+  { id: 'BIG10',        label: 'Big Ten' },
+  { id: 'ACC',          label: 'ACC' },
+  { id: 'BIG12',        label: 'Big 12' },
+  { id: 'AAC',          label: 'American' },
+  { id: 'MWC',          label: 'Mountain West' },
+  { id: 'SUNBELT',      label: 'Sun Belt' },
+  { id: 'MAC',          label: 'MAC' },
+  { id: 'CUSA',         label: 'C-USA' },
+  { id: 'PAC12',        label: 'Pac-12' },
+  { id: 'INDEPENDENTS', label: 'Independents' },
 ];
 
 function MoneylinePicks() {
-  const [sport, setSport]     = useState('nfl');
+  const [sport, setSport]           = useState('nfl');
+  const [ncaafFilter, setNcaafFilter] = useState('all');
   const [data, setData]       = useState(null);
   const [stats, setStats]     = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
 
-  const load = async (s) => {
+  const load = async (s, filter) => {
     setLoading(true); setError(''); setStats(null);
     try {
-      const res  = await fetch(`/api/moneyline?sport=${s}`);
+      let url = `/api/moneyline?sport=${s}`;
+      if (s === 'ncaaf' && filter && filter !== 'all') {
+        url += filter === 'top25' ? '&top25=true' : `&conference=${filter}`;
+      }
+      const res  = await fetch(url);
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Failed to load moneyline picks');
       setData(json);
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
 
-    // Stats badge — fetched separately so a stats failure never blocks picks
+    // Stats badge — fetched separately so a stats failure never blocks picks.
+    // Always reflects the whole sport's track record, not the active filter.
     try {
       const res  = await fetch(`/api/moneyline?sport=${s}&stats=true`);
       const json = await res.json();
@@ -552,12 +579,12 @@ function MoneylinePicks() {
     } catch { /* badge is best-effort */ }
   };
 
-  useEffect(() => { load(sport); }, [sport]);
+  useEffect(() => { load(sport, ncaafFilter); }, [sport, ncaafFilter]);
 
   const sportLabel = MONEYLINE_SPORTS.find(s => s.id === sport)?.label ?? sport.toUpperCase();
 
   const sportSelector = (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px', marginBottom: sport === 'ncaaf' ? '10px' : '16px' }}>
       {MONEYLINE_SPORTS.map(s => (
         <button
           key={s.id}
@@ -581,9 +608,30 @@ function MoneylinePicks() {
     </div>
   );
 
+  const ncaafFilterBar = sport === 'ncaaf' && (
+    <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', overflowX: 'auto', paddingBottom: '4px' }}>
+      {NCAAF_FILTERS.map(f => (
+        <button
+          key={f.id}
+          onClick={() => setNcaafFilter(f.id)}
+          style={{
+            padding: '6px 12px', borderRadius: '20px', whiteSpace: 'nowrap', flexShrink: 0,
+            border: `1px solid ${ncaafFilter === f.id ? '#7c3aed' : 'var(--border-color, #222)'}`,
+            background: ncaafFilter === f.id ? 'rgba(124,58,237,0.15)' : 'var(--bg-secondary, #111)',
+            color: ncaafFilter === f.id ? '#a78bfa' : 'var(--text-secondary, #888)',
+            cursor: 'pointer', fontSize: '12px', fontWeight: '500', transition: 'all 0.15s',
+          }}
+        >
+          {f.label}
+        </button>
+      ))}
+    </div>
+  );
+
   if (loading) return (
     <div>
       {sportSelector}
+      {ncaafFilterBar}
       <div style={{ textAlign: 'center', padding: '48px 24px' }}>
         <div style={{ width: '32px', height: '32px', margin: '0 auto 12px', border: '2px solid var(--border-color, #222)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/>
         <p style={{ color: 'var(--text-secondary, #888)', fontSize: '13px', margin: 0 }}>Checking FPI vs. the real moneyline for this week's {sportLabel} games...</p>
@@ -593,17 +641,19 @@ function MoneylinePicks() {
   if (error) return (
     <div>
       {sportSelector}
+      {ncaafFilterBar}
       <div style={{ textAlign: 'center', padding: '32px 24px' }}>
         <p style={{ color: '#f87171', fontSize: '13px', marginBottom: '12px' }}>{error}</p>
-        <button onClick={() => load(sport)} style={{ background: 'transparent', border: '1px solid #f87171', borderRadius: '10px', color: '#f87171', padding: '6px 16px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
+        <button onClick={() => load(sport, ncaafFilter)} style={{ background: 'transparent', border: '1px solid #f87171', borderRadius: '10px', color: '#f87171', padding: '6px 16px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
       </div>
     </div>
   );
-  if (!data) return sportSelector;
+  if (!data) return <div>{sportSelector}{ncaafFilterBar}</div>;
 
   return (
     <div>
       {sportSelector}
+      {ncaafFilterBar}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', gap: '8px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>
           {data.picks.length} pick{data.picks.length !== 1 ? 's' : ''} · {data.games_checked} games checked
@@ -614,7 +664,7 @@ function MoneylinePicks() {
               {stats.hits}-{stats.misses}{stats.hit_rate != null ? ` · ${stats.hit_rate}%` : ''}
             </span>
           )}
-          <button onClick={() => load(sport)} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button onClick={() => load(sport, ncaafFilter)} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
             <Icon.Refresh /> Refresh
           </button>
         </div>

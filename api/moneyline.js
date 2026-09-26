@@ -62,14 +62,41 @@ const MIN_EDGE_PP = 6; // minimum edge (percentage points) to surface a pick at 
 
 // Games played before a power rating has enough current-season data to
 // trust — roughly the first ~10-15% of each sport's season length.
-const THIN_DATA_THRESHOLD = { nfl: 3, nba: 8, mlb: 15, nhl: 8 };
+const THIN_DATA_THRESHOLD = { nfl: 3, nba: 8, mlb: 15, nhl: 8, ncaaf: 3 };
 
 const SPORT_CONFIG = {
-  nfl: { key: 'nfl', sport: 'football',   league: 'nfl', label: 'NFL', cadence: 'weekly' },
-  nba: { key: 'nba', sport: 'basketball', league: 'nba', label: 'NBA', cadence: 'daily' },
-  mlb: { key: 'mlb', sport: 'baseball',   league: 'mlb', label: 'MLB', cadence: 'daily' },
-  nhl: { key: 'nhl', sport: 'hockey',     league: 'nhl', label: 'NHL', cadence: 'daily' },
+  nfl:   { key: 'nfl',   sport: 'football',   league: 'nfl',              label: 'NFL',   cadence: 'weekly' },
+  nba:   { key: 'nba',   sport: 'basketball', league: 'nba',              label: 'NBA',   cadence: 'daily' },
+  mlb:   { key: 'mlb',   sport: 'baseball',   league: 'mlb',              label: 'MLB',   cadence: 'daily' },
+  nhl:   { key: 'nhl',   sport: 'hockey',     league: 'nhl',              label: 'NHL',   cadence: 'daily' },
+  ncaaf: { key: 'ncaaf', sport: 'football',   league: 'college-football', label: 'NCAAF', cadence: 'ncaaf' },
 };
+
+// ESPN's internal conference "group" IDs — confirmed live against
+// sports.core.api.espn.com's groups endpoint (not guessed). Used both to
+// scope the scoreboard fetch to a single conference and to validate the
+// `?conference=` query param.
+const NCAAF_CONFERENCES = {
+  ACC: 1, BIG12: 4, BIG10: 5, SEC: 8, PAC12: 9,
+  CUSA: 12, MAC: 15, MWC: 17, INDEPENDENTS: 18, SUNBELT: 37, AAC: 151,
+};
+
+// Runs async work over a list with bounded concurrency — needed for NCAAF,
+// where a single Saturday can have 60+ games and firing them all at once
+// via Promise.all risks overwhelming the function/ESPN. Other sports' slates
+// are small enough that this is effectively unbounded for them.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 async function fetchWithTimeout(url, ms = 6000) {
   const ctrl = new AbortController();
@@ -163,7 +190,50 @@ async function getDaysGames(cfg) {
   return preToday.length > 0 ? preToday : preTomorrow;
 }
 
-async function getGamesToCheck(cfg) {
+// NCAAF: games run Thursday–Monday with the bulk on Saturday, and the
+// dateless scoreboard endpoint (unlike NFL's) only returns a narrow window
+// around "today" rather than the whole slate — so explicitly walk the next
+// few days and merge, optionally scoped to one conference via ESPN's own
+// `groups` filter (confirmed server-side, so this doesn't need a local
+// team→conference mapping).
+async function getNcaafGames(conferenceGroupId) {
+  const nowET = new Date(Date.now() - 4 * 60 * 60 * 1000);
+  const fmt = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const dateStrs = Array.from({ length: 4 }, (_, i) => fmt(new Date(nowET.getTime() + i * 86400000)));
+
+  const groupParam = conferenceGroupId ? `&groups=${conferenceGroupId}` : '';
+  const results = await Promise.all(
+    dateStrs.map(d => fetchWithTimeout(
+      `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates=${d}${groupParam}&limit=200`
+    ))
+  );
+
+  const seen = new Set();
+  const events = [];
+  for (const data of results) {
+    for (const e of data?.events ?? []) {
+      if (seen.has(e.id)) continue;
+      if (e.competitions?.[0]?.status?.type?.state !== 'pre') continue;
+      seen.add(e.id);
+      events.push(e);
+    }
+  }
+  return events;
+}
+
+function isRanked(rank) {
+  return typeof rank === 'number' && rank >= 1 && rank <= 25;
+}
+
+async function getGamesToCheck(cfg, options = {}) {
+  if (cfg.cadence === 'ncaaf') {
+    const events = await getNcaafGames(options.conferenceGroupId);
+    if (!options.top25) return events;
+    return events.filter(e => {
+      const competitors = e.competitions?.[0]?.competitors ?? [];
+      return competitors.some(c => isRanked(c.curatedRank?.current));
+    });
+  }
   return cfg.cadence === 'weekly' ? getWeeksGames(cfg) : getDaysGames(cfg);
 }
 
@@ -210,6 +280,11 @@ async function buildGamePick(event, cfg) {
   );
   const threshold = THIN_DATA_THRESHOLD[cfg.key];
 
+  // AP Top 25 rank, when present — comes free on the scoreboard competitor
+  // (curatedRank.current), no extra fetch. 99 is ESPN's "unranked" sentinel.
+  const pickRank = isRanked(pickTeam?.curatedRank?.current) ? pickTeam.curatedRank.current : null;
+  const oppRank  = isRanked(oppTeam?.curatedRank?.current)  ? oppTeam.curatedRank.current  : null;
+
   return {
     gameId: event.id,
     sport: cfg.sport,
@@ -225,6 +300,8 @@ async function buildGamePick(event, cfg) {
     edge: Math.round(edgePP * 10) / 10,
     rating: computeRating(edgePP, gamesPlayed, threshold),
     gamesPlayed,
+    rank: pickRank,
+    opponentRank: oppRank,
     gameDate: comp?.date,
     shortName: event.shortName,
   };
@@ -297,6 +374,8 @@ async function saveMoneylinePicks(picks, sportKey) {
         rating: p.rating,
         rationale: p.rationale ?? null,
         gamesPlayed: p.gamesPlayed,
+        rank: p.rank ?? null,
+        opponentRank: p.opponentRank ?? null,
         gameDate: p.gameDate,
         shortName: p.shortName,
         status: 'pending',
@@ -366,11 +445,23 @@ export default async function handler(req, res) {
     }
   }
 
+  const options = {};
+  if (cfg.cadence === 'ncaaf') {
+    const confParam = (req.query.conference || '').toUpperCase();
+    if (confParam) {
+      if (!NCAAF_CONFERENCES[confParam]) {
+        return res.status(400).json({ error: `Unknown conference: ${req.query.conference}` });
+      }
+      options.conferenceGroupId = NCAAF_CONFERENCES[confParam];
+    }
+    options.top25 = req.query.top25 === 'true';
+  }
+
   try {
-    const games = await getGamesToCheck(cfg);
+    const games = await getGamesToCheck(cfg, options);
     console.log(`[moneyline] ${cfg.label}: checking ${games.length} games`);
 
-    const results = await Promise.all(games.map(e => buildGamePick(e, cfg).catch(() => null)));
+    const results = await mapWithConcurrency(games, 15, e => buildGamePick(e, cfg).catch(() => null));
     const picks = results.filter(Boolean).sort((a, b) => b.edge - a.edge);
 
     console.log(`[moneyline] ${cfg.label}: ${picks.length}/${games.length} games cleared the ${MIN_EDGE_PP}pp edge threshold`);

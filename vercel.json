@@ -8,7 +8,8 @@
     "api/halftime/analyze-nfl.js": { "maxDuration": 60 },
     "api/halftime/analyze-mlb.js": { "maxDuration": 60 },
     "api/halftime/analyze-nhl.js": { "maxDuration": 60 },
-    "api/cron/fetch-game-results.js": { "maxDuration": 60 }
+    "api/cron/fetch-game-results.js": { "maxDuration": 60 },
+    "api/moneyline.js": { "maxDuration": 60 }
   },
   "crons": [
     {
