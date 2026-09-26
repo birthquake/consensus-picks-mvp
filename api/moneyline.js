@@ -270,7 +270,7 @@ async function saveMoneylinePicks(picks, sportKey) {
   try {
     const existingSnap = await db
       .collection('moneyline_picks')
-      .where('sport', '==', sportKey)
+      .where('sportKey', '==', sportKey)
       .where('status', '==', 'pending')
       .get();
     const existingGameIds = new Set(existingSnap.docs.map(d => d.data().gameId));
@@ -316,7 +316,7 @@ async function saveMoneylinePicks(picks, sportKey) {
 }
 
 async function getMoneylineStats(sportKey) {
-  const snap = await db.collection('moneyline_picks').where('sport', '==', sportKey).get();
+  const snap = await db.collection('moneyline_picks').where('sportKey', '==', sportKey).get();
   const all = snap.docs.map(d => d.data());
   const graded = all.filter(p => p.status === 'hit' || p.status === 'miss');
   const hits = graded.filter(p => p.hit === true);
