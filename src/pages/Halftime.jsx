@@ -557,7 +557,12 @@ function MoneylinePicks() {
   const [error, setError]     = useState('');
   const requestIdRef = useRef(0);
 
-  const load = async (s, filter) => {
+  // Fetches the whole slate once per sport — NCAAF's Top 25 / conference
+  // filters are applied client-side below against this same result (see
+  // visiblePicks) rather than re-scanning per pill click, since a full NCAAF
+  // scan already computes every pick that clears the edge threshold and now
+  // tags each one with its conference and rank.
+  const load = async (s) => {
     // Guard against out-of-order responses — NCAAF's larger picks list means
     // its Claude rationale call can take longer than a quicker sport's, so a
     // request fired before it (and superseded by a later tab switch) can
@@ -565,11 +570,7 @@ function MoneylinePicks() {
     const requestId = ++requestIdRef.current;
     setLoading(true); setError(''); setStats(null);
     try {
-      let url = `/api/moneyline?sport=${s}`;
-      if (s === 'ncaaf' && filter && filter !== 'all') {
-        url += filter === 'top25' ? '&top25=true' : `&conference=${filter}`;
-      }
-      const res  = await fetch(url);
+      const res  = await fetch(`/api/moneyline?sport=${s}`);
       const json = await res.json();
       if (requestId !== requestIdRef.current) return; // superseded by a newer request
       if (!res.ok || !json.success) throw new Error(json.error || 'Failed to load moneyline picks');
@@ -580,8 +581,6 @@ function MoneylinePicks() {
       if (requestId === requestIdRef.current) setLoading(false);
     }
 
-    // Stats badge — fetched separately so a stats failure never blocks picks.
-    // Always reflects the whole sport's track record, not the active filter.
     try {
       const res  = await fetch(`/api/moneyline?sport=${s}&stats=true`);
       const json = await res.json();
@@ -590,9 +589,15 @@ function MoneylinePicks() {
     } catch { /* badge is best-effort */ }
   };
 
-  useEffect(() => { load(sport, ncaafFilter); }, [sport, ncaafFilter]);
+  useEffect(() => { load(sport); }, [sport]);
 
   const sportLabel = MONEYLINE_SPORTS.find(s => s.id === sport)?.label ?? sport.toUpperCase();
+
+  const visiblePicks = !data?.picks ? [] : sport !== 'ncaaf' || ncaafFilter === 'all'
+    ? data.picks
+    : ncaafFilter === 'top25'
+      ? data.picks.filter(p => p.rank || p.opponentRank)
+      : data.picks.filter(p => p.conference === ncaafFilter || p.opponentConference === ncaafFilter);
 
   const sportSelector = (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px', marginBottom: sport === 'ncaaf' ? '10px' : '16px' }}>
@@ -655,7 +660,7 @@ function MoneylinePicks() {
       {ncaafFilterBar}
       <div style={{ textAlign: 'center', padding: '32px 24px' }}>
         <p style={{ color: '#f87171', fontSize: '13px', marginBottom: '12px' }}>{error}</p>
-        <button onClick={() => load(sport, ncaafFilter)} style={{ background: 'transparent', border: '1px solid #f87171', borderRadius: '10px', color: '#f87171', padding: '6px 16px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
+        <button onClick={() => load(sport)} style={{ background: 'transparent', border: '1px solid #f87171', borderRadius: '10px', color: '#f87171', padding: '6px 16px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
       </div>
     </div>
   );
@@ -667,7 +672,7 @@ function MoneylinePicks() {
       {ncaafFilterBar}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', gap: '8px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', fontWeight: '500' }}>
-          {data.picks.length} pick{data.picks.length !== 1 ? 's' : ''} · {data.games_checked} games checked
+          {visiblePicks.length} pick{visiblePicks.length !== 1 ? 's' : ''} · {data.games_checked} games checked
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {stats && stats.graded > 0 && (
@@ -675,20 +680,24 @@ function MoneylinePicks() {
               {stats.hits}-{stats.misses}{stats.hit_rate != null ? ` · ${stats.hit_rate}%` : ''}
             </span>
           )}
-          <button onClick={() => load(sport, ncaafFilter)} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button onClick={() => load(sport)} style={{ background: 'transparent', border: '1px solid var(--border-color, #333)', borderRadius: '8px', color: 'var(--text-secondary, #888)', padding: '5px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
             <Icon.Refresh /> Refresh
           </button>
         </div>
       </div>
 
-      {data.picks.length === 0 ? (
+      {visiblePicks.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ width: '48px', height: '48px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}><Icon.Target /></div>
-          <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>No value this week</h3>
-          <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.6' }}>Checked {data.games_checked} {sportLabel} games — none where ESPN's FPI diverges meaningfully from the real moneyline. That's expected most weeks; markets are usually efficient.</p>
+          <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary, #fff)', fontWeight: '500' }}>No value {sport === 'ncaaf' && ncaafFilter !== 'all' ? 'in this filter' : 'this week'}</h3>
+          <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)', lineHeight: '1.6' }}>
+            {sport === 'ncaaf' && ncaafFilter !== 'all' && data.picks.length > 0
+              ? `${data.picks.length} pick${data.picks.length !== 1 ? 's' : ''} found overall, just none matching this filter right now.`
+              : `Checked ${data.games_checked} ${sportLabel} games — none where ESPN's FPI diverges meaningfully from the real moneyline. That's expected most weeks; markets are usually efficient.`}
+          </p>
         </div>
       ) : (
-        data.picks.map((pick, i) => <MoneylineCard key={pick.gameId} pick={pick} index={i} />)
+        visiblePicks.map((pick, i) => <MoneylineCard key={pick.gameId} pick={pick} index={i} />)
       )}
     </div>
   );

@@ -193,18 +193,17 @@ async function getDaysGames(cfg) {
 // NCAAF: games run Thursday–Monday with the bulk on Saturday, and the
 // dateless scoreboard endpoint (unlike NFL's) only returns a narrow window
 // around "today" rather than the whole slate — so explicitly walk the next
-// few days and merge, optionally scoped to one conference via ESPN's own
-// `groups` filter (confirmed server-side, so this doesn't need a local
-// team→conference mapping).
-async function getNcaafGames(conferenceGroupId) {
+// few days and merge. Always fetches the full slate: Top 25 and conference
+// filtering happen client-side against this one result (see
+// attachNcaafConferences below), rather than re-scanning per filter click.
+async function getNcaafGames() {
   const nowET = new Date(Date.now() - 4 * 60 * 60 * 1000);
   const fmt = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
   const dateStrs = Array.from({ length: 4 }, (_, i) => fmt(new Date(nowET.getTime() + i * 86400000)));
 
-  const groupParam = conferenceGroupId ? `&groups=${conferenceGroupId}` : '';
   const results = await Promise.all(
     dateStrs.map(d => fetchWithTimeout(
-      `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates=${d}${groupParam}&limit=200`
+      `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates=${d}&limit=200`
     ))
   );
 
@@ -225,15 +224,8 @@ function isRanked(rank) {
   return typeof rank === 'number' && rank >= 1 && rank <= 25;
 }
 
-async function getGamesToCheck(cfg, options = {}) {
-  if (cfg.cadence === 'ncaaf') {
-    const events = await getNcaafGames(options.conferenceGroupId);
-    if (!options.top25) return events;
-    return events.filter(e => {
-      const competitors = e.competitions?.[0]?.competitors ?? [];
-      return competitors.some(c => isRanked(c.curatedRank?.current));
-    });
-  }
+async function getGamesToCheck(cfg) {
+  if (cfg.cadence === 'ncaaf') return getNcaafGames();
   return cfg.cadence === 'weekly' ? getWeeksGames(cfg) : getDaysGames(cfg);
 }
 
@@ -291,8 +283,10 @@ async function buildGamePick(event, cfg) {
     league: cfg.league,
     team: pickTeam?.team?.displayName,
     teamAbbrev: pickTeam?.team?.abbreviation,
+    teamId: pickTeam?.team?.id ?? null,
     opponent: oppTeam?.team?.displayName,
     opponentAbbrev: oppTeam?.team?.abbreviation,
+    opponentTeamId: oppTeam?.team?.id ?? null,
     isHome: pickHome,
     moneyLine: pickHome ? mlHome : mlAway,
     fpiProb: Math.round((pickHome ? fpiHome : fpiAway) * 10) / 10,
@@ -336,6 +330,48 @@ Return ONLY a JSON array of rationale strings, in the same order, no markdown:
   }
 }
 
+// ─── NCAAF conference tagging ─────────────────────────────────────────────────
+
+// Attaches each pick's (and its opponent's) conference so the frontend can
+// filter Top 25 / conference client-side against one already-loaded result
+// set instead of re-scanning the whole slate per pill click. Neither the
+// scoreboard nor summary team objects carry conference inline, but a team's
+// own profile endpoint does (team.groups.id) — reliably, unlike inferring it
+// from which conference's `groups=` scoreboard filter happens to return a
+// given team (that also returns any team's cross-conference opponents).
+// Only looks up teams that actually appear in the picks being returned
+// (typically ~25 picks × 2 teams), not all ~130 teams playing that week.
+async function attachNcaafConferences(picks) {
+  if (picks.length === 0) return picks;
+
+  const ids = [...new Set(picks.flatMap(p => [p.teamId, p.opponentTeamId]).filter(Boolean))];
+  const groupIdToLabel = Object.fromEntries(
+    Object.entries(NCAAF_CONFERENCES).map(([label, gid]) => [String(gid), label])
+  );
+
+  const profiles = await mapWithConcurrency(ids, 15, async (id) => {
+    const data = await fetchWithTimeout(
+      `https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams/${id}`
+    );
+    // Some teams' immediate group is a sub-division (e.g. a Sun Belt East/West
+    // split) rather than the conference itself — its `parent.id` is the
+    // conference in that case, so check both.
+    const g = data?.team?.groups;
+    const label = [g?.id, g?.parent?.id]
+      .filter(Boolean)
+      .map(gid => groupIdToLabel[String(gid)])
+      .find(Boolean) ?? null;
+    return [id, label];
+  });
+  const idToConference = Object.fromEntries(profiles);
+
+  return picks.map(p => ({
+    ...p,
+    conference: p.teamId ? idToConference[p.teamId] ?? null : null,
+    opponentConference: p.opponentTeamId ? idToConference[p.opponentTeamId] ?? null : null,
+  }));
+}
+
 // ─── Outcome tracking ─────────────────────────────────────────────────────────
 
 // Saves generated picks server-side (not frontend-triggered like player
@@ -376,6 +412,8 @@ async function saveMoneylinePicks(picks, sportKey) {
         gamesPlayed: p.gamesPlayed,
         rank: p.rank ?? null,
         opponentRank: p.opponentRank ?? null,
+        conference: p.conference ?? null,
+        opponentConference: p.opponentConference ?? null,
         gameDate: p.gameDate,
         shortName: p.shortName,
         status: 'pending',
@@ -445,20 +483,8 @@ export default async function handler(req, res) {
     }
   }
 
-  const options = {};
-  if (cfg.cadence === 'ncaaf') {
-    const confParam = (req.query.conference || '').toUpperCase();
-    if (confParam) {
-      if (!NCAAF_CONFERENCES[confParam]) {
-        return res.status(400).json({ error: `Unknown conference: ${req.query.conference}` });
-      }
-      options.conferenceGroupId = NCAAF_CONFERENCES[confParam];
-    }
-    options.top25 = req.query.top25 === 'true';
-  }
-
   try {
-    const games = await getGamesToCheck(cfg, options);
+    const games = await getGamesToCheck(cfg);
     console.log(`[moneyline] ${cfg.label}: checking ${games.length} games`);
 
     const results = await mapWithConcurrency(games, 15, e => buildGamePick(e, cfg).catch(() => null));
@@ -466,7 +492,8 @@ export default async function handler(req, res) {
 
     console.log(`[moneyline] ${cfg.label}: ${picks.length}/${games.length} games cleared the ${MIN_EDGE_PP}pp edge threshold`);
 
-    const picksWithRationale = await attachRationales(picks, cfg.label);
+    let picksWithRationale = await attachRationales(picks, cfg.label);
+    if (cfg.cadence === 'ncaaf') picksWithRationale = await attachNcaafConferences(picksWithRationale);
 
     await saveMoneylinePicks(picksWithRationale, sportKey);
 
