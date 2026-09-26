@@ -503,14 +503,20 @@ function MoneylineCard({ pick, index }) {
             <span style={{ fontWeight: '500', fontSize: '15px', color: 'var(--text-primary, #fff)' }}>{pick.team}</span>
             <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', borderRadius: '20px' }}>{pick.isHome ? 'HOME' : 'AWAY'}</span>
             <span style={{ fontSize: '13px', color: '#60a5fa', fontWeight: '500' }}>ML {mlDisplay}</span>
+            {pick.isUnderdogPick && (
+              <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(251,146,60,0.15)', color: '#fb923c', borderRadius: '20px' }}>Underdog value — more likely to lose</span>
+            )}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-secondary, #888)', marginBottom: '8px' }}>
             vs {pick.opponentRank ? `#${pick.opponentRank} ` : ''}{pick.opponent} · {pick.shortName}
           </div>
-          <div style={{ display: 'flex', gap: '14px', marginBottom: '8px', fontSize: '12px' }}>
+          <div style={{ display: 'flex', gap: '14px', marginBottom: '8px', fontSize: '12px', flexWrap: 'wrap' }}>
             <span style={{ color: 'var(--text-secondary, #888)' }}>FPI <span style={{ color: 'var(--text-primary, #fff)', fontWeight: '500' }}>{pick.fpiProb}%</span></span>
             <span style={{ color: 'var(--text-secondary, #888)' }}>Market <span style={{ color: 'var(--text-primary, #fff)', fontWeight: '500' }}>{pick.marketProb}%</span></span>
             <span style={{ color: '#4ade80', fontWeight: '500' }}>+{pick.edge}pp edge</span>
+            {pick.evPct != null && (
+              <span style={{ color: '#4ade80', fontWeight: '500' }}>{pick.evPct >= 0 ? '+' : ''}{pick.evPct}% EV</span>
+            )}
           </div>
           {(pick.outlier || pick.lineMovedAgainstPick) && (
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
@@ -562,7 +568,11 @@ function MoneylinePicks() {
   // No default sport — a scan (ESPN fetches + a paid Claude rationale call)
   // only fires once the user actually picks one, not just from opening the tab.
   const [sport, setSport]           = useState(null);
-  const [ncaafFilter, setNcaafFilter] = useState('all');
+  // No default filter either — NCAAF's scan is the same full slate no matter
+  // which pill is clicked (filtering is client-side), but firing it the
+  // instant NCAAF is selected assumed "All Games" was wanted even when the
+  // user meant to jump straight to a conference or Top 25.
+  const [ncaafFilter, setNcaafFilter] = useState(null);
   const [data, setData]       = useState(null);
   const [stats, setStats]     = useState(null);
   const [loading, setLoading] = useState(false);
@@ -601,7 +611,18 @@ function MoneylinePicks() {
     } catch { /* badge is best-effort */ }
   };
 
-  useEffect(() => { if (sport) load(sport); }, [sport]);
+  useEffect(() => {
+    if (!sport) return;
+    setNcaafFilter(null); // require a fresh, explicit filter pick each time NCAAF is (re)selected
+    if (sport !== 'ncaaf') load(sport);
+  }, [sport]);
+
+  // First filter pill click triggers the one scan (if NCAAF data isn't
+  // already loaded); every click after that just re-filters in memory.
+  const selectNcaafFilter = (filterId) => {
+    setNcaafFilter(filterId);
+    if (data?.sport !== 'ncaaf') load('ncaaf');
+  };
 
   const sportLabel = MONEYLINE_SPORTS.find(s => s.id === sport)?.label ?? (sport ? sport.toUpperCase() : '');
 
@@ -641,7 +662,7 @@ function MoneylinePicks() {
       {NCAAF_FILTERS.map(f => (
         <button
           key={f.id}
-          onClick={() => setNcaafFilter(f.id)}
+          onClick={() => selectNcaafFilter(f.id)}
           style={{
             padding: '6px 12px', borderRadius: '20px', whiteSpace: 'nowrap', flexShrink: 0,
             border: `1px solid ${ncaafFilter === f.id ? '#7c3aed' : 'var(--border-color, #222)'}`,
@@ -656,6 +677,25 @@ function MoneylinePicks() {
     </div>
   );
 
+  if (!sport) return (
+    <div>
+      {sportSelector}
+      <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+        <div style={{ width: '48px', height: '48px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}><Icon.Target /></div>
+        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Pick a sport above to scan for moneyline value.</p>
+      </div>
+    </div>
+  );
+  if (sport === 'ncaaf' && ncaafFilter === null) return (
+    <div>
+      {sportSelector}
+      {ncaafFilterBar}
+      <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+        <div style={{ width: '48px', height: '48px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}><Icon.Target /></div>
+        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Pick a filter above (All Games, Top 25, or a conference) to scan NCAAF.</p>
+      </div>
+    </div>
+  );
   if (loading) return (
     <div>
       {sportSelector}
@@ -675,16 +715,7 @@ function MoneylinePicks() {
       {ncaafFilterBar}
       <div style={{ textAlign: 'center', padding: '32px 24px' }}>
         <p style={{ color: '#f87171', fontSize: '13px', marginBottom: '12px' }}>{error}</p>
-        <button onClick={() => load(sport)} style={{ background: 'transparent', border: '1px solid #f87171', borderRadius: '10px', color: '#f87171', padding: '6px 16px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
-      </div>
-    </div>
-  );
-  if (!sport) return (
-    <div>
-      {sportSelector}
-      <div style={{ textAlign: 'center', padding: '48px 24px' }}>
-        <div style={{ width: '48px', height: '48px', margin: '0 auto 16px', background: 'rgba(124,58,237,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa' }}><Icon.Target /></div>
-        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #888)' }}>Pick a sport above to scan for moneyline value.</p>
+        <button onClick={() => (sport === 'ncaaf' ? load('ncaaf') : load(sport))} style={{ background: 'transparent', border: '1px solid #f87171', borderRadius: '10px', color: '#f87171', padding: '6px 16px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
       </div>
     </div>
   );
