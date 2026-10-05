@@ -105,7 +105,7 @@ async function fetchWithTimeout(url, ms = 6000) {
 
 // ─── Odds math ────────────────────────────────────────────────────────────────
 
-function americanToImplied(odds) {
+export function americanToImplied(odds) {
   if (odds == null || isNaN(odds)) return null;
   return odds < 0 ? -odds / (-odds + 100) : 100 / (odds + 100);
 }
@@ -113,7 +113,7 @@ function americanToImplied(odds) {
 // Normalizes home+away implied probabilities to sum to 100%, removing the
 // sportsbook's built-in margin (the "vig") so they're comparable to a model's
 // win probability, which sums to ~100% by construction.
-function devig(homeImplied, awayImplied) {
+export function devig(homeImplied, awayImplied) {
   if (homeImplied == null || awayImplied == null) return { home: null, away: null };
   const sum = homeImplied + awayImplied;
   if (!sum) return { home: null, away: null };
@@ -127,12 +127,12 @@ function devig(homeImplied, awayImplied) {
 // number — the return per $1 wagered if FPI's probability is right — which is
 // the standard metric for "is this actually a good bet," not just "how far
 // apart are these two numbers."
-function americanToDecimal(odds) {
+export function americanToDecimal(odds) {
   if (odds == null || isNaN(odds)) return null;
   return odds > 0 ? (odds / 100) + 1 : (100 / -odds) + 1;
 }
 
-function expectedValuePct(winProbPct, moneyLine) {
+export function expectedValuePct(winProbPct, moneyLine) {
   const decimalOdds = americanToDecimal(moneyLine);
   if (decimalOdds == null) return null;
   return Math.round(((winProbPct / 100) * decimalOdds - 1) * 1000) / 10;
@@ -145,7 +145,7 @@ function expectedValuePct(winProbPct, moneyLine) {
 // overlooked — so past a point, more edge means less trust, not more.
 const OUTLIER_EDGE_PP = 20;
 
-function computeRating(edgePP, gamesPlayed, threshold, moveAgainstPick) {
+export function computeRating(edgePP, gamesPlayed, threshold, moveAgainstPick) {
   let score;
   if (edgePP >= OUTLIER_EDGE_PP) score = 3;      // extreme outlier — real caution warranted
   else if (edgePP >= 14)         score = 4;
@@ -159,7 +159,7 @@ function computeRating(edgePP, gamesPlayed, threshold, moveAgainstPick) {
 // Parses the "total" record (e.g. "2-0") off a competitor into games played.
 // Field name differs by endpoint — scoreboard events use `records`, summary
 // competitors use `record` — so check both.
-function getGamesPlayed(competitor) {
+export function getGamesPlayed(competitor) {
   const records = competitor?.records ?? competitor?.record ?? [];
   const total = records.find(r => r.type === 'total');
   if (!total?.summary) return null;
@@ -241,7 +241,7 @@ async function getNcaafGames() {
   return events;
 }
 
-function isRanked(rank) {
+export function isRanked(rank) {
   return typeof rank === 'number' && rank >= 1 && rank <= 25;
 }
 

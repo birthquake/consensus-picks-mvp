@@ -13,6 +13,7 @@
 
 import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { resolvePlayerProjection } from '../../lib/grading-logic.js';
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{}');
 
@@ -22,14 +23,6 @@ try { app = getApp(); } catch {
 }
 
 const db = getFirestore(app);
-
-// Maps a pick's display stat label to analyze-nfl.js's internal projection
-// key — needed because NFL nests projections per stat (see handleSave).
-const NFL_STAT_LABEL_TO_KEY = {
-  'passing yards':   'passingYards',
-  'rushing yards':   'rushingYards',
-  'receiving yards': 'receivingYards',
-};
 
 // ─── POST: save picks ──────────────────────────────────────────────────────
 
@@ -102,18 +95,7 @@ async function handleSave(req, res) {
         continue; // already saved — skip duplicate
       }
 
-      // NFL's analyzer nests projections per stat — one player can have
-      // multiple tracked stats (a QB's passing AND rushing yards, say) — as
-      // projections[player] = { passingYards: {blended, ...}, rushingYards: {...} },
-      // unlike NBA/MLB/NHL's single flat {conservative, blended, aggressive}
-      // object per player. Saving blindly assumed the flat shape, so every
-      // NFL pick's projection silently saved as all-null, which in turn made
-      // every "Over" pick auto-grade as a hit later (see fetch-game-results.js).
-      let playerProj = projections?.[pick.player] || null;
-      if (playerProj && !('blended' in playerProj)) {
-        const statKey = NFL_STAT_LABEL_TO_KEY[(pick.stat || '').toLowerCase().trim()];
-        if (statKey && playerProj[statKey]) playerProj = playerProj[statKey];
-      }
+      const playerProj = resolvePlayerProjection(projections, pick.player, pick.stat);
 
       const docRef = db.collection('halftime_picks').doc();
       savedIds.push(docRef.id);

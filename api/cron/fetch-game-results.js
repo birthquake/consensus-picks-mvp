@@ -11,6 +11,11 @@
 import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getPlayerStatForGame } from '../../lib/espn-client.js';
+import {
+  computeHoursSinceGame,
+  determineHalftimeGradeAction,
+  determineMoneylineGradeAction,
+} from '../../lib/grading-logic.js';
 
 // ─── Firebase init ────────────────────────────────────────────────────────────
 
@@ -128,118 +133,48 @@ async function gradeHalftimePicks() {
         const gameDate = pick.gameDate || pick.game_date;
         if (!gameDate) { results.skipped++; continue; }
 
-        // Use end-of-day (23:59) as the reference point so picks from any
-        // game on a given date pass this gate once the day is over.
-        // Previously used raw gameDate timestamp (often midnight UTC) which
-        // caused all 104 pending picks to be permanently skipped.
-        const pickDate = new Date(gameDate);
-        pickDate.setHours(23, 59, 0, 0);
-        const now = new Date();
-        const hoursSinceGame = (now - pickDate) / 3600000;
-        if (hoursSinceGame < 4) { results.skipped++; continue; }
+        const hoursSinceGame = computeHoursSinceGame(gameDate);
 
-        const sport = normalizeSport(pick.sport);
-        const result = await getPlayerStatForGame(
-          sport,
-          pick.player,
-          pick.stat,
-          gameDate,
-        );
+        let result = null;
+        if (hoursSinceGame >= 4) {
+          const sport = normalizeSport(pick.sport);
+          result = await getPlayerStatForGame(sport, pick.player, pick.stat, gameDate);
+        }
 
-        if (!result.found || result.value === null) {
-          // Normal case: the game resolved but the stat/player didn't match —
-          // safe to void once we're confident the game is really over.
-          // Fallback: the game itself could never be located at all (bad
-          // gameDate beyond what the ±1-day search covers, a name ESPN
-          // doesn't carry, etc.) — gameStatus never becomes 'final' in that
-          // case, so without this it stays pending forever regardless of how
-          // old it gets, continuing to cost a lookup on every single cron run.
-          // 7 days is enough that this isn't about short grading delays.
-          if ((result.gameStatus === 'final' && hoursSinceGame > 12) || hoursSinceGame > 168) {
-            await doc.ref.update({
-              status: 'void',
-              graded_at: new Date(),
-              grade_note: result.error || (hoursSinceGame > 168 ? 'Unresolvable after 7 days' : 'Stat not found after 12h'),
-            });
-          }
+        const decision = result
+          ? determineHalftimeGradeAction(pick, result, hoursSinceGame)
+          : { action: 'skip' };
+
+        if (decision.action === 'skip') {
           results.skipped++;
           continue;
         }
 
-        if (result.gameStatus !== 'final') { results.skipped++; continue; }
-
-        const actualValue = result.value;
-
-        // Void if player DNP — 0 across all counting stats suggests no minutes
-        // Check minutes played if available, otherwise check if all main stats are 0
-        if (result.minutes !== undefined && result.minutes === 0) {
-          await doc.ref.update({
-            status: 'void',
-            actual_value: 0,
-            graded_at: new Date(),
-            grade_note: 'DNP — 0 minutes played',
-          });
-          results.graded++;
-          console.log(`⚪ Halftime pick voided (DNP): ${pick.player} ${pick.stat}`);
-          continue;
-        }
-
-        // Also void if the stat value is suspiciously 0 for a starter-level player
-        // who had a projection > 5 (suggests DNP or injury scratch)
-        const projection = pick.projection?.blended || pick.projection?.conservative || 0;
-        const dnpThreshold = (pick.sport === 'mlb' || pick.league === 'mlb') ? 0.3 : 8;
-        if (actualValue === 0 && projection > dnpThreshold) {
-          await doc.ref.update({
-            status: 'void',
-            actual_value: 0,
-            graded_at: new Date(),
-            grade_note: 'Likely DNP — 0 actual vs high projection suggests scratch',
-          });
-          results.graded++;
-          console.log(`⚪ Halftime pick voided (likely DNP): ${pick.player} ${pick.stat} (proj: ${projection})`);
-          continue;
-        }
-
-        // A missing projection must never silently resolve to a hit — the
-        // old fallback (|| 0 for Over, || Infinity for Under) meant any
-        // "Over" pick with no real blended projection auto-graded as a hit
-        // against actualValue > 0, true for virtually any real stat. This
-        // masked a save-path bug that left every NFL pick's projection null
-        // (fixed separately in api/halftime/picks.js) behind a fake 100%
-        // hit rate. With no real projection there's nothing to grade against.
-        if (pick.projection?.blended == null) {
+        if (decision.action === 'void') {
           await doc.ref.update({
             status: 'void',
             graded_at: new Date(),
-            grade_note: 'No projection recorded — ungradeable',
+            grade_note: decision.grade_note,
+            ...(decision.actual_value !== undefined ? { actual_value: decision.actual_value } : {}),
           });
           results.graded++;
-          console.log(`⚪ Halftime pick voided (no projection): ${pick.player} ${pick.stat}`);
+          console.log(`⚪ Halftime pick voided: ${pick.player} ${pick.stat} (${decision.grade_note})`);
           continue;
         }
 
-        const hit = pick.direction === 'Over'
-          ? actualValue > pick.projection.blended
-          : actualValue < pick.projection.blended;
-
-        const blended = pick.projection?.blended;
-        const projError = blended != null ? Math.round((actualValue - blended) * 10) / 10 : null;
-        const projErrorPct = blended != null && blended > 0
-          ? Math.round(((actualValue - blended) / blended) * 100)
-          : null;
-
+        // decision.action === 'grade'
         await doc.ref.update({
-          status:               hit ? 'hit' : 'miss',
-          actual_value:         actualValue,
-          hit,
-          projection_error:     projError,
-          projection_error_pct: projErrorPct,
+          status:               decision.status,
+          actual_value:         decision.actual_value,
+          hit:                  decision.hit,
+          projection_error:     decision.projection_error,
+          projection_error_pct: decision.projection_error_pct,
           graded_at:            new Date(),
-          game_status_at_grade: result.gameStatus,
+          game_status_at_grade: decision.game_status_at_grade,
         });
 
         results.graded++;
-        console.log(`✅ Halftime pick graded: ${pick.player} ${pick.stat} ${pick.direction} → actual ${actualValue} (${hit ? 'HIT' : 'MISS'})`);
+        console.log(`✅ Halftime pick graded: ${pick.player} ${pick.stat} ${pick.direction} → actual ${decision.actual_value} (${decision.hit ? 'HIT' : 'MISS'})`);
 
       } catch (err) {
         results.errors.push({ id: doc.id, player: pick.player, error: err.message });
@@ -290,54 +225,33 @@ async function gradeMoneylinePicks() {
           `https://site.api.espn.com/apis/site/v2/sports/${pick.sport}/${pick.league}/summary?event=${pick.gameId}`
         );
 
-        if (!summary) { results.skipped++; continue; }
+        const decision = determineMoneylineGradeAction(pick, summary);
 
-        const comp = summary.header?.competitions?.[0];
-        const statusType = comp?.status?.type;
+        if (decision.action === 'skip') {
+          results.skipped++;
+          continue;
+        }
 
-        if (!statusType?.completed) { results.skipped++; continue; }
-
-        const name = statusType.name || '';
-        if (name.includes('POSTPONED') || name.includes('CANCELED') || name.includes('CANCELLED')) {
+        if (decision.action === 'void') {
           await doc.ref.update({
             status: 'void',
             graded_at: new Date(),
-            grade_note: 'Game postponed/cancelled',
+            grade_note: decision.grade_note,
           });
           results.graded++;
           continue;
         }
 
-        const home = comp?.competitors?.find(c => c.homeAway === 'home');
-        const away = comp?.competitors?.find(c => c.homeAway === 'away');
-        const homeScore = parseInt(home?.score, 10);
-        const awayScore = parseInt(away?.score, 10);
-
-        if (isNaN(homeScore) || isNaN(awayScore)) { results.skipped++; continue; }
-
-        if (homeScore === awayScore) {
-          await doc.ref.update({
-            status: 'void',
-            graded_at: new Date(),
-            grade_note: 'Unresolvable tie',
-          });
-          results.graded++;
-          continue;
-        }
-
-        const winner = homeScore > awayScore ? home : away;
-        const actualWinnerAbbrev = winner?.team?.abbreviation;
-        const hit = actualWinnerAbbrev === pick.teamAbbrev;
-
+        // decision.action === 'grade'
         await doc.ref.update({
-          status: hit ? 'hit' : 'miss',
-          actual_winner: actualWinnerAbbrev,
-          hit,
+          status: decision.status,
+          actual_winner: decision.actual_winner,
+          hit: decision.hit,
           graded_at: new Date(),
         });
 
         results.graded++;
-        console.log(`✅ Moneyline pick graded: ${pick.team} vs ${pick.opponent} → winner ${actualWinnerAbbrev} (${hit ? 'HIT' : 'MISS'})`);
+        console.log(`✅ Moneyline pick graded: ${pick.team} vs ${pick.opponent} → winner ${decision.actual_winner} (${decision.hit ? 'HIT' : 'MISS'})`);
 
       } catch (err) {
         results.errors.push({ id: doc.id, team: pick.team, error: err.message });
