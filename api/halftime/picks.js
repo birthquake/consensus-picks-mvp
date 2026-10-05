@@ -222,9 +222,12 @@ async function handleStats(req, res) {
   // once diagnosed.
   if (req.query.debugStat) {
     try {
+      const statusFilter = req.query.debugStatus
+        ? req.query.debugStatus.split(',')
+        : ['hit', 'miss'];
       const snap = await db.collection('halftime_picks')
         .where('stat', '==', req.query.debugStat)
-        .where('status', 'in', ['hit', 'miss'])
+        .where('status', 'in', statusFilter)
         .limit(15)
         .get();
       const sample = snap.docs.map(d => {
@@ -232,6 +235,7 @@ async function handleStats(req, res) {
         return {
           player: p.player, direction: p.direction, status: p.status, hit: p.hit,
           actual_value: p.actual_value,
+          grade_note: p.grade_note,
           projection: p.projection,
         };
       });
