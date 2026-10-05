@@ -701,6 +701,8 @@ async function getMoneylineStats(sportKey) {
     by_rating: byRating,
     by_underdog: splitStats(graded, p => p.isUnderdogPick === true, 'underdog', 'favorite'),
     by_outlier: splitStats(graded, p => p.outlier === true, 'outlier', 'normal'),
+    by_key_injury: splitStats(graded, p => !!p.keyInjury, 'flagged', 'clean'),
+    by_weather: splitStats(graded, p => !!p.weatherNote, 'flagged', 'clean'),
     roi: {
       units_staked: graded.length,
       units_won: Math.round(unitsWon * 100) / 100,
