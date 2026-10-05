@@ -183,16 +183,48 @@ export function getGamesPlayed(competitor) {
 // position to key off, so this intentionally doesn't try to cover them.
 const KEY_INJURY_POSITIONS = { football: ['QB'] };
 
-export function checkKeyInjury(summary, teamAbbrev, sport) {
+// Returns { id, name } for whichever QB is listed first in the team's depth
+// chart, or null if unavailable. One extra fetch, but only ever called after
+// a QB injury candidate has already been found (rare), not per game.
+async function fetchStarterQB(sport, league, teamId) {
+  if (!teamId) return null;
+  const data = await fetchWithTimeout(
+    `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/teams/${teamId}/depthcharts`
+  );
+  for (const chart of data?.depthchart ?? []) {
+    const athletes = chart.positions?.qb?.athletes;
+    if (athletes?.length) return { id: athletes[0]?.id, name: athletes[0]?.displayName };
+  }
+  return null;
+}
+
+// REGRESSION (found live, 2026-10-05): this used to flag ANY QB listed Out/
+// Doubtful on the injury report, with no check on whether that player is
+// actually the starter. A Saints pick flagged Zach Wilson (Out) as "the
+// starting QB" — he's third string (Tyler Shough is QB1, confirmed via the
+// depth chart) — and the generated rationale then hallucinated a completely
+// fabricated narrative around it (invented "Derek Carr," a retired player,
+// as the starter). Only a genuinely injured STARTER should ever surface —
+// an irrelevant backup/third-stringer being hurt is normal noise, not a
+// reason to dock confidence or risk misleading rationale text.
+export async function checkKeyInjury(summary, pickTeam, sport, league) {
   const positions = KEY_INJURY_POSITIONS[sport];
+  const teamAbbrev = pickTeam?.team?.abbreviation;
   if (!positions || !teamAbbrev) return null;
+
   const teamEntry = (summary.injuries ?? []).find(t => t.team?.abbreviation === teamAbbrev);
   if (!teamEntry) return null;
-  const hit = (teamEntry.injuries ?? []).find(inj =>
+
+  const candidate = (teamEntry.injuries ?? []).find(inj =>
     positions.includes(inj.athlete?.position?.abbreviation) &&
     (inj.status === 'Out' || inj.status === 'Doubtful')
   );
-  return hit ? { player: hit.athlete?.fullName, position: hit.athlete?.position?.abbreviation, status: hit.status } : null;
+  if (!candidate) return null;
+
+  const starter = await fetchStarterQB(sport, league, pickTeam?.team?.id);
+  if (!starter || String(starter.id) !== String(candidate.athlete?.id)) return null;
+
+  return { player: candidate.athlete?.fullName, position: candidate.athlete?.position?.abbreviation, status: candidate.status };
 }
 
 // ─── Games to check ───────────────────────────────────────────────────────────
@@ -340,8 +372,10 @@ async function buildGamePick(event, cfg) {
   const pickTeamOdds = pickHome ? pickcenterEntry.homeTeamOdds : pickcenterEntry.awayTeamOdds;
   const moveAgainstPick = pickTeamOdds?.favoriteAtOpen === true && pickTeamOdds?.favorite === false;
 
-  // Free (already-fetched summary data): is the picked team missing its QB?
-  const keyInjury = checkKeyInjury(summary, pickTeam?.team?.abbreviation, cfg.sport);
+  // Is the picked team missing its actual starting QB? (verified against the
+  // real depth chart, not just any QB on the injury report — see the
+  // function comment for why that distinction matters.)
+  const keyInjury = await checkKeyInjury(summary, pickTeam, cfg.sport, cfg.league);
 
   // NFL only (32 tractable stadiums vs. NCAAF's 130+) — flags genuinely
   // severe outdoor conditions as context, not a numeric edge adjustment.
@@ -386,7 +420,7 @@ async function buildGamePick(event, cfg) {
 async function attachRationales(picks, label) {
   if (picks.length === 0) return picks;
 
-  const prompt = `You are an expert sports bettor. For each ${label} moneyline pick below, the team, edge, and star rating are already finally determined — do not change them. Write a 1-2 sentence rationale for each pick, citing the specific numbers (ESPN's power-rating win probability vs. the market-implied probability from the actual moneyline). When a pick is flagged as an outlier edge or as having the line move against it, note that as a real caveat rather than pure upside — a very large model/market gap is more often a sign the model is missing something than free value, and don't oversell confidence just because the star rating is high. When a pick is flagged UNDERDOG (FPI itself gives this team under 50% to win outright), be explicit that this is a value bet on a live underdog, not a likely winner — the rating reflects the price being good relative to the model's probability, not that this team is favored to win. Never imply an underdog pick is "probably going to win." When a pick is flagged with a QB injury, be explicit that the pick's own team is missing its starting QB and the power rating may not fully reflect that. When a pick is flagged with weather, mention it as relevant context for passing/kicking without overstating its effect.
+  const prompt = `You are an expert sports bettor. For each ${label} moneyline pick below, the team, edge, and star rating are already finally determined — do not change them. Write a 1-2 sentence rationale for each pick, citing the specific numbers (ESPN's power-rating win probability vs. the market-implied probability from the actual moneyline). Use ONLY the facts given for each pick below — never add player names, injury details, depth-chart context, or any other specifics that are not explicitly provided, even if they sound plausible to you. If you are not given who the backup is, do not name one. When a pick is flagged as an outlier edge or as having the line move against it, note that as a real caveat rather than pure upside — a very large model/market gap is more often a sign the model is missing something than free value, and don't oversell confidence just because the star rating is high. When a pick is flagged UNDERDOG (FPI itself gives this team under 50% to win outright), be explicit that this is a value bet on a live underdog, not a likely winner — the rating reflects the price being good relative to the model's probability, not that this team is favored to win. Never imply an underdog pick is "probably going to win." When a pick is flagged with a QB injury, state only the exact player name and status given — do not speculate about who replaces them or invent any other context. When a pick is flagged with weather, mention it as relevant context for passing/kicking without overstating its effect.
 
 PICKS:
 ${picks.map((p, i) => `${i + 1}. ${p.team} (${p.isHome ? 'home' : 'away'}) ML ${p.moneyLine > 0 ? '+' : ''}${p.moneyLine} vs ${p.opponent} — FPI: ${p.fpiProb}% | Market (de-vigged): ${p.marketProb}% | Edge: +${p.edge}pp | EV: ${p.evPct != null ? (p.evPct >= 0 ? '+' : '') + p.evPct + '%' : 'n/a'} | Rating: ${p.rating}★${p.isUnderdogPick ? ' | 🔶 UNDERDOG: FPI gives this team under 50% to win outright — this is a value price, not a likely winner' : ''}${p.outlier ? ' | ⚠️ OUTLIER: unusually large edge for this sport — treat with real caution despite the rating' : ''}${p.lineMovedAgainstPick ? ' | ⚠️ Line has moved away from this side since opening' : ''}${p.keyInjury ? ` | 🏥 QB INJURY: ${p.keyInjury.player} (${p.keyInjury.status}) for ${p.team}` : ''}${p.weatherNote ? ` | 🌦️ Weather: ${p.weatherNote}` : ''}`).join('\n')}

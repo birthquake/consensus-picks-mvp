@@ -100,34 +100,71 @@ describe('checkKeyInjury', () => {
     return { injuries: [{ team: { abbreviation: teamAbbrev }, injuries }] };
   }
 
-  it('flags an Out QB for the picked team', () => {
-    const summary = summaryWith('KC', [{ status: 'Out', athlete: { fullName: 'Pat Mahomes', position: { abbreviation: 'QB' } } }]);
-    const result = checkKeyInjury(summary, 'KC', 'football');
+  function pickTeam(abbrev, id) {
+    return { team: { abbreviation: abbrev, id } };
+  }
+
+  function mockDepthChart(qbAthletesInOrder) {
+    global.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        depthchart: [{ positions: { qb: { athletes: qbAthletesInOrder } } }],
+      }),
+    });
+  }
+
+  it('flags an Out QB who really is the starter (depth chart position 0)', async () => {
+    mockDepthChart([{ id: '111', displayName: 'Pat Mahomes' }, { id: '222', displayName: 'Backup' }]);
+    const summary = summaryWith('KC', [{ status: 'Out', athlete: { id: '111', fullName: 'Pat Mahomes', position: { abbreviation: 'QB' } } }]);
+    const result = await checkKeyInjury(summary, pickTeam('KC', '99'), 'football', 'nfl');
     expect(result).toMatchObject({ player: 'Pat Mahomes', status: 'Out' });
   });
 
-  it('flags a Doubtful QB too', () => {
-    const summary = summaryWith('KC', [{ status: 'Doubtful', athlete: { fullName: 'Someone', position: { abbreviation: 'QB' } } }]);
-    expect(checkKeyInjury(summary, 'KC', 'football')).not.toBeNull();
+  it('REGRESSION: does NOT flag a backup/third-string QB being out — found live: Zach Wilson (Saints QB3) was flagged as "the starting QB," and the generated rationale hallucinated a fabricated narrative around it', async () => {
+    // Depth chart: Tyler Shough is QB1, Zach Wilson is QB3 (index 2) — only
+    // Wilson is listed as injured.
+    mockDepthChart([
+      { id: '111', displayName: 'Tyler Shough' },
+      { id: '222', displayName: 'Spencer Rattler' },
+      { id: '333', displayName: 'Zach Wilson' },
+    ]);
+    const summary = summaryWith('NO', [{ status: 'Out', athlete: { id: '333', fullName: 'Zach Wilson', position: { abbreviation: 'QB' } } }]);
+    const result = await checkKeyInjury(summary, pickTeam('NO', '18'), 'football', 'nfl');
+    expect(result).toBeNull();
   });
 
-  it('ignores non-QB injuries', () => {
-    const summary = summaryWith('KC', [{ status: 'Out', athlete: { fullName: 'A Lineman', position: { abbreviation: 'OT' } } }]);
-    expect(checkKeyInjury(summary, 'KC', 'football')).toBeNull();
+  it('flags a Doubtful starter too', async () => {
+    mockDepthChart([{ id: '111', displayName: 'Someone' }]);
+    const summary = summaryWith('KC', [{ status: 'Doubtful', athlete: { id: '111', fullName: 'Someone', position: { abbreviation: 'QB' } } }]);
+    expect(await checkKeyInjury(summary, pickTeam('KC', '99'), 'football', 'nfl')).not.toBeNull();
   });
 
-  it('ignores a merely Questionable QB', () => {
-    const summary = summaryWith('KC', [{ status: 'Questionable', athlete: { fullName: 'Pat Mahomes', position: { abbreviation: 'QB' } } }]);
-    expect(checkKeyInjury(summary, 'KC', 'football')).toBeNull();
+  it('ignores non-QB injuries (never fetches the depth chart)', async () => {
+    global.fetch = async () => { throw new Error('should not be called'); };
+    const summary = summaryWith('KC', [{ status: 'Out', athlete: { id: '1', fullName: 'A Lineman', position: { abbreviation: 'OT' } } }]);
+    expect(await checkKeyInjury(summary, pickTeam('KC', '99'), 'football', 'nfl')).toBeNull();
   });
 
-  it('does not apply to sports with no defined key position (e.g. basketball)', () => {
+  it('ignores a merely Questionable QB (never fetches the depth chart)', async () => {
+    global.fetch = async () => { throw new Error('should not be called'); };
+    const summary = summaryWith('KC', [{ status: 'Questionable', athlete: { id: '1', fullName: 'Pat Mahomes', position: { abbreviation: 'QB' } } }]);
+    expect(await checkKeyInjury(summary, pickTeam('KC', '99'), 'football', 'nfl')).toBeNull();
+  });
+
+  it('does not apply to sports with no defined key position (e.g. basketball)', async () => {
     const summary = summaryWith('LAL', [{ status: 'Out', athlete: { fullName: 'Star Player', position: { abbreviation: 'PG' } } }]);
-    expect(checkKeyInjury(summary, 'LAL', 'basketball')).toBeNull();
+    expect(await checkKeyInjury(summary, pickTeam('LAL', '13'), 'basketball', 'nba')).toBeNull();
   });
 
-  it('returns null when the team has no injury entry at all', () => {
-    expect(checkKeyInjury({ injuries: [] }, 'KC', 'football')).toBeNull();
+  it('returns null when the team has no injury entry at all (never fetches the depth chart)', async () => {
+    global.fetch = async () => { throw new Error('should not be called'); };
+    expect(await checkKeyInjury({ injuries: [] }, pickTeam('KC', '99'), 'football', 'nfl')).toBeNull();
+  });
+
+  it('degrades gracefully when the depth chart fetch fails', async () => {
+    global.fetch = async () => ({ ok: false });
+    const summary = summaryWith('KC', [{ status: 'Out', athlete: { id: '1', fullName: 'Pat Mahomes', position: { abbreviation: 'QB' } } }]);
+    expect(await checkKeyInjury(summary, pickTeam('KC', '99'), 'football', 'nfl')).toBeNull();
   });
 });
 
