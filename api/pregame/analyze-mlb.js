@@ -44,6 +44,8 @@ import { getGameWeather, getWeatherMultiplier, formatWeatherForPrompt } from '..
 import { getGameOdds, getLine } from '../../lib/mlb-odds.js';
 import { MLB_AVG, getParkFactor, getLineupMultiplier, getTeamPitchingStats } from '../../lib/mlb-team-context.js';
 
+import { requireAuth } from '../../lib/auth.js';
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 async function getBattingOrderSlots(gameDate, homeTeamId, awayTeamId) {
@@ -880,6 +882,9 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

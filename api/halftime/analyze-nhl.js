@@ -22,6 +22,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NHL_AVG, getTeamDefenseStats, getTeamSchedule, parseTOI } from '../../lib/nhl-team-defense.js';
 
+import { requireAuth } from '../../lib/auth.js';
+
 const client = new Anthropic();
 
 const SKATER_STATS = ['shots', 'points', 'goals', 'assists'];
@@ -292,6 +294,9 @@ Recommend exactly ${legCount} picks if ${legCount} strong options exist. Never p
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

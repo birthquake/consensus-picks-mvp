@@ -15,6 +15,8 @@ import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { resolvePlayerProjection } from '../../lib/grading-logic.js';
 
+import { requireAuth } from '../../lib/auth.js';
+
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{}');
 
 let app;
@@ -310,6 +312,9 @@ async function handleStats(req, res) {
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+
   if (req.method === 'POST') return handleSave(req, res);
   if (req.method === 'GET')  return handleStats(req, res);
   return res.status(405).json({ error: 'Method not allowed' });

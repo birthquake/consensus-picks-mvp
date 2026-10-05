@@ -2,6 +2,7 @@
 // Halftime Picks — live halftime game scanner + rated prop recommendations
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { apiFetch } from '../lib/apiFetch';
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const Icon = {
@@ -263,10 +264,10 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
     setNflPicks([]);
     try {
       const [nbaScan, mlbScan, nhlScan, nflScan] = await Promise.all([
-        fetch('/api/scan?sport=nba').then(r => r.json()).catch(() => null),
-        fetch('/api/scan?sport=mlb').then(r => r.json()).catch(() => null),
-        fetch('/api/scan?sport=nhl').then(r => r.json()).catch(() => null),
-        fetch('/api/scan?sport=nfl').then(r => r.json()).catch(() => null),
+        apiFetch('/api/scan?sport=nba').then(r => r.json()).catch(() => null),
+        apiFetch('/api/scan?sport=mlb').then(r => r.json()).catch(() => null),
+        apiFetch('/api/scan?sport=nhl').then(r => r.json()).catch(() => null),
+        apiFetch('/api/scan?sport=nfl').then(r => r.json()).catch(() => null),
       ]);
 
       const nbaGames = nbaScan?.success ? nbaScan.games || [] : [];
@@ -276,7 +277,7 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
 
       const [nbaResults, mlbResults, nhlResults, nflResults] = await Promise.all([
         Promise.all(nbaGames.map(game =>
-          fetch('/api/pregame/analyze', {
+          apiFetch('/api/pregame/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -288,7 +289,7 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
           }).then(r => r.json()).catch(() => null)
         )),
         Promise.all(mlbGames.map(game =>
-          fetch('/api/pregame/analyze-mlb', {
+          apiFetch('/api/pregame/analyze-mlb', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -300,7 +301,7 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
           }).then(r => r.json()).catch(() => null)
         )),
         Promise.all(nhlGames.map(game =>
-          fetch('/api/pregame/analyze-nhl', {
+          apiFetch('/api/pregame/analyze-nhl', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -312,7 +313,7 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
           }).then(r => r.json()).catch(() => null)
         )),
         Promise.all(nflGames.map(game =>
-          fetch('/api/pregame/analyze-nfl', {
+          apiFetch('/api/pregame/analyze-nfl', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -346,7 +347,7 @@ function DailyCard({ legCount, cache, onCacheUpdate, selectedLegs, onToggleLeg }
 const saveGamePicks = async (result, game, sport) => {
   if (!result?.success || !result.picks?.length) return;
   try {
-    await fetch('/api/halftime/picks', {
+    await apiFetch('/api/halftime/picks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -598,7 +599,7 @@ function MoneylinePicks() {
     const requestId = ++requestIdRef.current;
     setLoading(true); setError(''); setStats(null);
     try {
-      const res  = await fetch(`/api/moneyline?sport=${s}`);
+      const res  = await apiFetch(`/api/moneyline?sport=${s}`);
       const json = await res.json();
       if (requestId !== requestIdRef.current) return; // superseded by a newer request
       if (!res.ok || !json.success) throw new Error(json.error || 'Failed to load moneyline picks');
@@ -610,7 +611,7 @@ function MoneylinePicks() {
     }
 
     try {
-      const res  = await fetch(`/api/moneyline?sport=${s}&stats=true`);
+      const res  = await apiFetch(`/api/moneyline?sport=${s}&stats=true`);
       const json = await res.json();
       if (requestId !== requestIdRef.current) return; // superseded by a newer request
       if (res.ok && json.success) setStats(json.summary);
@@ -774,7 +775,7 @@ function PerformanceStats() {
   const load = async (d) => {
     setLoading(true); setError('');
     try {
-      const res  = await fetch(`/api/halftime/picks?days=${d}`);
+      const res  = await apiFetch(`/api/halftime/picks?days=${d}`);
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load stats');
       setStats(data);
@@ -976,7 +977,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
         body = { gameId: game.id, sport: game.sport, league: game.league, homeTeam: game.homeTeam, awayTeam: game.awayTeam, gameDate: game.gameDate || game.startTime, existingLegs, legCount, mode: analysisMode, oddsMap };
       }
 
-      const res  = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res  = await apiFetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Analysis failed');
       setAnalysis(data);
@@ -991,7 +992,7 @@ function GameCard({ game, selectedLegs, onToggleLeg, legCount, mode = 'halftime'
 
   const savePicks = async (analysisData) => {
     try {
-      const res = await fetch('/api/halftime/picks', {
+      const res = await apiFetch('/api/halftime/picks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1229,7 +1230,7 @@ function ParlayBuilder({ legs, onRemove, pickIdMap }) {
   return;
 }
 
-      await fetch('/api/halftime/picks', {
+      await apiFetch('/api/halftime/picks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'mark_twitter', pickIds }),
@@ -1326,7 +1327,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setLiveGames([]);
       try {
-        const res  = await fetch('/api/scan?sports=nba,mlb,nhl,nfl');
+        const res  = await apiFetch('/api/scan?sports=nba,mlb,nhl,nfl');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setLiveGames(data.games);
@@ -1344,7 +1345,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setNbaGames([]);
       try {
-        const res  = await fetch('/api/scan?sport=nba');
+        const res  = await apiFetch('/api/scan?sport=nba');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setNbaGames(data.games);
@@ -1360,7 +1361,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setMlbGames([]);
       try {
-        const res  = await fetch('/api/scan?sport=mlb');
+        const res  = await apiFetch('/api/scan?sport=mlb');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setMlbGames(data.games);
@@ -1375,7 +1376,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setNhlGames([]);
       try {
-        const res  = await fetch('/api/scan?sport=nhl');
+        const res  = await apiFetch('/api/scan?sport=nhl');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setNhlGames(data.games);
@@ -1390,7 +1391,7 @@ export default function Halftime({ isDark, toggleTheme, onLogout }) {
       setErrorMsg('');
       setNflGames([]);
       try {
-        const res  = await fetch('/api/scan?sport=nfl');
+        const res  = await apiFetch('/api/scan?sport=nfl');
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Scan failed');
         setNflGames(data.games);

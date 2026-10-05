@@ -5,6 +5,8 @@
 //   ?sport=X        (singular) -> pregame mode: today/tomorrow window (NFL: current week)
 //   ?sports=X,Y,Z    (plural)  -> live mode: games currently in progress
 
+import { requireAuth } from '../lib/auth.js';
+
 const SPORT_CONFIG = {
   nba: { sport: 'basketball', league: 'nba', label: 'NBA' },
   mlb: { sport: 'baseball',   league: 'mlb', label: 'MLB' },
@@ -302,6 +304,9 @@ async function handleLive(req, res) {
 // ─── Handler ──────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
