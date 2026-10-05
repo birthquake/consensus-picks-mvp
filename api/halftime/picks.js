@@ -169,6 +169,30 @@ async function handleSave(req, res) {
 // ─── GET: stats ─────────────────────────────────────────────────────────────
 
 async function handleStats(req, res) {
+  // TEMP DEBUG — sample graded picks for a given stat to sanity-check a
+  // suspiciously perfect hit rate (Passing/Rushing Yards both 100%). Remove
+  // once diagnosed.
+  if (req.query.debugStat) {
+    try {
+      const snap = await db.collection('halftime_picks')
+        .where('stat', '==', req.query.debugStat)
+        .where('status', 'in', ['hit', 'miss'])
+        .limit(15)
+        .get();
+      const sample = snap.docs.map(d => {
+        const p = d.data();
+        return {
+          player: p.player, direction: p.direction, status: p.status, hit: p.hit,
+          actual_value: p.actual_value,
+          projection: p.projection,
+        };
+      });
+      return res.status(200).json({ success: true, sample_count: sample.length, sample });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   const days = parseInt(req.query.days || '30');
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
