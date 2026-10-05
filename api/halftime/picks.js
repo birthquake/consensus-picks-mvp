@@ -23,6 +23,14 @@ try { app = getApp(); } catch {
 
 const db = getFirestore(app);
 
+// Maps a pick's display stat label to analyze-nfl.js's internal projection
+// key — needed because NFL nests projections per stat (see handleSave).
+const NFL_STAT_LABEL_TO_KEY = {
+  'passing yards':   'passingYards',
+  'rushing yards':   'rushingYards',
+  'receiving yards': 'receivingYards',
+};
+
 // ─── POST: save picks ──────────────────────────────────────────────────────
 
 async function handleSave(req, res) {
@@ -94,7 +102,18 @@ async function handleSave(req, res) {
         continue; // already saved — skip duplicate
       }
 
-      const playerProj = projections?.[pick.player] || null;
+      // NFL's analyzer nests projections per stat — one player can have
+      // multiple tracked stats (a QB's passing AND rushing yards, say) — as
+      // projections[player] = { passingYards: {blended, ...}, rushingYards: {...} },
+      // unlike NBA/MLB/NHL's single flat {conservative, blended, aggressive}
+      // object per player. Saving blindly assumed the flat shape, so every
+      // NFL pick's projection silently saved as all-null, which in turn made
+      // every "Over" pick auto-grade as a hit later (see fetch-game-results.js).
+      let playerProj = projections?.[pick.player] || null;
+      if (playerProj && !('blended' in playerProj)) {
+        const statKey = NFL_STAT_LABEL_TO_KEY[(pick.stat || '').toLowerCase().trim()];
+        if (statKey && playerProj[statKey]) playerProj = playerProj[statKey];
+      }
 
       const docRef = db.collection('halftime_picks').doc();
       savedIds.push(docRef.id);
@@ -169,6 +188,35 @@ async function handleSave(req, res) {
 // ─── GET: stats ─────────────────────────────────────────────────────────────
 
 async function handleStats(req, res) {
+  // TEMP ONE-TIME CLEANUP — the grading fallback (fixed in
+  // fetch-game-results.js) used to silently auto-hit any pick with no real
+  // projection recorded (a save-path bug, also fixed, left every NFL pick's
+  // projection null). Already-graded records need retroactively correcting
+  // to 'void' since the fix only changes grading going forward. Remove this
+  // block once run.
+  if (req.query.fixNullProjections === 'true') {
+    try {
+      const snap = await db.collection('halftime_picks').where('status', 'in', ['hit', 'miss']).get();
+      const toFix = snap.docs.filter(d => d.data().projection?.blended == null);
+      let corrected = 0;
+      for (let i = 0; i < toFix.length; i += 400) {
+        const batch = db.batch();
+        for (const doc of toFix.slice(i, i + 400)) {
+          batch.update(doc.ref, {
+            status: 'void',
+            hit: null,
+            grade_note: 'Retroactively voided — no projection was recorded at grading time (save-path bug)',
+          });
+          corrected++;
+        }
+        await batch.commit();
+      }
+      return res.status(200).json({ success: true, checked: snap.docs.length, corrected });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // TEMP DEBUG — sample graded picks for a given stat to sanity-check a
   // suspiciously perfect hit rate (Passing/Rushing Yards both 100%). Remove
   // once diagnosed.

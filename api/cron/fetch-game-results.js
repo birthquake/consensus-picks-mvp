@@ -200,9 +200,27 @@ async function gradeHalftimePicks() {
           continue;
         }
 
+        // A missing projection must never silently resolve to a hit — the
+        // old fallback (|| 0 for Over, || Infinity for Under) meant any
+        // "Over" pick with no real blended projection auto-graded as a hit
+        // against actualValue > 0, true for virtually any real stat. This
+        // masked a save-path bug that left every NFL pick's projection null
+        // (fixed separately in api/halftime/picks.js) behind a fake 100%
+        // hit rate. With no real projection there's nothing to grade against.
+        if (pick.projection?.blended == null) {
+          await doc.ref.update({
+            status: 'void',
+            graded_at: new Date(),
+            grade_note: 'No projection recorded — ungradeable',
+          });
+          results.graded++;
+          console.log(`⚪ Halftime pick voided (no projection): ${pick.player} ${pick.stat}`);
+          continue;
+        }
+
         const hit = pick.direction === 'Over'
-          ? actualValue > (pick.projection?.blended || 0)
-          : actualValue < (pick.projection?.blended || Infinity);
+          ? actualValue > pick.projection.blended
+          : actualValue < pick.projection.blended;
 
         const blended = pick.projection?.blended;
         const projError = blended != null ? Math.round((actualValue - blended) * 10) / 10 : null;
