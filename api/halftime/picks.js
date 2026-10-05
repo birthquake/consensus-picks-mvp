@@ -245,6 +245,26 @@ async function handleStats(req, res) {
     }
   }
 
+  // TEMP DEBUG — most recently created picks regardless of status, to check
+  // whether null projections are still happening for brand-new picks or
+  // were purely historical/legacy data.
+  if (req.query.debugRecent === 'true') {
+    try {
+      const snap = await db.collection('halftime_picks').orderBy('created_at', 'desc').limit(15).get();
+      const sample = snap.docs.map(d => {
+        const p = d.data();
+        return {
+          player: p.player, stat: p.stat, sport: p.sport, status: p.status,
+          created_at: p.created_at?.toDate?.() ?? p.created_at ?? null,
+          projection: p.projection,
+        };
+      });
+      return res.status(200).json({ success: true, sample_count: sample.length, sample });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   const days = parseInt(req.query.days || '30');
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
