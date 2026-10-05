@@ -80,6 +80,18 @@ describe('determineHalftimeGradeAction', () => {
     expect(determineHalftimeGradeAction(basePick, result, 24 * 3).action).toBe('skip');
   });
 
+  it('REGRESSION: voids on 0 minutes played now that getPlayerStatForGame actually returns minutes', () => {
+    const result = { found: true, value: 0, gameStatus: 'final', minutes: 0 };
+    const decision = determineHalftimeGradeAction(basePick, result, 24);
+    expect(decision.action).toBe('void');
+    expect(decision.grade_note).toMatch(/0 minutes/i);
+  });
+
+  it('does not void on minutes when the player actually played', () => {
+    const result = { found: true, value: 300, gameStatus: 'final', minutes: 34 };
+    expect(determineHalftimeGradeAction(basePick, result, 24).action).toBe('grade');
+  });
+
   it('voids a likely-DNP pick (0 actual vs a real high projection)', () => {
     const pick = { ...basePick, projection: { blended: 250 } };
     const result = { found: true, value: 0, gameStatus: 'final' };

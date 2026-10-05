@@ -90,6 +90,33 @@ describe('extractPlayerStat', () => {
     const result = extractPlayerStat({}, 'Anyone', 'Points');
     expect(result.found).toBe(false);
   });
+
+  it('REGRESSION: extracts minutes from the same block when present (NBA), feeding the DNP check', () => {
+    const nbaSummary = {
+      boxscore: {
+        players: [{
+          team: { displayName: 'Lakers' },
+          statistics: [{
+            name: 'main',
+            keys: ['minutes', 'points'],
+            athletes: [
+              { athlete: { displayName: 'Bench Player' }, stats: ['0', '0'] },
+              { athlete: { displayName: 'Starter' }, stats: ['34', '28'] },
+            ],
+          }],
+        }],
+      },
+    };
+    const dnp = extractPlayerStat(nbaSummary, 'Bench Player', 'Points');
+    expect(dnp.minutes).toBe(0);
+    const played = extractPlayerStat(nbaSummary, 'Starter', 'Points');
+    expect(played.minutes).toBe(34);
+  });
+
+  it('leaves minutes undefined for sports with no minutes concept (NFL)', () => {
+    const result = extractPlayerStat(nflSummary(), 'Ashton Jeanty', 'Rushing Yards');
+    expect(result.minutes).toBeUndefined();
+  });
 });
 
 describe('getGameStatus', () => {
