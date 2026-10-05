@@ -169,6 +169,31 @@ async function handleSave(req, res) {
 // ─── GET: stats ─────────────────────────────────────────────────────────────
 
 async function handleStats(req, res) {
+  // TEMP DEBUG — sample the oldest pending picks to diagnose why the backlog
+  // isn't clearing even after a week+ of the grading cron running. Remove
+  // once diagnosed.
+  if (req.query.debugOld === 'true') {
+    try {
+      const snap = await db.collection('halftime_picks').where('status', '==', 'pending').limit(300).get();
+      const cutoff = Date.now() - 7 * 86400000;
+      const old = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(p => {
+          const t = p.created_at?.toDate?.() ?? p.created_at;
+          return t && new Date(t).getTime() < cutoff;
+        })
+        .slice(0, 15)
+        .map(p => ({
+          id: p.id, player: p.player, stat: p.stat, sport: p.sport, league: p.league,
+          gameId: p.gameId, gameDate: p.gameDate,
+          created_at: p.created_at?.toDate?.() ?? p.created_at ?? null,
+        }));
+      return res.status(200).json({ success: true, sample_count: old.length, old_pending_sample: old });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   const days = parseInt(req.query.days || '30');
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
