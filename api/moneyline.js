@@ -586,6 +586,31 @@ async function saveMoneylinePicks(picks, sportKey) {
   }
 }
 
+// Net profit per 1 unit staked on a hit, American-odds convention —
+// e.g. +275 returns 2.75 units profit, -192 returns 0.52 units profit.
+function unitsProfitOnHit(moneyLine) {
+  if (moneyLine == null || isNaN(moneyLine)) return null;
+  return moneyLine > 0 ? moneyLine / 100 : 100 / -moneyLine;
+}
+
+// Splits graded picks into two named buckets by a predicate and returns
+// total/hits/hitRate for each — same shape as by_rating, reused for
+// underdog-vs-favorite and outlier-vs-normal breakdowns.
+function splitStats(graded, predicate, trueLabel, falseLabel) {
+  const buckets = { [trueLabel]: [], [falseLabel]: [] };
+  for (const p of graded) buckets[predicate(p) ? trueLabel : falseLabel].push(p);
+  const out = {};
+  for (const [label, picks] of Object.entries(buckets)) {
+    const hits = picks.filter(p => p.hit);
+    out[label] = {
+      total: picks.length,
+      hits: hits.length,
+      hitRate: picks.length > 0 ? Math.round((hits.length / picks.length) * 100) : null,
+    };
+  }
+  return out;
+}
+
 async function getMoneylineStats(sportKey) {
   const snap = await db.collection('moneyline_picks').where('sportKey', '==', sportKey).get();
   const all = snap.docs.map(d => d.data());
@@ -603,6 +628,21 @@ async function getMoneylineStats(sportKey) {
     };
   }
 
+  // Raw hit rate alone is misleading here — a pick on a +275 underdog is
+  // *supposed* to lose more often than it wins; what matters is whether the
+  // payout compensates. Flat-stake 1 unit per graded pick and sum real
+  // profit/loss using each pick's actual moneyline, so win rate and realized
+  // return can be read side by side instead of conflated into one number.
+  let unitsWon = 0;
+  for (const p of graded) {
+    if (p.hit) {
+      const profit = unitsProfitOnHit(p.moneyLine);
+      unitsWon += profit != null ? profit : 0;
+    } else {
+      unitsWon -= 1;
+    }
+  }
+
   return {
     total: all.length,
     graded: graded.length,
@@ -611,6 +651,13 @@ async function getMoneylineStats(sportKey) {
     misses: graded.filter(p => p.hit === false).length,
     hit_rate: graded.length > 0 ? Math.round((hits.length / graded.length) * 100) : null,
     by_rating: byRating,
+    by_underdog: splitStats(graded, p => p.isUnderdogPick === true, 'underdog', 'favorite'),
+    by_outlier: splitStats(graded, p => p.outlier === true, 'outlier', 'normal'),
+    roi: {
+      units_staked: graded.length,
+      units_won: Math.round(unitsWon * 100) / 100,
+      roi_pct: graded.length > 0 ? Math.round((unitsWon / graded.length) * 1000) / 10 : null,
+    },
   };
 }
 
