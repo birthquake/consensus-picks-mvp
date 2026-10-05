@@ -147,11 +147,19 @@ async function gradeHalftimePicks() {
         );
 
         if (!result.found || result.value === null) {
-          if (result.gameStatus === 'final' && hoursSinceGame > 12) {
+          // Normal case: the game resolved but the stat/player didn't match —
+          // safe to void once we're confident the game is really over.
+          // Fallback: the game itself could never be located at all (bad
+          // gameDate beyond what the ±1-day search covers, a name ESPN
+          // doesn't carry, etc.) — gameStatus never becomes 'final' in that
+          // case, so without this it stays pending forever regardless of how
+          // old it gets, continuing to cost a lookup on every single cron run.
+          // 7 days is enough that this isn't about short grading delays.
+          if ((result.gameStatus === 'final' && hoursSinceGame > 12) || hoursSinceGame > 168) {
             await doc.ref.update({
               status: 'void',
               graded_at: new Date(),
-              grade_note: result.error || 'Stat not found after 12h',
+              grade_note: result.error || (hoursSinceGame > 168 ? 'Unresolvable after 7 days' : 'Stat not found after 12h'),
             });
           }
           results.skipped++;
