@@ -523,7 +523,7 @@ For each recommended pick provide:
 - threshold: the number you are recommending betting Over/Under (based on blended projection minus a cushion for Over, or plus a cushion for Under)
 - projection: the blended projection number for that stat
 - rationale: 2-3 sentences grounded in the SPECIFIC projection numbers -- cite the blended projection
-- rating: 1-5 stars (5 = projections align across all windows, no risk flags, clear edge)
+- rating: 1-5 stars (5 = projections align across all windows, no risk flags, clear edge). A projection that diverges HUGELY from recent pace or season average is not automatically a 5-star pick — an extreme gap is more often a sign of a small/noisy sample or an unusual game script than genuine confidence. Reserve 5 stars for a clear, moderate, well-supported edge, not just the largest number.
 - rating_reason: one sentence referencing the projection math
 - risk_flags: array of concern strings (empty if clean)
 

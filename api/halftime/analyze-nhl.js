@@ -256,7 +256,7 @@ For each pick:
 - player, team, stat (one of: "Shots", "Points", "Goals", "Assists", "Saves")
 - direction ("Over" or "Under"), threshold (the number you're recommending), projection
 - rationale: 1-2 sentences citing specific numbers
-- rating: 1-5 stars based on how strong and well-supported the edge is
+- rating: 1-5 stars based on how strong and well-supported the edge is. A projection that diverges HUGELY from recent pace or season average is not automatically a 5-star pick — an extreme gap is more often a sign of a small/noisy sample (e.g. early in the game) or an unusual game script than genuine confidence. Reserve 5 stars for a clear, moderate, well-supported edge, not just the largest number.
 - rating_reason: one sentence
 - risk_flags: array of concerns (empty if clean)
 

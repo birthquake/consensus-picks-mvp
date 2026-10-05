@@ -48,6 +48,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { initializeApp, cert, getApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getGameWeather, getNotableFootballWeather, NFL_STADIUMS } from '../lib/weather.js';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -145,7 +146,7 @@ export function expectedValuePct(winProbPct, moneyLine) {
 // overlooked — so past a point, more edge means less trust, not more.
 const OUTLIER_EDGE_PP = 20;
 
-export function computeRating(edgePP, gamesPlayed, threshold, moveAgainstPick) {
+export function computeRating(edgePP, gamesPlayed, threshold, moveAgainstPick, keyInjury) {
   let score;
   if (edgePP >= OUTLIER_EDGE_PP) score = 3;      // extreme outlier — real caution warranted
   else if (edgePP >= 14)         score = 4;
@@ -153,6 +154,7 @@ export function computeRating(edgePP, gamesPlayed, threshold, moveAgainstPick) {
   else                           score = 3;      // MIN_EDGE_PP (6) floor
   if (gamesPlayed != null && threshold != null && gamesPlayed < threshold) score -= 1;
   if (moveAgainstPick) score -= 1;
+  if (keyInjury) score -= 1;
   return Math.max(1, Math.min(5, score));
 }
 
@@ -166,6 +168,29 @@ export function getGamesPlayed(competitor) {
   const parts = total.summary.split('-').map(n => parseInt(n, 10));
   if (parts.some(isNaN)) return null;
   return parts.reduce((a, b) => a + b, 0);
+}
+
+// ─── Injury check ─────────────────────────────────────────────────────────────
+
+// Football-only, QB-only: the single highest-impact, cleanest injury signal
+// in any sport here — a backup QB's performance is wildly unpredictable
+// relative to the starter the power rating was built around, and it's one of
+// the most common real reasons a model/market gap looks like value but isn't.
+// Comes free on the same summary response already fetched (summary.injuries),
+// no extra call. NBA/MLB/NHL don't have an equally unambiguous single
+// position to key off, so this intentionally doesn't try to cover them.
+const KEY_INJURY_POSITIONS = { football: ['QB'] };
+
+export function checkKeyInjury(summary, teamAbbrev, sport) {
+  const positions = KEY_INJURY_POSITIONS[sport];
+  if (!positions || !teamAbbrev) return null;
+  const teamEntry = (summary.injuries ?? []).find(t => t.team?.abbreviation === teamAbbrev);
+  if (!teamEntry) return null;
+  const hit = (teamEntry.injuries ?? []).find(inj =>
+    positions.includes(inj.athlete?.position?.abbreviation) &&
+    (inj.status === 'Out' || inj.status === 'Doubtful')
+  );
+  return hit ? { player: hit.athlete?.fullName, position: hit.athlete?.position?.abbreviation, status: hit.status } : null;
 }
 
 // ─── Games to check ───────────────────────────────────────────────────────────
@@ -275,6 +300,14 @@ async function buildGamePick(event, cfg) {
   const { home: marketHome, away: marketAway } = devig(americanToImplied(mlHome), americanToImplied(mlAway));
   if (marketHome == null) return null;
 
+  // Skip games priced as near-locks (95%+ either way) — the probability math
+  // gets numerically unstable that close to the boundary (a tiny FPI/market
+  // gap translates to a large-looking percentage-point edge), and the real
+  // payout odds at that price are bad enough that it's not a practically
+  // bettable pick anyway even when the edge is "real."
+  const EXTREME_PROB_CUTOFF = 0.95;
+  if (marketHome >= EXTREME_PROB_CUTOFF || marketAway >= EXTREME_PROB_CUTOFF) return null;
+
   const edgeHomePP = fpiHome - marketHome * 100;
   const edgeAwayPP = fpiAway - marketAway * 100;
 
@@ -305,6 +338,17 @@ async function buildGamePick(event, cfg) {
   const pickTeamOdds = pickHome ? pickcenterEntry.homeTeamOdds : pickcenterEntry.awayTeamOdds;
   const moveAgainstPick = pickTeamOdds?.favoriteAtOpen === true && pickTeamOdds?.favorite === false;
 
+  // Free (already-fetched summary data): is the picked team missing its QB?
+  const keyInjury = checkKeyInjury(summary, pickTeam?.team?.abbreviation, cfg.sport);
+
+  // NFL only (32 tractable stadiums vs. NCAAF's 130+) — flags genuinely
+  // severe outdoor conditions as context, not a numeric edge adjustment.
+  let weatherNote = null;
+  if (cfg.key === 'nfl') {
+    const weather = await getGameWeather(home?.team?.abbreviation, comp?.date, NFL_STADIUMS).catch(() => null);
+    weatherNote = getNotableFootballWeather(weather);
+  }
+
   return {
     gameId: event.id,
     sport: cfg.sport,
@@ -322,9 +366,11 @@ async function buildGamePick(event, cfg) {
     edge: Math.round(edgePP * 10) / 10,
     evPct: expectedValuePct(pickHome ? fpiHome : fpiAway, pickHome ? mlHome : mlAway),
     isUnderdogPick: (pickHome ? fpiHome : fpiAway) < 50,
-    rating: computeRating(edgePP, gamesPlayed, threshold, moveAgainstPick),
+    rating: computeRating(edgePP, gamesPlayed, threshold, moveAgainstPick, keyInjury),
     outlier: edgePP >= OUTLIER_EDGE_PP,
     lineMovedAgainstPick: moveAgainstPick,
+    keyInjury,
+    weatherNote,
     gamesPlayed,
     rank: pickRank,
     opponentRank: oppRank,
@@ -338,10 +384,10 @@ async function buildGamePick(event, cfg) {
 async function attachRationales(picks, label) {
   if (picks.length === 0) return picks;
 
-  const prompt = `You are an expert sports bettor. For each ${label} moneyline pick below, the team, edge, and star rating are already finally determined — do not change them. Write a 1-2 sentence rationale for each pick, citing the specific numbers (ESPN's power-rating win probability vs. the market-implied probability from the actual moneyline). When a pick is flagged as an outlier edge or as having the line move against it, note that as a real caveat rather than pure upside — a very large model/market gap is more often a sign the model is missing something than free value, and don't oversell confidence just because the star rating is high. When a pick is flagged UNDERDOG (FPI itself gives this team under 50% to win outright), be explicit that this is a value bet on a live underdog, not a likely winner — the rating reflects the price being good relative to the model's probability, not that this team is favored to win. Never imply an underdog pick is "probably going to win."
+  const prompt = `You are an expert sports bettor. For each ${label} moneyline pick below, the team, edge, and star rating are already finally determined — do not change them. Write a 1-2 sentence rationale for each pick, citing the specific numbers (ESPN's power-rating win probability vs. the market-implied probability from the actual moneyline). When a pick is flagged as an outlier edge or as having the line move against it, note that as a real caveat rather than pure upside — a very large model/market gap is more often a sign the model is missing something than free value, and don't oversell confidence just because the star rating is high. When a pick is flagged UNDERDOG (FPI itself gives this team under 50% to win outright), be explicit that this is a value bet on a live underdog, not a likely winner — the rating reflects the price being good relative to the model's probability, not that this team is favored to win. Never imply an underdog pick is "probably going to win." When a pick is flagged with a QB injury, be explicit that the pick's own team is missing its starting QB and the power rating may not fully reflect that. When a pick is flagged with weather, mention it as relevant context for passing/kicking without overstating its effect.
 
 PICKS:
-${picks.map((p, i) => `${i + 1}. ${p.team} (${p.isHome ? 'home' : 'away'}) ML ${p.moneyLine > 0 ? '+' : ''}${p.moneyLine} vs ${p.opponent} — FPI: ${p.fpiProb}% | Market (de-vigged): ${p.marketProb}% | Edge: +${p.edge}pp | EV: ${p.evPct != null ? (p.evPct >= 0 ? '+' : '') + p.evPct + '%' : 'n/a'} | Rating: ${p.rating}★${p.isUnderdogPick ? ' | 🔶 UNDERDOG: FPI gives this team under 50% to win outright — this is a value price, not a likely winner' : ''}${p.outlier ? ' | ⚠️ OUTLIER: unusually large edge for this sport — treat with real caution despite the rating' : ''}${p.lineMovedAgainstPick ? ' | ⚠️ Line has moved away from this side since opening' : ''}`).join('\n')}
+${picks.map((p, i) => `${i + 1}. ${p.team} (${p.isHome ? 'home' : 'away'}) ML ${p.moneyLine > 0 ? '+' : ''}${p.moneyLine} vs ${p.opponent} — FPI: ${p.fpiProb}% | Market (de-vigged): ${p.marketProb}% | Edge: +${p.edge}pp | EV: ${p.evPct != null ? (p.evPct >= 0 ? '+' : '') + p.evPct + '%' : 'n/a'} | Rating: ${p.rating}★${p.isUnderdogPick ? ' | 🔶 UNDERDOG: FPI gives this team under 50% to win outright — this is a value price, not a likely winner' : ''}${p.outlier ? ' | ⚠️ OUTLIER: unusually large edge for this sport — treat with real caution despite the rating' : ''}${p.lineMovedAgainstPick ? ' | ⚠️ Line has moved away from this side since opening' : ''}${p.keyInjury ? ` | 🏥 QB INJURY: ${p.keyInjury.player} (${p.keyInjury.status}) for ${p.team}` : ''}${p.weatherNote ? ` | 🌦️ Weather: ${p.weatherNote}` : ''}`).join('\n')}
 
 Return ONLY a JSON array of rationale strings, in the same order, no markdown:
 ["rationale for pick 1", "rationale for pick 2", ...]`;
@@ -568,6 +614,8 @@ async function saveMoneylinePicks(picks, sportKey) {
         lineMovedAgainstPick: p.lineMovedAgainstPick ?? false,
         evPct: p.evPct ?? null,
         isUnderdogPick: p.isUnderdogPick ?? false,
+        keyInjury: p.keyInjury ?? null,
+        weatherNote: p.weatherNote ?? null,
         gameDate: p.gameDate,
         shortName: p.shortName,
         status: 'pending',

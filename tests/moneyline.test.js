@@ -12,6 +12,7 @@ import {
   expectedValuePct,
   computeRating,
   isRanked,
+  checkKeyInjury,
 } from '../api/moneyline.js';
 
 describe('americanToImplied', () => {
@@ -85,8 +86,48 @@ describe('computeRating', () => {
     expect(computeRating(10, 10, 3, true)).toBe(4);
   });
 
+  it('docks a star when the picked team is missing its starting QB', () => {
+    expect(computeRating(10, 10, 3, false, { player: 'Someone', status: 'Out' })).toBe(4);
+  });
+
   it('clamps to a minimum of 1 star when penalties stack', () => {
     expect(computeRating(25, 2, 3, true)).toBe(1);
+  });
+});
+
+describe('checkKeyInjury', () => {
+  function summaryWith(teamAbbrev, injuries) {
+    return { injuries: [{ team: { abbreviation: teamAbbrev }, injuries }] };
+  }
+
+  it('flags an Out QB for the picked team', () => {
+    const summary = summaryWith('KC', [{ status: 'Out', athlete: { fullName: 'Pat Mahomes', position: { abbreviation: 'QB' } } }]);
+    const result = checkKeyInjury(summary, 'KC', 'football');
+    expect(result).toMatchObject({ player: 'Pat Mahomes', status: 'Out' });
+  });
+
+  it('flags a Doubtful QB too', () => {
+    const summary = summaryWith('KC', [{ status: 'Doubtful', athlete: { fullName: 'Someone', position: { abbreviation: 'QB' } } }]);
+    expect(checkKeyInjury(summary, 'KC', 'football')).not.toBeNull();
+  });
+
+  it('ignores non-QB injuries', () => {
+    const summary = summaryWith('KC', [{ status: 'Out', athlete: { fullName: 'A Lineman', position: { abbreviation: 'OT' } } }]);
+    expect(checkKeyInjury(summary, 'KC', 'football')).toBeNull();
+  });
+
+  it('ignores a merely Questionable QB', () => {
+    const summary = summaryWith('KC', [{ status: 'Questionable', athlete: { fullName: 'Pat Mahomes', position: { abbreviation: 'QB' } } }]);
+    expect(checkKeyInjury(summary, 'KC', 'football')).toBeNull();
+  });
+
+  it('does not apply to sports with no defined key position (e.g. basketball)', () => {
+    const summary = summaryWith('LAL', [{ status: 'Out', athlete: { fullName: 'Star Player', position: { abbreviation: 'PG' } } }]);
+    expect(checkKeyInjury(summary, 'LAL', 'basketball')).toBeNull();
+  });
+
+  it('returns null when the team has no injury entry at all', () => {
+    expect(checkKeyInjury({ injuries: [] }, 'KC', 'football')).toBeNull();
   });
 });
 

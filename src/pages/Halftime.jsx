@@ -518,13 +518,19 @@ function MoneylineCard({ pick, index }) {
               <span style={{ color: '#4ade80', fontWeight: '500' }}>{pick.evPct >= 0 ? '+' : ''}{pick.evPct}% EV</span>
             )}
           </div>
-          {(pick.outlier || pick.lineMovedAgainstPick) && (
+          {(pick.outlier || pick.lineMovedAgainstPick || pick.keyInjury || pick.weatherNote) && (
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
               {pick.outlier && (
                 <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(248,113,113,0.12)', color: '#f87171', borderRadius: '20px' }}>⚠ Outlier edge</span>
               )}
               {pick.lineMovedAgainstPick && (
                 <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(248,113,113,0.12)', color: '#f87171', borderRadius: '20px' }}>↘ Line moved away since open</span>
+              )}
+              {pick.keyInjury && (
+                <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(248,113,113,0.12)', color: '#f87171', borderRadius: '20px' }}>🏥 {pick.keyInjury.player} ({pick.keyInjury.status})</span>
+              )}
+              {pick.weatherNote && (
+                <span style={{ fontSize: '10px', fontWeight: '500', padding: '2px 7px', background: 'rgba(96,165,250,0.12)', color: '#60a5fa', borderRadius: '20px' }}>🌦️ {pick.weatherNote}</span>
               )}
             </div>
           )}
