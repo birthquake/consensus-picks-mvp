@@ -147,6 +147,14 @@ async function gradeHalftimePicks() {
 
         if (decision.action === 'skip') {
           results.skipped++;
+          // TEMP DIAGNOSTIC — remove once the 11-stuck-pending investigation is done.
+          results.skip_detail = results.skip_detail || [];
+          results.skip_detail.push({
+            id: doc.id, player: pick.player, stat: pick.stat, sport: pick.sport,
+            gameDate, hoursSinceGame: Math.round(hoursSinceGame),
+            found: result?.found ?? null, value: result?.value ?? null,
+            gameStatus: result?.gameStatus ?? null, error: result?.error ?? null,
+          });
           continue;
         }
 
