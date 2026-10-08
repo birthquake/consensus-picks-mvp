@@ -68,16 +68,16 @@ describe('determineHalftimeGradeAction', () => {
     expect(determineHalftimeGradeAction(basePick, result, 13).action).toBe('void');
   });
 
-  it('REGRESSION: voids an unresolvable pick after 7 days even if gameStatus never resolves to final', () => {
+  it('REGRESSION: voids an unresolvable pick after 24h even if gameStatus never resolves to final', () => {
     const result = { found: false, value: null, gameStatus: 'not_found' };
-    const decision = determineHalftimeGradeAction(basePick, result, 24 * 8);
+    const decision = determineHalftimeGradeAction(basePick, result, 25);
     expect(decision.action).toBe('void');
-    expect(decision.grade_note).toMatch(/7 days/i);
+    expect(decision.grade_note).toMatch(/24h/i);
   });
 
-  it('does not void an unresolvable pick before 7 days if gameStatus never resolves', () => {
+  it('does not void an unresolvable pick before 24h if gameStatus never resolves', () => {
     const result = { found: false, value: null, gameStatus: 'not_found' };
-    expect(determineHalftimeGradeAction(basePick, result, 24 * 3).action).toBe('skip');
+    expect(determineHalftimeGradeAction(basePick, result, 20).action).toBe('skip');
   });
 
   it('REGRESSION: voids on 0 minutes played now that getPlayerStatForGame actually returns minutes', () => {
